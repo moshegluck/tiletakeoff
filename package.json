@@ -1,0 +1,33 @@
+{
+  "name": "tiletakeoff",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Professional flooring takeoff, estimating & 3D visualization",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p jsconfig.json",
+    "lint": "eslint src --ext js,jsx"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "nanoid": "^5.0.7",
+    "pdfjs-dist": "^4.7.76",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.169.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "eslint": "^9.12.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.3"
+  }
+}
