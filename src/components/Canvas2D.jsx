@@ -27,10 +27,8 @@ export default function Canvas2D() {
   // then fit the view to the image dimensions via the store.
   useEffect(() => {
     if (!s.planImage) { planImg.current = null; return; }
-    console.log('[TT] planImage effect: loading image, length=', s.planImage.length);
     const img = new Image();
     img.onload = () => {
-      console.log('[TT] img.onload fired: naturalWidth=', img.naturalWidth, 'naturalHeight=', img.naturalHeight);
       planImg.current = img;
       // Fit immediately — read DOM size now (ResizeObserver has run by this
       // point since the PDF render itself took 100-500ms).
@@ -41,13 +39,10 @@ export default function Canvas2D() {
         const H = rect.height > 10 ? rect.height : window.innerHeight - 130;
         const iw = img.naturalWidth  || img.width;
         const ih = img.naturalHeight || img.height;
-        console.log('[TT] fitToImage: W=', W, 'H=', H, 'iw=', iw, 'ih=', ih, 'wrapRef=', !!wrap, 'rect=', rect);
-        if (!iw || !ih) { console.warn('[TT] fitToImage: zero dimensions, bailing'); return; }
-        const pad = 32;
+        if (!iw || !ih) {        const pad = 32;
         const z = Math.max(0.02, Math.min(8,
           Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)
         ));
-        console.log('[TT] setView zoom=', z, 'x=', Math.round((W - iw * z) / 2), 'y=', Math.round((H - ih * z) / 2));
         useStore.getState().setView({
           zoom: z,
           x: Math.round((W - iw * z) / 2),
@@ -59,9 +54,7 @@ export default function Canvas2D() {
       setTimeout(fitToImage, 100);
       setTimeout(fitToImage, 400);
     };
-    img.onerror = (e) => console.error('[TT] planImg failed to load', e);
-    img.src = s.planImage;
-    console.log('[TT] img.src set, waiting for onload...');
+    img.onerror = (e) =>    img.src = s.planImage;
   }, [s.planImage]);
 
   // drawRef always points to the latest draw() so schedule() never has stale closure
@@ -83,14 +76,11 @@ export default function Canvas2D() {
       const h = (r && r.height > 10) ? r.height : window.innerHeight - 130;
       cv.width = w * DPR2; cv.height = h * DPR2;
       cv.style.width = w + 'px'; cv.style.height = h + 'px';
-      console.log('[TT] draw(): forced canvas size', w, 'x', h);
     }
     const ctx = cv.getContext('2d');
     const DPR = window.devicePixelRatio || 1;
     const W = cv.width / DPR, H = cv.height / DPR;
-    if (!W || !H) { console.warn('[TT] draw(): W=0 or H=0, skip'); return; }
-    if (planImg.current) {
-      console.log('[TT] draw(): planImg present, view=', JSON.stringify(s.view), 'planImg.width=', planImg.current.width);
+    if (!W || !H) {    if (planImg.current) {
     }
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
