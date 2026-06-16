@@ -24,7 +24,13 @@ export function renderScene(ctx, W, H, rc) {
     const ox = s.view.x;
     const oy = s.view.y;
     ctx.globalAlpha = 0.55;
-    ctx.drawImage(planImg, ox, oy, planImg.width * s.view.zoom, planImg.height * s.view.zoom);
+    // Use naturalWidth/naturalHeight — img.width/height return 0 on mobile Safari
+    // for images not attached to the DOM.
+    const piw = planImg.naturalWidth  || planImg.width;
+    const pih = planImg.naturalHeight || planImg.height;
+    if (piw && pih) {
+      ctx.drawImage(planImg, ox, oy, piw * s.view.zoom, pih * s.view.zoom);
+    }
     ctx.globalAlpha = 1;
   }
   if (scale) drawFootGrid(ctx, W, H, rc);
