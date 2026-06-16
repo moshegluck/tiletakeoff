@@ -39,7 +39,8 @@ export default function Canvas2D() {
         const H = rect.height > 10 ? rect.height : window.innerHeight - 130;
         const iw = img.naturalWidth  || img.width;
         const ih = img.naturalHeight || img.height;
-        if (!iw || !ih) {        const pad = 32;
+        if (!iw || !ih) return;
+        const pad = 32;
         const z = Math.max(0.02, Math.min(8,
           Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)
         ));
@@ -54,7 +55,8 @@ export default function Canvas2D() {
       setTimeout(fitToImage, 100);
       setTimeout(fitToImage, 400);
     };
-    img.onerror = (e) =>    img.src = s.planImage;
+    img.onerror = () => console.error('[TT] planImg failed to load');
+    img.src = s.planImage;
   }, [s.planImage]);
 
   // drawRef always points to the latest draw() so schedule() never has stale closure
@@ -80,8 +82,7 @@ export default function Canvas2D() {
     const ctx = cv.getContext('2d');
     const DPR = window.devicePixelRatio || 1;
     const W = cv.width / DPR, H = cv.height / DPR;
-    if (!W || !H) {    if (planImg.current) {
-    }
+    if (!W || !H) return;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
     renderScene(ctx, W, H, {
