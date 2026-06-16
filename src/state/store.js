@@ -92,9 +92,11 @@ export const useStore = create((set, get) => ({
   setLabor: (r) => { set({ laborRatePerSf: r }); persist(get); },
   setView: (v) => { set({ view: v }); persist(get); },
   setPlanImage: (d, w, h) => {
-    // Revoke previous blob URL to free memory (data URLs are ignored by revokeObjectURL)
+    // Revoke the PREVIOUS blob URL to free memory — but never when it's the same
+    // URL we're re-setting (e.g. backfilling width/height), or we'd revoke the
+    // object URL still backing the on-screen image and blank the canvas.
     const prev = get().planImage;
-    if (prev && prev.startsWith('blob:')) { try { URL.revokeObjectURL(prev); } catch(_) {} }
+    if (prev && prev !== d && prev.startsWith('blob:')) { try { URL.revokeObjectURL(prev); } catch(_) {} }
     set({ planImage: d, planWidth: w || 0, planHeight: h || 0 });
     persist(get);
   },

@@ -23,7 +23,11 @@ export function renderScene(ctx, W, H, rc) {
   if (planImg) {
     const ox = s.view.x;
     const oy = s.view.y;
-    ctx.globalAlpha = 0.55;
+    // Draw the plan underlay opaque. Architectural plans are thin dark lines on
+    // a white page; at low opacity over the near-white stage they're nearly
+    // invisible (reads as a blank canvas). Rooms/markups draw on top with their
+    // own translucent fills, so they remain clearly visible over the plan.
+    ctx.globalAlpha = 1;
     // Use naturalWidth/naturalHeight — img.width/height return 0 on mobile Safari
     // for images not attached to the DOM.
     const piw = planImg.naturalWidth  || planImg.width;
