@@ -22,28 +22,38 @@ export default function Canvas2D() {
   const scale = s.scale;        // feet per model-px
   const { ft2px, px2ft, toScreen, toModel } = makeTransforms(s.view, scale);
 
-  // load plan underlay image — then auto-fit once the canvas is sized
+  // Load plan underlay image.
+  // When done: store in ref (draw() picks it up on next render),
+  // then fit the view to the image dimensions via the store.
   useEffect(() => {
     if (!s.planImage) { planImg.current = null; return; }
     const img = new Image();
     img.onload = () => {
       planImg.current = img;
-      // Fit the view to the image. Do this by directly writing the view into
-      // the store (which triggers a React re-render + redraw automatically).
-      // We read wrapper size from DOM; fall back to window size minus toolbars.
-      const doFit = () => {
+      // Fit immediately — read DOM size now (ResizeObserver has run by this
+      // point since the PDF render itself took 100-500ms).
+      const fitToImage = () => {
         const wrap = wrapRef.current;
         const rect = wrap ? wrap.getBoundingClientRect() : {};
-        const W = (rect.width  > 10 ? rect.width  : window.innerWidth  - 56) || 400;
-        const H = (rect.height > 10 ? rect.height : window.innerHeight - 130) || 600;
-        const iw = img.width, ih = img.height, pad = 32;
-        const z = Math.max(0.05, Math.min(8, Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)));
-        useStore.getState().setView({ zoom: z, x: (W - iw * z) / 2, y: (H - ih * z) / 2 });
-        // schedule() after state update so draw() captures the new view
-        requestAnimationFrame(() => schedule());
+        const W = rect.width  > 10 ? rect.width  : window.innerWidth  - 56;
+        const H = rect.height > 10 ? rect.height : window.innerHeight - 130;
+        const iw = img.naturalWidth  || img.width;
+        const ih = img.naturalHeight || img.height;
+        if (!iw || !ih) return;
+        const pad = 32;
+        const z = Math.max(0.02, Math.min(8,
+          Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)
+        ));
+        useStore.getState().setView({
+          zoom: z,
+          x: Math.round((W - iw * z) / 2),
+          y: Math.round((H - ih * z) / 2),
+        });
       };
-      // 3 frames: ResizeObserver → React commit → our fit
-      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(doFit)));
+      fitToImage();
+      // Belt-and-suspenders: retry after layout settles
+      setTimeout(fitToImage, 100);
+      setTimeout(fitToImage, 400);
     };
     img.onerror = () => console.error('[TT] planImg failed to load');
     img.src = s.planImage;
@@ -59,9 +69,20 @@ export default function Canvas2D() {
   // ---------- render ----------
   function draw() {
     const cv = cvRef.current; if (!cv) return;
+    // If canvas has no size yet (ResizeObserver hasn't fired), size it now
+    if (!cv.width || !cv.height) {
+      const wrap = wrapRef.current;
+      const r = wrap ? wrap.getBoundingClientRect() : null;
+      const DPR2 = window.devicePixelRatio || 1;
+      const w = (r && r.width  > 10) ? r.width  : window.innerWidth  - 56;
+      const h = (r && r.height > 10) ? r.height : window.innerHeight - 130;
+      cv.width = w * DPR2; cv.height = h * DPR2;
+      cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    }
     const ctx = cv.getContext('2d');
     const DPR = window.devicePixelRatio || 1;
     const W = cv.width / DPR, H = cv.height / DPR;
+    if (!W || !H) return;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
     renderScene(ctx, W, H, {
@@ -321,14 +342,17 @@ export default function Canvas2D() {
       const pad = 32;
 
       // --- fit to plan image (no rooms) ---
-      if (!s.rooms.length && s.planWidth && s.planHeight) {
-        const z = Math.max(0.05, Math.min(8,
-          Math.min((W - pad * 2) / s.planWidth, (H - pad * 2) / s.planHeight)
+      // Use planImg ref dimensions (most reliable) with store as fallback
+      const piw = planImg.current?.naturalWidth  || planImg.current?.width  || s.planWidth;
+      const pih = planImg.current?.naturalHeight || planImg.current?.height || s.planHeight;
+      if (!s.rooms.length && piw && pih) {
+        const z = Math.max(0.02, Math.min(8,
+          Math.min((W - pad * 2) / piw, (H - pad * 2) / pih)
         ));
         s.setView({
           zoom: z,
-          x: (W - s.planWidth  * z) / 2,
-          y: (H - s.planHeight * z) / 2,
+          x: Math.round((W - piw * z) / 2),
+          y: Math.round((H - pih * z) / 2),
         });
         return;
       }
