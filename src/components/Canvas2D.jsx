@@ -22,11 +22,20 @@ export default function Canvas2D() {
   const scale = s.scale;        // feet per model-px
   const { ft2px, px2ft, toScreen, toModel } = makeTransforms(s.view, scale);
 
-  // load plan underlay image
+  // load plan underlay image — then auto-fit once the canvas is sized
   useEffect(() => {
     if (!s.planImage) { planImg.current = null; return; }
     const img = new Image();
-    img.onload = () => { planImg.current = img; schedule(); };
+    img.onload = () => {
+      planImg.current = img;
+      schedule();
+      // Defer fit until after the resize observer has set canvas dimensions
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() =>
+          window.dispatchEvent(new Event('tt:fit'))
+        )
+      );
+    };
     img.src = s.planImage;
   }, [s.planImage]);
 
@@ -251,37 +260,47 @@ export default function Canvas2D() {
   useEffect(() => {
     const fit = () => {
       const cv = cvRef.current; if (!cv) return;
+      const wrap = wrapRef.current; if (!wrap) return;
       const DPR = window.devicePixelRatio || 1;
-      const W = cv.width / DPR, H = cv.height / DPR, pad = 40;
-      let b = { minx: Infinity, miny: Infinity, maxx: -Infinity, maxy: -Infinity };
-      let hasBounds = false;
+      // Use the wrapper's actual DOM size (not the canvas backing-store size)
+      const rect = wrap.getBoundingClientRect();
+      const W = rect.width || cv.width / DPR;
+      const H = rect.height || cv.height / DPR;
+      const pad = 32;
 
-      // fit to rooms if any
+      // --- fit to plan image (no rooms) ---
+      if (!s.rooms.length && s.planWidth && s.planHeight) {
+        const z = Math.max(0.05, Math.min(8,
+          Math.min((W - pad * 2) / s.planWidth, (H - pad * 2) / s.planHeight)
+        ));
+        s.setView({
+          zoom: z,
+          x: (W - s.planWidth  * z) / 2,
+          y: (H - s.planHeight * z) / 2,
+        });
+        return;
+      }
+
+      // --- fit to rooms ---
       if (s.rooms.length) {
+        let b = { minx: Infinity, miny: Infinity, maxx: -Infinity, maxy: -Infinity };
         s.rooms.forEach((r) => r.points.forEach((p) => {
           const x = ft2px(p.x), y = ft2px(p.y);
           b.minx = Math.min(b.minx, x); b.miny = Math.min(b.miny, y);
           b.maxx = Math.max(b.maxx, x); b.maxy = Math.max(b.maxy, y);
         }));
-        hasBounds = true;
+        const bw = b.maxx - b.minx || 1, bh = b.maxy - b.miny || 1;
+        const z = Math.max(0.05, Math.min(8, Math.min((W - pad * 2) / bw, (H - pad * 2) / bh)));
+        s.setView({
+          zoom: z,
+          x: pad - b.minx * z + (W - pad * 2 - bw * z) / 2,
+          y: pad - b.miny * z + (H - pad * 2 - bh * z) / 2,
+        });
+        return;
       }
 
-      // fit to plan image if loaded (and no rooms yet — image is at model origin)
-      if (!s.rooms.length && s.planWidth && s.planHeight) {
-        b = { minx: 0, miny: 0, maxx: s.planWidth, maxy: s.planHeight };
-        hasBounds = true;
-      }
-
-      if (!hasBounds) { s.setView({ x: 80, y: 80, zoom: 1 }); return; }
-
-      const bw = b.maxx - b.minx || 1;
-      const bh = b.maxy - b.miny || 1;
-      const z = Math.max(0.05, Math.min(8, Math.min((W - pad * 2) / bw, (H - pad * 2) / bh)));
-      s.setView({
-        zoom: z,
-        x: pad - b.minx * z + (W - pad * 2 - bw * z) / 2,
-        y: pad - b.miny * z + (H - pad * 2 - bh * z) / 2,
-      });
+      // fallback
+      s.setView({ x: 80, y: 80, zoom: 1 });
     };
     window.addEventListener('tt:fit', fit);
     return () => window.removeEventListener('tt:fit', fit);
