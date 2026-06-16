@@ -250,17 +250,38 @@ export default function Canvas2D() {
   // expose fit via custom event
   useEffect(() => {
     const fit = () => {
-      if (!s.rooms.length) { s.setView({ x: 80, y: 80, zoom: 1 }); return; }
+      const cv = cvRef.current; if (!cv) return;
+      const DPR = window.devicePixelRatio || 1;
+      const W = cv.width / DPR, H = cv.height / DPR, pad = 40;
       let b = { minx: Infinity, miny: Infinity, maxx: -Infinity, maxy: -Infinity };
-      s.rooms.forEach((r) => r.points.forEach((p) => {
-        const x = ft2px(p.x), y = ft2px(p.y);
-        b.minx = Math.min(b.minx, x); b.miny = Math.min(b.miny, y);
-        b.maxx = Math.max(b.maxx, x); b.maxy = Math.max(b.maxy, y);
-      }));
-      const cv = cvRef.current, DPR = window.devicePixelRatio || 1;
-      const W = cv.width / DPR, H = cv.height / DPR, pad = 60;
-      const z = Math.max(0.15, Math.min(8, Math.min((W - pad * 2) / (b.maxx - b.minx || 1), (H - pad * 2) / (b.maxy - b.miny || 1))));
-      s.setView({ zoom: z, x: pad - b.minx * z + (W - pad * 2 - (b.maxx - b.minx) * z) / 2, y: pad - b.miny * z + (H - pad * 2 - (b.maxy - b.miny) * z) / 2 });
+      let hasBounds = false;
+
+      // fit to rooms if any
+      if (s.rooms.length) {
+        s.rooms.forEach((r) => r.points.forEach((p) => {
+          const x = ft2px(p.x), y = ft2px(p.y);
+          b.minx = Math.min(b.minx, x); b.miny = Math.min(b.miny, y);
+          b.maxx = Math.max(b.maxx, x); b.maxy = Math.max(b.maxy, y);
+        }));
+        hasBounds = true;
+      }
+
+      // fit to plan image if loaded (and no rooms yet — image is at model origin)
+      if (!s.rooms.length && s.planWidth && s.planHeight) {
+        b = { minx: 0, miny: 0, maxx: s.planWidth, maxy: s.planHeight };
+        hasBounds = true;
+      }
+
+      if (!hasBounds) { s.setView({ x: 80, y: 80, zoom: 1 }); return; }
+
+      const bw = b.maxx - b.minx || 1;
+      const bh = b.maxy - b.miny || 1;
+      const z = Math.max(0.05, Math.min(8, Math.min((W - pad * 2) / bw, (H - pad * 2) / bh)));
+      s.setView({
+        zoom: z,
+        x: pad - b.minx * z + (W - pad * 2 - bw * z) / 2,
+        y: pad - b.miny * z + (H - pad * 2 - bh * z) / 2,
+      });
     };
     window.addEventListener('tt:fit', fit);
     return () => window.removeEventListener('tt:fit', fit);

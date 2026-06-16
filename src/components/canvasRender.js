@@ -18,11 +18,13 @@ import { roundRect } from './canvasUtils.js';
 
 export function renderScene(ctx, W, H, rc) {
   const { s, scale, toScreen, planImg } = rc;
-  // plan underlay
+  // plan underlay — image lives at model-px origin (0,0)
+  // view.x/y is the screen offset of model origin, zoom scales it
   if (planImg) {
-    const o = toScreen(0, 0);
-    ctx.globalAlpha = 0.5;
-    ctx.drawImage(planImg, o.x, o.y, planImg.width * s.view.zoom, planImg.height * s.view.zoom);
+    const ox = s.view.x;
+    const oy = s.view.y;
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(planImg, ox, oy, planImg.width * s.view.zoom, planImg.height * s.view.zoom);
     ctx.globalAlpha = 1;
   }
   if (scale) drawFootGrid(ctx, W, H, rc);

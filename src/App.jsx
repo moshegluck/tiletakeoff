@@ -40,7 +40,7 @@ export default function App() {
     try {
       const { renderPage } = await import('./lib/pdf.js');
       const out = await renderPage(doc, page, 2000);
-      s.setPlanImage(out.dataUrl);
+      s.setPlanImage(out.dataUrl, out.width, out.height);
       s.setPdfPage(page);
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (e) {
@@ -58,7 +58,7 @@ export default function App() {
       s.setPdf(doc, numPages);
       const { renderPage } = await import('./lib/pdf.js');
       const out = await renderPage(doc, 1, 2000);
-      s.setPlanImage(out.dataUrl);
+      s.setPlanImage(out.dataUrl, out.width, out.height);
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `PDF loaded · ${numPages} page${numPages > 1 ? 's' : ''}. Calibrate scale with the ruler.`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {

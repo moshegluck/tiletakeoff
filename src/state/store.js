@@ -27,6 +27,8 @@ function blankProject() {
     laborRatePerSf: 0,
     view: { x: 80, y: 80, zoom: 1 },
     planImage: null,       // dataURL of uploaded floor plan (optional)
+    planWidth: 0,          // pixel width of loaded plan image
+    planHeight: 0,         // pixel height of loaded plan image
     cloudId: null,         // supabase project id when saved to cloud
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -54,7 +56,7 @@ function persist(get) {
       id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
       archScale: s.archScale, rooms: s.rooms, materials: s.materials, markups: s.markups,
       taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
-      planImage: withImage ? s.planImage : null, createdAt: s.createdAt, updatedAt: Date.now(),
+      planImage: withImage ? s.planImage : null, planWidth: s.planWidth, planHeight: s.planHeight, createdAt: s.createdAt, updatedAt: Date.now(),
       cloudId: s.cloudId,
     });
     try {
@@ -93,7 +95,7 @@ export const useStore = create((set, get) => ({
   setTax: (t) => { set({ taxRate: t }); persist(get); },
   setLabor: (r) => { set({ laborRatePerSf: r }); persist(get); },
   setView: (v) => { set({ view: v }); persist(get); },
-  setPlanImage: (d) => { set({ planImage: d }); persist(get); },
+  setPlanImage: (d, w, h) => { set({ planImage: d, planWidth: w || 0, planHeight: h || 0 }); persist(get); },
   setPdf: (doc, pages) => set({ pdfDoc: doc, pdfPages: pages, pdfPage: 1 }),
   setPdfPage: (n) => set({ pdfPage: n }),
   clearPdf: () => set({ pdfDoc: null, pdfPages: 0, pdfPage: 1 }),
@@ -115,7 +117,7 @@ export const useStore = create((set, get) => ({
       scale: doc.scale ?? null, archScale: doc.archScale ?? null,
       rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [],
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
-      view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null,
+      view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, gridMaterialId: null, tool: 'select',
     });
     // local mirror only; don't trigger a cloud write of what we just read
