@@ -8,11 +8,18 @@ export default defineConfig({
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
-        manualChunks: {
-          three:    ['three'],
-          xlsx:     ['xlsx'],
-          supabase: ['@supabase/supabase-js'],
-          pdfjs:    ['pdfjs-dist'],
+        manualChunks(id) {
+          // Keep React in its own chunk — avoids TDZ when Rollup inlines
+          // CJS react-dom.production.min.js alongside our ES module code
+          if (id.includes('node_modules/react/') ||
+              id.includes('node_modules/react-dom/') ||
+              id.includes('node_modules/scheduler/')) {
+            return 'react-vendor';
+          }
+          if (id.includes('node_modules/three/'))    return 'three';
+          if (id.includes('node_modules/xlsx/'))     return 'xlsx';
+          if (id.includes('node_modules/@supabase/')) return 'supabase';
+          if (id.includes('node_modules/pdfjs-dist/')) return 'pdfjs';
         },
       },
     },
