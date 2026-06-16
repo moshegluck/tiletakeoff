@@ -18,10 +18,4 @@ export default defineConfig({
     },
   },
   server: { port: 5173, host: true },
-  // Allow Vite to process pdfjs-dist normally (do NOT exclude from optimizeDeps)
-  // The worker file is referenced via new URL(..., import.meta.url) so Vite
-  // will copy it to dist/assets automatically.
-  worker: {
-    format: 'es',
-  },
 });

@@ -1,35 +1,24 @@
 // ============================================================
 // pdf.js — load and render PDF pages.
-// Uses the LOCAL bundled worker (not CDN) to avoid version
-// mismatches and network failures on first load.
+// Uses a versioned CDN worker URL that matches the installed
+// pdfjs-dist version exactly, avoiding TDZ/bundler issues
+// caused by the new URL() static asset pattern in Rollup.
 // ============================================================
 
 let _lib = null;
 let _workerSetup = false;
 
+// Pinned to exactly the installed version (4.10.38)
+const WORKER_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+
 async function getLib() {
   if (_lib) return _lib;
 
-  // Dynamic import — Vite bundles this into its own chunk (pdfjs chunk)
   const lib = await import('pdfjs-dist');
 
   if (!_workerSetup) {
-    // Use the local bundled worker file served from /assets/
-    // This avoids CDN version mismatches and network failures.
-    // Vite copies .mjs worker files to dist/assets automatically.
-    try {
-      // Try to use the worker via URL constructor (works in modern browsers)
-      const workerUrl = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url
-      ).href;
-      lib.GlobalWorkerOptions.workerSrc = workerUrl;
-      console.log('[TT] pdf.js worker (local):', workerUrl.slice(0, 60));
-    } catch (_) {
-      // Fallback: disable worker (runs on main thread, slower but reliable)
-      lib.GlobalWorkerOptions.workerSrc = '';
-      console.log('[TT] pdf.js worker disabled (main thread mode)');
-    }
+    lib.GlobalWorkerOptions.workerSrc = WORKER_CDN;
+    console.log('[TT] pdf.js worker (CDN pinned 4.10.38)');
     _workerSetup = true;
   }
 
@@ -82,7 +71,6 @@ export async function renderPage(doc, pageNum, targetWidth = 1400) {
   await page.render({ canvasContext: ctx, viewport }).promise;
   console.log('[TT] pdf.js render complete');
 
-  // Get image URL — try blob URL first, fall back to data URL
   const dataUrl = await canvasToUrl(canvas);
   console.log('[TT] image URL type:', dataUrl.slice(0, 10), 'len:', dataUrl.length);
 
@@ -91,7 +79,6 @@ export async function renderPage(doc, pageNum, targetWidth = 1400) {
 
 function canvasToUrl(canvas) {
   return new Promise((resolve) => {
-    // Try blob URL first (no size limit, fastest to decode)
     if (canvas.toBlob) {
       canvas.toBlob((blob) => {
         if (blob && blob.size > 500) {
