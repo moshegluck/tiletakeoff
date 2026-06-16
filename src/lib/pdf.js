@@ -1,21 +1,17 @@
 // ============================================================
 // pdf.js — load and render PDF pages.
-// Uses a versioned CDN worker URL that matches the installed
-// pdfjs-dist version exactly, avoiding TDZ/bundler issues
-// caused by the new URL() static asset pattern in Rollup.
+// The worker ships as a SAME-ORIGIN bundled asset (not a CDN URL):
+// Vite emits pdfjs-dist's worker with a content hash and hands us its
+// URL. A CDN worker is a single point of failure — if cdnjs is blocked
+// by a corporate network / CSP / ad-blocker, or is offline, pdf.js can't
+// start its worker and every page renders blank. Bundling it removes that
+// dependency, and the version always matches the installed pdfjs-dist.
 // ============================================================
+
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 let _lib = null;
 let _workerSetup = false;
-
-// The worker version MUST match the pdfjs-dist build exactly or pdf.js throws a
-// version-mismatch error and pages render blank. Derive the CDN URL from the
-// library's own reported version instead of hardcoding it, so a dependency
-// bump (package.json allows a ^range) can never silently drift out of sync.
-function workerUrl(lib) {
-  const v = lib.version;
-  return `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${v}/pdf.worker.min.mjs`;
-}
 
 async function getLib() {
   if (_lib) return _lib;
@@ -23,8 +19,8 @@ async function getLib() {
   const lib = await import('pdfjs-dist');
 
   if (!_workerSetup) {
-    lib.GlobalWorkerOptions.workerSrc = workerUrl(lib);
-    console.log('[TT] pdf.js worker (CDN, version', lib.version + ')');
+    lib.GlobalWorkerOptions.workerSrc = workerUrl;
+    console.log('[TT] pdf.js worker (same-origin bundled asset)');
     _workerSetup = true;
   }
 
