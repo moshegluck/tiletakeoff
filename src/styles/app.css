@@ -48,7 +48,7 @@ main{display:grid;grid-template-columns:56px 1fr 348px;min-height:0;position:rel
 .toolsep{width:30px;height:1px;background:var(--line);margin:5px 0}
 
 /* ── CANVAS STAGE ── */
-.stage{position:relative;overflow:hidden;background:#f9fbfc}
+.stage{position:relative;overflow:hidden;background:#f9fbfc;height:100%;min-height:0}
 .stage canvas{display:block;position:absolute;inset:0;touch-action:none}
 .hud{position:absolute;left:8px;bottom:8px;display:flex;gap:6px;z-index:10;pointer-events:none;flex-wrap:wrap}
 .chip{background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:20px;font:600 11.5px var(--mono);color:var(--ink-2);padding:5px 11px}
