@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../state/store.js';
 import { rectPoly, bounds } from '../engine/geometry.js';
 import { snap } from '../engine/units.js';
@@ -21,6 +21,16 @@ export default function Canvas2D() {
 
   const scale = s.scale;        // feet per model-px
   const { ft2px, px2ft, toScreen, toModel } = makeTransforms(s.view, scale);
+
+  // drawRef always points to the latest draw() so schedule() never has a stale
+  // closure. Declared before the effects below because the plan-underlay effect
+  // lists `schedule` in its dependency array — referencing it any later would
+  // hit the temporal dead zone and crash the component on first render.
+  const drawRef = useRef(null);
+  const schedule = useCallback(() => {
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(() => drawRef.current && drawRef.current());
+  }, []);
 
   // Load plan underlay image.
   // When done: store in ref (draw() picks it up on next render),
@@ -67,13 +77,6 @@ export default function Canvas2D() {
     };
     img.src = s.planImage;
   }, [s.planImage, schedule]);
-
-  // drawRef always points to the latest draw() so schedule() never has stale closure
-  const drawRef = useRef(null);
-  const schedule = useCallback(() => {
-    cancelAnimationFrame(raf.current);
-    raf.current = requestAnimationFrame(() => drawRef.current && drawRef.current());
-  }, []);
 
   // ---------- render ----------
   function draw() {

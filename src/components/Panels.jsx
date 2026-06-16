@@ -1,8 +1,8 @@
 import React from 'react';
 import { useStore, ROOM_COLORS } from '../state/store.js';
-import { polygonArea, polygonPerimeter, rectPoly, centroid } from '../engine/geometry.js';
+import { polygonArea, rectPoly } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
-import { formatLength, formatArea, parseLength, fromFeet } from '../engine/units.js';
+import { formatLength, formatArea, parseLength } from '../engine/units.js';
 import { PATTERNS } from '../engine/layouts.js';
 import { TILE_CATALOG, GROUT_JOINTS } from '../data/tileCatalog.js';
 import { exportCSV, exportXLSX, exportJSON } from '../lib/export.js';
@@ -168,7 +168,7 @@ function MaterialCard({ m }) {
         <span className="swatch" style={{ background: m.color }} />
         <input className="card-name" value={m.name} onClick={(e) => e.stopPropagation()}
           onChange={(e) => s.updateMaterial(m.id, { name: e.target.value })} />
-        <span className="card-meta">{m.tw}×{m.th}"</span>
+        <span className="card-meta">{m.tw}×{m.th}&quot;</span>
         <button className="icon-btn" onClick={(e) => { e.stopPropagation(); if (confirm('Delete ' + m.name + '?')) s.deleteMaterial(m.id); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
         </button>
@@ -353,7 +353,7 @@ function EstimatePanel() {
             {l.costMode === 'waste' && (
               <>
                 <div className="est-row"><span>With {m.waste}% waste</span><b>{l.grossSf.toFixed(1)} sf</b></div>
-                <div className="est-row"><span>Tiles ({m.tw}×{m.th}")</span><b>{l.tiles}</b></div>
+                <div className="est-row"><span>Tiles ({m.tw}×{m.th}&quot;)</span><b>{l.tiles}</b></div>
               </>
             )}
 
@@ -407,7 +407,7 @@ function EstimatePanel() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}><path d="M6 2h9l5 5v15H6zM15 2v5h5M9 13h6M9 17h6M9 9h2" /></svg>
         Installer cut sheet
       </button>
-      <div className="note">Order quantities include each material's waste allowance. Wall tile uses perimeter × wall height as a coverage proxy. Verify field conditions before ordering.</div>
+      <div className="note">Order quantities include each material&rsquo;s waste allowance. Wall tile uses perimeter × wall height as a coverage proxy. Verify field conditions before ordering.</div>
     </div>
   );
 }

@@ -8,8 +8,14 @@
 let _lib = null;
 let _workerSetup = false;
 
-// Pinned to exactly the installed version (4.10.38)
-const WORKER_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+// The worker version MUST match the pdfjs-dist build exactly or pdf.js throws a
+// version-mismatch error and pages render blank. Derive the CDN URL from the
+// library's own reported version instead of hardcoding it, so a dependency
+// bump (package.json allows a ^range) can never silently drift out of sync.
+function workerUrl(lib) {
+  const v = lib.version;
+  return `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${v}/pdf.worker.min.mjs`;
+}
 
 async function getLib() {
   if (_lib) return _lib;
@@ -17,8 +23,8 @@ async function getLib() {
   const lib = await import('pdfjs-dist');
 
   if (!_workerSetup) {
-    lib.GlobalWorkerOptions.workerSrc = WORKER_CDN;
-    console.log('[TT] pdf.js worker (CDN pinned 4.10.38)');
+    lib.GlobalWorkerOptions.workerSrc = workerUrl(lib);
+    console.log('[TT] pdf.js worker (CDN, version', lib.version + ')');
     _workerSetup = true;
   }
 

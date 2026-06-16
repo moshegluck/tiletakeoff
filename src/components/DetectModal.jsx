@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useStore } from '../state/store.js';
 import { detectRooms } from '../lib/aiDetect.js';
 import { rectPoly } from '../engine/geometry.js';

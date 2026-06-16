@@ -10,7 +10,7 @@
 // unitCost. The markups list summarizes by type and by subject (name).
 // ============================================================
 
-import { polygonArea, polygonPerimeter } from './geometry.js';
+import { polygonArea } from './geometry.js';
 
 export const MARKUP_TYPES = {
   length: { id: 'length', label: 'Length', unit: 'lf', icon: 'M3 12h18' },

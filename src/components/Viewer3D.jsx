@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { useStore } from '../state/store.js';
 
 // Lazy-loads the Three.js scene so the 2D core stays light.
