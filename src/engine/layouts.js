@@ -6,7 +6,7 @@
 // Units in: tile w/h in FEET (incl. grout), origin offset, angle.
 // ============================================================
 
-import { bounds, rectPoly, classifyTile } from './geometry.js';
+import { bounds, classifyTile } from './geometry.js';
 
 export const PATTERNS = [
   { id: 'grid',        label: 'Straight (grid)',     hasOffset: false, hasAngle: true },

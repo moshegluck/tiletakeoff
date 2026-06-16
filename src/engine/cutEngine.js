@@ -166,7 +166,7 @@ function emptyResult(material, mode, grainLocked) {
 }
 
 function redistribute(needs, ctx) {
-  const { twFt, thFt, fullTileArea, minUsableArea, grainLocked, mode } = ctx;
+  const { twFt, thFt, minUsableArea, grainLocked, mode } = ctx;
   const offcutPool = []; // {id,w,h,area, fromTile}
   let newTilesBroken = 0, reuseCount = 0, scrapCount = 0;
   /** @type {import('./types.js').CutAssignment[]} */

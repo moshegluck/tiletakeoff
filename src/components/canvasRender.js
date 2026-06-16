@@ -17,7 +17,7 @@ import { MONO, hexA } from './canvasUtils.js';
 import { roundRect } from './canvasUtils.js';
 
 export function renderScene(ctx, W, H, rc) {
-  const { s, scale, toScreen, planImg } = rc;
+  const { s, scale, planImg } = rc;
   // plan underlay — image lives at model-px origin (0,0)
   // view.x/y is the screen offset of model origin, zoom scales it
   if (planImg) {
