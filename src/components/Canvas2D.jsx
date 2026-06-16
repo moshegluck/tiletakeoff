@@ -30,16 +30,21 @@ export default function Canvas2D() {
     const img = new Image();
     img.onload = () => {
       planImg.current = img;
-      // Fit immediately — read DOM size now (ResizeObserver has run by this
-      // point since the PDF render itself took 100-500ms).
+      const iw = img.naturalWidth  || img.width;
+      const ih = img.naturalHeight || img.height;
+      console.log('[TT] planImg loaded', iw, 'x', ih, s.planImage.slice(0, 40));
+
+      // Sync naturalWidth into store so tt:fit handler has correct dims
+      if (iw && ih && (iw !== s.planWidth || ih !== s.planHeight)) {
+        useStore.getState().setPlanImage(s.planImage, iw, ih);
+      }
+
       const fitToImage = () => {
         const wrap = wrapRef.current;
         const rect = wrap ? wrap.getBoundingClientRect() : {};
         const W = rect.width  > 10 ? rect.width  : window.innerWidth  - 56;
         const H = rect.height > 10 ? rect.height : window.innerHeight - 130;
-        const iw = img.naturalWidth  || img.width;
-        const ih = img.naturalHeight || img.height;
-        if (!iw || !ih) return;
+        if (!iw || !ih) { schedule(); return; }
         const pad = 32;
         const z = Math.max(0.02, Math.min(8,
           Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)
@@ -49,15 +54,19 @@ export default function Canvas2D() {
           x: Math.round((W - iw * z) / 2),
           y: Math.round((H - ih * z) / 2),
         });
+        // Explicitly schedule a redraw — store update triggers re-render
+        // but we also call schedule() directly so RAF fires even if view didn't change
+        schedule();
       };
       fitToImage();
-      // Belt-and-suspenders: retry after layout settles
-      setTimeout(fitToImage, 100);
-      setTimeout(fitToImage, 400);
+      setTimeout(fitToImage, 150);
+      setTimeout(fitToImage, 500);
     };
-    img.onerror = () => console.error('[TT] planImg failed to load');
+    img.onerror = (e) => {
+      console.error('[TT] planImg failed to load', e, s.planImage.slice(0, 80));
+    };
     img.src = s.planImage;
-  }, [s.planImage]);
+  }, [s.planImage, schedule]);
 
   // drawRef always points to the latest draw() so schedule() never has stale closure
   const drawRef = useRef(null);

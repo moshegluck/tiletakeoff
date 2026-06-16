@@ -1,7 +1,7 @@
 // ============================================================
-// pdf.js wrapper — render a plan PDF page to a raster.
-// Mobile-safe: JPEG output, capped canvas size, Blob URL instead
-// of base64 data URL (avoids iOS Safari memory/decode limits).
+// pdf.js wrapper — render a plan PDF page to a raster image.
+// Mobile-safe: explicit canvas lifecycle, JPEG output, capped
+// canvas size. Returns a data URL (most compatible) or blob URL.
 // ============================================================
 
 let pdfjsLib = null;
@@ -9,13 +9,10 @@ let pdfjsLib = null;
 async function getLib() {
   if (pdfjsLib) return pdfjsLib;
   const lib = await import('pdfjs-dist');
-
-  // Try CDN worker first; fall back to disabling the worker entirely
-  // (slower but works on every mobile browser).
   const PDFJS_VERSION = lib.version;
+  // CDN worker (avoids bundling the 700KB worker into main chunk)
   lib.GlobalWorkerOptions.workerSrc =
     `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`;
-
   pdfjsLib = lib;
   return lib;
 }
@@ -27,78 +24,94 @@ export async function loadPdf(file) {
   return { doc, numPages: doc.numPages };
 }
 
-// iOS Safari hard limits:
-//   - Max canvas area: 16,777,216 px² (4096×4096)
-//   - Max canvas dimension: 4096px
-// We cap well below these to stay safe with DPR.
-const IOS_MAX_AREA = 4096 * 4096;
-const IOS_MAX_DIM  = 4096;
+// iOS Safari hard limits per WebKit source:
+//   area  ≤ 16,777,216 px²
+//   width ≤ 4096 px, height ≤ 4096 px
+// We use 90% of these to leave headroom.
+const MAX_AREA = 16777216 * 0.9;
+const MAX_DIM  = 4096 * 0.9;
 
 /**
- * Render a PDF page to a Blob URL (JPEG, mobile-safe).
- * Falls back to PNG data URL if Blob URL creation fails.
- *
- * @param {import('pdfjs-dist').PDFDocumentProxy} doc
- * @param {number} pageNum
- * @param {number} targetWidth - target CSS pixel width (default 1200, safe for mobile)
+ * Render one PDF page to a raster image URL.
+ * Returns { dataUrl, width, height, renderScale }
  */
 export async function renderPage(doc, pageNum, targetWidth = 1200) {
-  const page = await doc.getPage(pageNum);
-  const base = page.getViewport({ scale: 1 });
+  const page   = await doc.getPage(pageNum);
+  const base   = page.getViewport({ scale: 1 });
 
-  // Clamp scale so canvas stays within iOS limits
+  // Compute a safe scale
   let scale = targetWidth / base.width;
-  const projW = Math.ceil(base.width  * scale);
-  const projH = Math.ceil(base.height * scale);
-  const projArea = projW * projH;
-
-  if (projArea > IOS_MAX_AREA) {
-    scale = Math.sqrt(IOS_MAX_AREA / (base.width * base.height)) * 0.95;
-  }
-  if (base.width * scale > IOS_MAX_DIM) {
-    scale = IOS_MAX_DIM / base.width * 0.95;
-  }
-  if (base.height * scale > IOS_MAX_DIM) {
-    scale = IOS_MAX_DIM / base.height * 0.95;
-  }
-
+  // Clamp by area
+  const area = base.width * base.height * scale * scale;
+  if (area > MAX_AREA) scale = Math.sqrt(MAX_AREA / (base.width * base.height));
+  // Clamp by dimension
+  if (base.width  * scale > MAX_DIM) scale = MAX_DIM / base.width;
+  if (base.height * scale > MAX_DIM) scale = MAX_DIM / base.height;
   scale = Math.max(0.3, Math.min(3, scale));
+
   const viewport = page.getViewport({ scale });
+  const W = Math.ceil(viewport.width);
+  const H = Math.ceil(viewport.height);
+
+  console.log(`[TT] renderPage page=${pageNum} scale=${scale.toFixed(3)} size=${W}x${H}`);
 
   const canvas = document.createElement('canvas');
-  canvas.width  = Math.ceil(viewport.width);
-  canvas.height = Math.ceil(viewport.height);
+  canvas.width  = W;
+  canvas.height = H;
 
   const ctx = canvas.getContext('2d', { alpha: false });
-  if (!ctx) {
-    throw new Error('Canvas 2D context unavailable — canvas may be too large for this device');
-  }
+  if (!ctx) throw new Error(`Canvas 2D unavailable — size ${W}x${H} may exceed device limit`);
+
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, W, H);
 
   await page.render({ canvasContext: ctx, viewport }).promise;
 
-  // Prefer Blob URL: much smaller memory footprint than base64 data URL,
-  // and avoids the iOS Safari "blank image from large data URL" bug.
-  let imageUrl;
-  try {
-    imageUrl = await new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) { reject(new Error('toBlob returned null')); return; }
-        resolve(URL.createObjectURL(blob));
-      }, 'image/jpeg', 0.88);
-    });
-  } catch (_) {
-    // Fallback: JPEG data URL (smaller than PNG)
-    imageUrl = canvas.toDataURL('image/jpeg', 0.88);
+  // Build the image URL. We try three approaches in order:
+  // 1. Blob URL (no size limit, but requires URL.createObjectURL)
+  // 2. JPEG data URL (smaller than PNG, works everywhere)
+  // 3. PNG data URL (last resort)
+  let imageUrl = null;
+
+  // Approach 1 — blob URL
+  if (typeof URL !== 'undefined' && URL.createObjectURL) {
+    try {
+      imageUrl = await new Promise((resolve, reject) => {
+        // Keep a reference to canvas so it won't be GC'd before toBlob completes
+        const c = canvas;
+        c.toBlob((blob) => {
+          if (blob && blob.size > 0) {
+            resolve(URL.createObjectURL(blob));
+          } else {
+            reject(new Error('toBlob produced empty blob'));
+          }
+        }, 'image/jpeg', 0.88);
+      });
+      console.log('[TT] using blob URL');
+    } catch (e) {
+      console.warn('[TT] toBlob failed, trying dataURL:', e.message);
+    }
   }
 
-  return {
-    dataUrl:      imageUrl,
-    width:        canvas.width,
-    height:       canvas.height,
-    renderScale:  scale,
-    pdfWidthPt:   base.width,
-    pdfHeightPt:  base.height,
-  };
+  // Approach 2 — JPEG data URL
+  if (!imageUrl) {
+    try {
+      const d = canvas.toDataURL('image/jpeg', 0.88);
+      if (d && d.length > 100) { imageUrl = d; console.log('[TT] using JPEG dataURL len=', d.length); }
+    } catch (e) {
+      console.warn('[TT] JPEG dataURL failed:', e.message);
+    }
+  }
+
+  // Approach 3 — PNG data URL
+  if (!imageUrl) {
+    imageUrl = canvas.toDataURL('image/png');
+    console.log('[TT] using PNG dataURL len=', imageUrl.length);
+  }
+
+  if (!imageUrl || imageUrl.length < 100) {
+    throw new Error(`Failed to extract image from canvas (${W}x${H})`);
+  }
+
+  return { dataUrl: imageUrl, width: W, height: H, renderScale: scale };
 }
