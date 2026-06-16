@@ -29,20 +29,20 @@ export default function Canvas2D() {
     img.onload = () => {
       planImg.current = img;
       schedule();
-      // Defer fit until after the resize observer has set canvas dimensions
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() =>
-          window.dispatchEvent(new Event('tt:fit'))
-        )
-      );
+      // Three rAF frames: ResizeObserver fires in frame 1, layout settles
+      // in frame 2, then we fit. Belt-and-suspenders for mobile browsers.
+      const firefit = () => window.dispatchEvent(new Event('tt:fit'));
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(firefit)));
     };
     img.src = s.planImage;
   }, [s.planImage]);
 
+  // drawRef always points to the latest draw() so schedule() never has stale closure
+  const drawRef = useRef(null);
   const schedule = useCallback(() => {
     cancelAnimationFrame(raf.current);
-    raf.current = requestAnimationFrame(draw);
-  });
+    raf.current = requestAnimationFrame(() => drawRef.current && drawRef.current());
+  }, []);
 
   // ---------- render ----------
   function draw() {
@@ -60,6 +60,8 @@ export default function Canvas2D() {
       ruler: ruler.current,
     });
   }
+
+  drawRef.current = draw;
 
   // ---------- interaction ----------
   function evPt(e) { const r = cvRef.current.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -262,10 +264,10 @@ export default function Canvas2D() {
       const cv = cvRef.current; if (!cv) return;
       const wrap = wrapRef.current; if (!wrap) return;
       const DPR = window.devicePixelRatio || 1;
-      // Use the wrapper's actual DOM size (not the canvas backing-store size)
+      // Use wrapper DOM size; fall back to window dimensions minus toolbar/nav
       const rect = wrap.getBoundingClientRect();
-      const W = rect.width || cv.width / DPR;
-      const H = rect.height || cv.height / DPR;
+      const W = (rect.width  > 10 ? rect.width  : window.innerWidth  - 56) || 400;
+      const H = (rect.height > 10 ? rect.height : window.innerHeight - 56 - 56) || 600;
       const pad = 32;
 
       // --- fit to plan image (no rooms) ---

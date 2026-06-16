@@ -52,20 +52,16 @@ function persist(get) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const s = get();
-    const build = (withImage) => JSON.stringify({
+    // planImage intentionally excluded — PDF rasters are multi-MB and
+    // silently corrupt the localStorage snapshot when quota is exceeded.
+    const snap = JSON.stringify({
       id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
       archScale: s.archScale, rooms: s.rooms, materials: s.materials, markups: s.markups,
       taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
-      planImage: withImage ? s.planImage : null, planWidth: s.planWidth, planHeight: s.planHeight, createdAt: s.createdAt, updatedAt: Date.now(),
-      cloudId: s.cloudId,
+      planImage: null, planWidth: 0, planHeight: 0,
+      createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
     });
-    try {
-      localStorage.setItem(KEY, build(true));
-    } catch (e) {
-      // quota exceeded (large rendered PDF raster) — persist the takeoff
-      // data without the image rather than losing everything.
-      try { localStorage.setItem(KEY, build(false)); } catch (_) {}
-    }
+    try { localStorage.setItem(KEY, snap); } catch (_) {}
   }, 350);
   // cloud save on a slower debounce to limit writes
   if (cloudSaver) {
