@@ -42,7 +42,6 @@ export default function App() {
       const out = await renderPage(doc, page, 2000);
       s.setPlanImage(out.dataUrl, out.width, out.height);
       s.setPdfPage(page);
-      setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (e) {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'PDF render failed: ' + e.message } }));
     } finally { setPdfBusy(false); }
@@ -60,7 +59,6 @@ export default function App() {
       const out = await renderPage(doc, 1, 2000);
       s.setPlanImage(out.dataUrl, out.width, out.height);
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `PDF loaded · ${numPages} page${numPages > 1 ? 's' : ''}. Calibrate scale with the ruler.`, ok: true } }));
-      setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not open PDF: ' + err.message } }));
     } finally { setPdfBusy(false); }

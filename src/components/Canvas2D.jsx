@@ -28,12 +28,24 @@ export default function Canvas2D() {
     const img = new Image();
     img.onload = () => {
       planImg.current = img;
-      schedule();
-      // Three rAF frames: ResizeObserver fires in frame 1, layout settles
-      // in frame 2, then we fit. Belt-and-suspenders for mobile browsers.
-      const firefit = () => window.dispatchEvent(new Event('tt:fit'));
-      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(firefit)));
+      // Fit the view to the image. Do this by directly writing the view into
+      // the store (which triggers a React re-render + redraw automatically).
+      // We read wrapper size from DOM; fall back to window size minus toolbars.
+      const doFit = () => {
+        const wrap = wrapRef.current;
+        const rect = wrap ? wrap.getBoundingClientRect() : {};
+        const W = (rect.width  > 10 ? rect.width  : window.innerWidth  - 56) || 400;
+        const H = (rect.height > 10 ? rect.height : window.innerHeight - 130) || 600;
+        const iw = img.width, ih = img.height, pad = 32;
+        const z = Math.max(0.05, Math.min(8, Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)));
+        useStore.getState().setView({ zoom: z, x: (W - iw * z) / 2, y: (H - ih * z) / 2 });
+        // schedule() after state update so draw() captures the new view
+        requestAnimationFrame(() => schedule());
+      };
+      // 3 frames: ResizeObserver → React commit → our fit
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(doFit)));
     };
+    img.onerror = () => console.error('[TT] planImg failed to load');
     img.src = s.planImage;
   }, [s.planImage]);
 
@@ -200,13 +212,51 @@ export default function Canvas2D() {
   }
 
   function promptScale(px) {
+    // window.prompt is blocked on iOS Safari in async contexts.
+    // Use a custom in-canvas overlay div instead.
     const cur = scale ? px2ft(px).toFixed(2) : '10';
-    const v = window.prompt(`Line length on screen = ${px.toFixed(0)} px.\n\nEnter its REAL length in feet (e.g. 12.5):`, cur);
-    if (v == null) return;
-    const ft = parseFloat(v);
-    if (!(ft > 0)) return;
-    s.setScale(ft / px);
-    s.setTool('room');
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+      'position:fixed','inset:0','background:rgba(0,0,0,.55)',
+      'display:flex','align-items:center','justify-content:center','z-index:9999'
+    ].join(';');
+    overlay.innerHTML = `
+      <div style="background:#1e1e2e;border-radius:12px;padding:24px 20px;width:min(340px,90vw);color:#eee;font-family:sans-serif">
+        <div style="font-size:15px;margin-bottom:4px;font-weight:600">Set Scale</div>
+        <div style="font-size:13px;color:#aaa;margin-bottom:16px">
+          You drew a ${px.toFixed(0)}px line. Enter its real-world length:
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+          <input id="scaleVal" type="number" min="0.1" step="0.1" value="${cur}"
+            style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:#111;color:#fff;font-size:16px" />
+          <select id="scaleUnit" style="padding:10px;border-radius:8px;border:1px solid #444;background:#111;color:#fff;font-size:14px">
+            <option value="ft">ft</option>
+            <option value="in">in</option>
+            <option value="m">m</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button id="scaleCancel" style="padding:9px 18px;border-radius:8px;border:1px solid #444;background:transparent;color:#aaa;font-size:14px;cursor:pointer">Cancel</button>
+          <button id="scaleOk" style="padding:9px 18px;border-radius:8px;border:none;background:#e05a1a;color:#fff;font-size:14px;font-weight:600;cursor:pointer">Set Scale</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const inp = overlay.querySelector('#scaleVal');
+    inp.focus(); inp.select();
+    const cleanup = () => document.body.removeChild(overlay);
+    const apply = () => {
+      const raw = parseFloat(overlay.querySelector('#scaleVal').value);
+      if (!(raw > 0)) { cleanup(); return; }
+      const unit = overlay.querySelector('#scaleUnit').value;
+      const ft = unit === 'in' ? raw / 12 : unit === 'm' ? raw * 3.28084 : raw;
+      s.setScale(ft / px);
+      s.setTool('room');
+      cleanup();
+    };
+    overlay.querySelector('#scaleOk').addEventListener('click', apply);
+    overlay.querySelector('#scaleCancel').addEventListener('click', cleanup);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') cleanup(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
   }
 
   function hitTest(sp) {
