@@ -270,7 +270,7 @@ export default function TakeoffStudio() {
                 <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Default Tile (all surfaces)</label>
                 <select data-testid="default-tile-select" className={input + " mt-1"} value={takeoff.default_tile_id || ""} onChange={(e) => setDefaultTile(e.target.value)}>
                   <option value="">— none —</option>
-                  {(tiles || []).map((t) => <option key={t.id} value={t.id}>{t.name} ({t.width}×{t.height})</option>)}
+                  {(tiles || []).map((t) => <option key={t.id} value={t.id}>{`${t.name} (${t.width}×${t.height})`}</option>)}
                 </select>
                 {defaultTile && (
                   <div className="mt-2 flex items-center gap-3 border border-slate-200 p-2 rounded-sm">
@@ -303,7 +303,7 @@ export default function TakeoffStudio() {
                     <span className="text-xs flex-1 truncate">{m.label}</span>
                     <select className={input + " w-40"} value={m.tile_id || ""} onChange={(e) => assignTile(m.id, e.target.value)}>
                       <option value="">default</option>
-                      {(tiles || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {(tiles || []).map((t) => <option key={t.id} value={t.id}>{String(t.name)}</option>)}
                     </select>
                   </div>
                 ))}

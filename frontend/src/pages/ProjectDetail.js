@@ -113,7 +113,7 @@ export default function ProjectDetail() {
                   </div>
                   <select data-testid="takeoff-drawing-select" className={input} value={tk.drawing_id} onChange={(e) => setTk({ ...tk, drawing_id: e.target.value })}>
                     <option value="">Attach a drawing (optional)</option>
-                    {drawings.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    {drawings.map((d) => <option key={d.id} value={d.id}>{String(d.name)}</option>)}
                   </select>
                 </div>
                 <DialogFooter>

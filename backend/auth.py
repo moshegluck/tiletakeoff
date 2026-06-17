@@ -59,12 +59,9 @@ def _extract_token(request: Request) -> str | None:
     return token
 
 
-async def get_current_user(request: Request) -> dict:
-    token = _extract_token(request)
+async def _resolve_user(token: str | None) -> dict | None:
     if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    # Try JWT first
+        return None
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
@@ -72,8 +69,6 @@ async def get_current_user(request: Request) -> dict:
             return user
     except jwt.InvalidTokenError:
         pass
-
-    # Try Emergent session token
     session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
     if session:
         expires_at = session["expires_at"]
@@ -82,11 +77,22 @@ async def get_current_user(request: Request) -> dict:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at >= datetime.now(timezone.utc):
-            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0, "password_hash": 0})
-            if user:
-                return user
+            return await db.users.find_one({"id": session["user_id"]}, {"_id": 0, "password_hash": 0})
+    return None
 
-    raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+async def authenticate_token(token: str | None) -> dict:
+    user = await _resolve_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return user
+
+
+async def get_current_user(request: Request) -> dict:
+    token = _extract_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await authenticate_token(token)
 
 
 def require_role(user: dict, *roles: str):

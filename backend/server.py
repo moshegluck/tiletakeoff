@@ -17,7 +17,7 @@ from models import (db, now_iso, new_id, RegisterRequest, LoginRequest, InviteRe
                     ProjectIn, TileIn, CalibrationIn, TakeoffIn, TakeoffUpdate, AIRequest)
 from auth import (hash_password, verify_password, create_access_token, set_auth_cookie,
                   clear_auth_cookie, get_current_user, require_role, create_user_with_workspace,
-                  exchange_emergent_session, seed_admin)
+                  exchange_emergent_session, seed_admin, authenticate_token)
 import storage
 import ai_service
 import calc
@@ -173,9 +173,9 @@ async def upload_drawing(project_id: str, file: UploadFile = File(...), user: di
 
 @api.get("/drawings/{drawing_id}/file")
 async def get_drawing_file(drawing_id: str, auth: str = Query(None), authorization: str = Header(None)):
-    # auth via query token (for <img>/<embed>) or header
     token = auth or (authorization[7:] if authorization and authorization.startswith("Bearer ") else None)
-    rec = await db.drawings.find_one({"id": drawing_id, "is_deleted": False}, {"_id": 0})
+    user = await authenticate_token(token)
+    rec = await db.drawings.find_one({"id": drawing_id, "workspace_id": user["workspace_id"], "is_deleted": False}, {"_id": 0})
     if not rec:
         raise HTTPException(status_code=404, detail="Drawing not found")
     data, content_type = await asyncio.to_thread(storage.get_object, rec["storage_path"])
@@ -307,8 +307,9 @@ async def _gather_report(takeoff_id: str, user: dict):
 
 @api.get("/takeoffs/{takeoff_id}/export/{fmt}")
 async def export_takeoff(takeoff_id: str, fmt: str, auth: str = Query(None),
-                         authorization: str = Header(None), request: Request = None):
-    user = await get_current_user(request)
+                         authorization: str = Header(None)):
+    token = auth or (authorization[7:] if authorization and authorization.startswith("Bearer ") else None)
+    user = await authenticate_token(token)
     project, tk, summary = await _gather_report(takeoff_id, user)
     if fmt == "csv":
         return Response(calc.build_csv(project, tk, summary), media_type="text/csv",
