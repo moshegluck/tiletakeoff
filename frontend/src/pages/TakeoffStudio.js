@@ -24,6 +24,8 @@ export default function TakeoffStudio() {
   const [zoom, setZoom] = useState(1);
   const [canvas, setCanvas] = useState({ w: 1200, h: 800 });
   const [hasImg, setHasImg] = useState(false);
+  const [bgUrl, setBgUrl] = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
   const [calibOpen, setCalibOpen] = useState(false);
   const [calibLine, setCalibLine] = useState(null);
   const [calibForm, setCalibForm] = useState({ real_length: "", unit: "ft" });
@@ -41,11 +43,36 @@ export default function TakeoffStudio() {
   const measurements = takeoff?.measurements || [];
 
   useEffect(() => {
-    if (drawing && (drawing.content_type || "").startsWith("image")) {
+    let cancelled = false;
+    setHasImg(false);
+    setBgUrl(null);
+    if (!drawing) { setCanvas({ w: 1200, h: 800 }); return; }
+    const ct = drawing.content_type || "";
+    if (ct.startsWith("image")) {
       const im = new Image();
-      im.onload = () => { setCanvas({ w: im.naturalWidth, h: im.naturalHeight }); setHasImg(true); };
+      im.onload = () => { if (cancelled) return; setCanvas({ w: im.naturalWidth, h: im.naturalHeight }); setBgUrl(fileUrl(drawing.id)); setHasImg(true); };
       im.src = fileUrl(drawing.id);
-    } else { setHasImg(false); setCanvas({ w: 1200, h: 800 }); }
+    } else if (ct.includes("pdf")) {
+      setPlanLoading(true);
+      (async () => {
+        try {
+          const { data: buf } = await api.get(`/drawings/${drawing.id}/file`, { responseType: "arraybuffer" });
+          const { renderPdfFirstPage } = await import("@/lib/pdf");
+          const res = await renderPdfFirstPage(buf, 2);
+          if (cancelled) return;
+          setCanvas({ w: res.width, h: res.height });
+          setBgUrl(res.dataUrl);
+          setHasImg(true);
+        } catch (e) {
+          if (!cancelled) { toast.error("Could not render PDF plan"); setCanvas({ w: 1200, h: 800 }); }
+        } finally {
+          if (!cancelled) setPlanLoading(false);
+        }
+      })();
+    } else {
+      setCanvas({ w: 1200, h: 800 });
+    }
+    return () => { cancelled = true; };
   }, [drawing]);
 
   const save = useCallback(async (patch) => {
@@ -200,8 +227,15 @@ export default function TakeoffStudio() {
             </div>
           )}
           <div style={{ width: canvas.w * zoom, height: canvas.h * zoom }} className="relative mx-auto my-8">
-            {hasImg && <img src={fileUrl(drawing.id)} alt="plan" className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none" draggable={false} />}
-            {!hasImg && <div className="absolute inset-0 blueprint-grid border border-slate-700" />}
+            {hasImg && bgUrl && <img src={bgUrl} alt="plan" className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none bg-white" draggable={false} />}
+            {!hasImg && (
+              <div className="absolute inset-0 blueprint-grid border border-slate-700 flex items-center justify-center">
+                <div className="text-center text-slate-400 font-mono text-xs">
+                  {planLoading ? "Rendering plan…" : !drawing ? "No drawing attached to this takeoff" : "Plan preview unavailable"}
+                  {!drawing && <div className="text-[10px] mt-1 text-slate-500">Attach a drawing from the project page, or measure on this blank canvas.</div>}
+                </div>
+              </div>
+            )}
             <svg ref={svgRef} viewBox={`0 0 ${canvas.w} ${canvas.h}`} preserveAspectRatio="none"
               onClick={onCanvasClick} className={`absolute inset-0 w-full h-full ${tool !== "select" ? "crosshair-cursor" : ""}`}
               style={{ cursor: TOOLS[tool]?.cursor }} data-testid="takeoff-canvas">

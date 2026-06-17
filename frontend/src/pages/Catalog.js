@@ -3,6 +3,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import { api, apiErr } from "@/lib/api";
 import { Plus, Trash2, Grid3x3 } from "lucide-react";
+import { TILE_SIZE_GROUPS, fmtSize } from "@/lib/tileSizes";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 
 const fetcher = (url) => api.get(url).then((r) => r.data);
@@ -41,6 +42,18 @@ export default function Catalog() {
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2"><label className="text-xs font-bold uppercase tracking-wider text-slate-500">Name</label><input data-testid="tile-name-input" className={input} value={form.name} onChange={set("name")} /></div>
               <div className="col-span-2"><label className="text-xs font-bold uppercase tracking-wider text-slate-500">Collection</label><input className={input} value={form.collection} onChange={set("collection")} /></div>
+              <div className="col-span-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Size Library — quick pick</label>
+                <select data-testid="tile-size-preset" className={input}
+                  onChange={(e) => { if (!e.target.value) return; const [w, h] = e.target.value.split("x").map(Number); setForm((f) => ({ ...f, width: w, height: h })); }}>
+                  <option value="">— choose a standard size ({TILE_SIZE_GROUPS.reduce((a, g) => a + g.sizes.length, 0)} sizes) —</option>
+                  {TILE_SIZE_GROUPS.map((g) => (
+                    <optgroup key={g.category} label={g.category}>
+                      {g.sizes.map(([w, h]) => <option key={`${w}x${h}`} value={`${w}x${h}`}>{fmtSize(w, h)}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
               <div><label className="text-xs font-bold uppercase tracking-wider text-slate-500">Width (in)</label><input type="number" className={input} value={form.width} onChange={set("width", true)} /></div>
               <div><label className="text-xs font-bold uppercase tracking-wider text-slate-500">Height (in)</label><input type="number" className={input} value={form.height} onChange={set("height", true)} /></div>
               <div><label className="text-xs font-bold uppercase tracking-wider text-slate-500">Finish</label>

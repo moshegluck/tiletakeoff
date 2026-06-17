@@ -33,9 +33,10 @@ A full SaaS platform for tile-focused flooring and wall elevation takeoffs — d
 - Tested: 21/21 backend, 100% frontend E2E.
 
 ## Known gaps / Notes
-- Email sending requires a real RESEND_API_KEY (currently returns 503). 
-- AI analysis requires an IMAGE drawing (PNG/JPG); PDF analysis not yet supported (returns 400).
-- PDF drawings render as a file icon (no in-canvas PDF rasterization yet).
+- Email sending requires a real RESEND_API_KEY (currently returns 503).
+- PDF plans now render in the Takeoff Studio canvas (client-side via pdf.js, page 1) so calibration + markup work on PDFs.
+- AI analysis still requires an IMAGE drawing (PNG/JPG); PDF AI uses page-1 raster is a future enhancement (currently 400 on PDF).
+- Catalog Add Tile includes a 68-size standard tile library (quick-pick presets).
 
 ## Backlog (Prioritized)
 ### P1
