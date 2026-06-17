@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="21" time="31.158" timestamp="2026-06-17T22:13:32.491938+00:00" hostname="agent-env-10ee6400-352b-4563-a0c0-7ce09c2c0381"><testcase classname="tests.test_tiletakeoff_api.TestAuth" name="test_register_creates_workspace_and_admin" time="0.553"><failure message="AssertionError: Internal Server Error&#10;assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">tests/test_tiletakeoff_api.py:64: in test_register_creates_workspace_and_admin
+    assert r.status_code == 200, r.text
+E   AssertionError: Internal Server Error
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="tests.test_tiletakeoff_api.TestAuth" name="test_login_admin" time="0.322" /><testcase classname="tests.test_tiletakeoff_api.TestAuth" name="test_me_with_bearer" time="0.161" /><testcase classname="tests.test_tiletakeoff_api.TestAuth" name="test_login_invalid" time="0.393" /><testcase classname="tests.test_tiletakeoff_api.TestAuth" name="test_me_no_token" time="0.101" /><testcase classname="tests.test_tiletakeoff_api.TestProjects" name="test_create_list_get_delete" time="0.539" /><testcase classname="tests.test_tiletakeoff_api.TestProjects" name="test_workspace_isolation" time="0.367"><failure message="requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)">/root/.venv/lib/python3.11/site-packages/requests/models.py:1116: in json
+    return complexjson.loads(self.text, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/json/decoder.py:337: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/json/decoder.py:355: in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+E   json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+tests/test_tiletakeoff_api.py:125: in test_workspace_isolation
+    }, timeout=30).json()
+                   ^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/models.py:1120: in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+E   requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)</failure></testcase><testcase classname="tests.test_tiletakeoff_api.TestTiles" name="test_list_seeded" time="0.103" /><testcase classname="tests.test_tiletakeoff_api.TestTiles" name="test_crud_tile" time="0.382" /><testcase classname="tests.test_tiletakeoff_api.TestDrawings" name="test_upload_and_fetch_file" time="0.877" /><testcase classname="tests.test_tiletakeoff_api.TestDrawings" name="test_calibrate" time="0.102" /><testcase classname="tests.test_tiletakeoff_api.TestTakeoffs" name="test_create_get_update_and_compute" time="1.061" /><testcase classname="tests.test_tiletakeoff_api.TestAI" name="test_ai_analyze_image" time="21.471" /><testcase classname="tests.test_tiletakeoff_api.TestAI" name="test_ai_no_drawing_400" time="0.351" /><testcase classname="tests.test_tiletakeoff_api.TestAI" name="test_ai_pdf_400" time="0.560" /><testcase classname="tests.test_tiletakeoff_api.TestExports" name="test_exports" time="1.199" /><testcase classname="tests.test_tiletakeoff_api.TestEmail" name="test_email_not_configured" time="0.342" /><testcase classname="tests.test_tiletakeoff_api.TestRBAC" name="test_viewer_blocked_from_create_project" time="1.762" /><testcase classname="tests.test_tiletakeoff_api.TestRBAC" name="test_viewer_blocked_from_create_tile" time="0.098" /><testcase classname="tests.test_tiletakeoff_api.TestRBAC" name="test_estimator_allowed_create_project" time="0.101" /><testcase classname="tests.test_tiletakeoff_api.TestRBAC" name="test_viewer_cannot_invite" time="0.098" /></testsuite></testsuites>

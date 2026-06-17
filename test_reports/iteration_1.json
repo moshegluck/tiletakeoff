@@ -1,0 +1,41 @@
+{
+  "summary": "Full backend + frontend E2E testing for TileTakeoff. 21/21 backend pytest cases PASS (after a single ObjectId fix in auth.create_user_with_workspace). Frontend E2E flow PASSES end-to-end: login -> dashboard -> create project -> upload image drawing -> create floor takeoff -> Studio: calibrate (100px -> 20 ft), draw area polygon (Finish), assign default tile, totals update (NET AREA 600 sf / TILES 5281 / COST $1,386, matches backend), run AI (Gemini 3.1 Pro vision returns regions + summary in ~20s), switch to 3D tab (tile preview renders), export PDF/Excel/CSV buttons present with auth=TOKEN in href. RBAC verified (viewer 403, estimator allowed, admin full). Email returns expected 503 (RESEND_API_KEY empty). PDF upload + AI returns 400 as required.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Takeoff Studio - Tile tab", "issues": ["React console hydration warning: '<span> cannot be a child of <option>'. Caused by JSX runtime injecting a <span data-ve-dynamic> wrapper around {t.name} inside <option> in TakeoffStudio.js around line 273. Non-blocking but pollutes console. Consider rendering tile name as a plain string (e.g. {String(t.name)} or template literal) to avoid the dev-only wrapper."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tiletakeoff_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Address React hydration warning: avoid JSX expressions that produce a wrapper <span> inside <option> in TakeoffStudio.js default-tile-select (and any similar selects in TakeoffStudio for drawings).",
+    "OPTIONAL (security): GET /api/drawings/{drawing_id}/file does not actually validate the bearer/query token (it accepts auth and authorization params but never calls get_current_user). Anyone with a drawing_id can fetch the file. Same for the 'auth' query param in /takeoffs/{id}/export/{fmt} - it relies on get_current_user(request) which only reads cookies/headers, so the ?auth=TOKEN in exportUrl is currently ignored (works for the test because cookies are sent), but if cookies are blocked (cross-site without same-site=none compatible browser), exports via window.open would fail.",
+    "OPTIONAL: shutdown handler in server.py references __import__('models').client and does nothing with it (no client.close()). Harmless but dead code."
+  ],
+  "critical_code_review_comments": [
+    "FIXED in this run: auth.create_user_with_workspace returned the mongo-inserted dict containing ObjectId _id, causing /api/auth/register to throw 500 'ObjectId is not iterable'. Added user_doc.pop('_id', None) after insert. Same code path runs for Emergent Google new-user creation, which would also have 500'd. Verified by re-running TestAuth + TestProjects.workspace_isolation -> pass.",
+    "Drawing file endpoint (/api/drawings/{id}/file) is currently UNAUTHENTICATED: it accepts auth query and authorization header but never validates them, returning the file to anyone with a drawing_id. Should call get_current_user or at least validate the token before returning data.",
+    "Export endpoint /api/takeoffs/{id}/export/{fmt} passes request=None default but is called with request via Depends/path. Works only because FastAPI injects the Request object; defensive coding would be to mark it as required without default.",
+    "auth.set_auth_cookie uses samesite='none' + secure=True which is correct for preview-domain cross-site usage; good.",
+    "calc.py: tile sizing assumes tile.unit defaults to 'in' but TileIn default is 'in' so fine; document the assumption."
+  ],
+  "updated_files": [
+    "/app/backend/auth.py (one-line fix: pop _id from user_doc after insert in create_user_with_workspace)",
+    "/app/backend/tests/test_tiletakeoff_api.py (new pytest suite, 21 tests)"
+  ],
+  "success_rate": {"backend": "100% (21/21 after fix)", "frontend": "100% (login, project, upload, takeoff studio calibrate/area/tile/AI/3D/exports all functional)"},
+  "test_credentials": "admin@tiletakeoff.com / Admin123! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Tests create TEST_-prefixed projects/tiles/users in the workspace; not actively cleaned up but namespaced. Backend's seed_admin and seed_starter_tiles seed 4 tiles per workspace verified.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/test_tiletakeoff_api.py and can be re-run with: cd /app/backend && python -m pytest tests/test_tiletakeoff_api.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml. AI test (TestAI::test_ai_analyze_image) hits Gemini 3.1 Pro and takes ~20-30s. The drawing-file endpoint security gap and the option-span hydration warning are reported but not fixed (out of testing-agent scope). Computed totals for the E2E polygon (300x200 px at 0.1 ft/px = 600 sqft) match between backend summary and Studio right-panel.",
+  "rca of the issue": "RCA - /api/auth/register 500: motor's insert_one mutates the passed doc in place, adding an _id ObjectId. create_user_with_workspace returned this dict directly through the FastAPI route; FastAPI's jsonable_encoder fails on ObjectId. Reproduction: POST /api/auth/register with any new user. Mitigation: pop '_id' after insert (applied). Same pattern was already done correctly in /api/auth/login, /api/projects, /api/tiles etc., so the fix is consistent with the codebase."
+}
