@@ -335,6 +335,21 @@ export default function Canvas2D() {
   // redraw on any state change
   useEffect(() => { schedule(); });
 
+  // Wheel zoom needs preventDefault(), but React's synthetic onWheel is attached
+  // as a PASSIVE listener — calling preventDefault there is ignored and floods
+  // the console with warnings, and the page scrolls instead of zooming. Attach a
+  // native non-passive listener instead. The ref keeps it bound to the latest
+  // onWheel closure without re-subscribing each render.
+  const wheelRef = useRef(null);
+  wheelRef.current = onWheel;
+  useEffect(() => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const handler = (e) => wheelRef.current && wheelRef.current(e);
+    cv.addEventListener('wheel', handler, { passive: false });
+    return () => cv.removeEventListener('wheel', handler);
+  }, []);
+
   // clear in-progress markup state when switching tools
   useEffect(() => {
     if (s.tool !== 'mk_count') mkActive.current = null;
@@ -402,7 +417,6 @@ export default function Canvas2D() {
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={() => { pan.current = null; draft.current = null; ruler.current = null; drag.current = null; }}
-        onWheel={onWheel}
       />
     </div>
   );
