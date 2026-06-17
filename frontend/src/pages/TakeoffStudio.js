@@ -7,7 +7,7 @@ import { TOOLS, AREA_TYPES, LINEAR_TYPES, shoelace, pathLength, centroid, realVa
 import {
   ArrowLeft, MousePointer2, Ruler, Square, Layers as LayersIcon, Spline, Minus, Hash, Scan,
   Sparkles, Box, FileSpreadsheet, FileText, FileDown, Mail, Trash2, ZoomIn, ZoomOut, Maximize,
-  Check, X, Undo2, CornerDownLeft,
+  Check, X, Undo2,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -28,12 +28,22 @@ export default function TakeoffStudio() {
   const [planLoading, setPlanLoading] = useState(false);
   const [calibOpen, setCalibOpen] = useState(false);
   const [calibLine, setCalibLine] = useState(null);
-  const [calibForm, setCalibForm] = useState({ real_length: "", unit: "ft" });
+  const [calibForm, setCalibForm] = useState({ feet: "", inches: "", unit: "ft" });
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [tab, setTab] = useState("measure");
   const svgRef = useRef();
+  const containerRef = useRef();
+
+  const fitToScreen = useCallback(() => {
+    const el = containerRef.current;
+    if (!el || !canvas.w) return;
+    const z = Math.min((el.clientWidth - 48) / canvas.w, (el.clientHeight - 96) / canvas.h);
+    setZoom(Math.max(Math.min(z, 1.5), 0.08));
+  }, [canvas]);
+
+  useEffect(() => { const t = setTimeout(fitToScreen, 60); return () => clearTimeout(t); }, [canvas.w, canvas.h, fitToScreen]);
 
   const takeoff = data?.takeoff;
   const drawing = data?.drawing;
@@ -87,10 +97,11 @@ export default function TakeoffStudio() {
     return [(e.clientX - r.left) / r.width * canvas.w, (e.clientY - r.top) / r.height * canvas.h];
   };
 
-  const addMeasurement = (m) => {
-    const next = [...measurements, m];
-    save({ measurements: next });
-  };
+  const closeThreshold = Math.max(canvas.w * 0.012, 8);
+  const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= closeThreshold;
+  const dedupe = (pts) => pts.filter((p, i) => i === 0 || !near(p, pts[i - 1]));
+
+  const addMeasurement = (m) => save({ measurements: [...measurements, m] });
 
   const onCanvasClick = (e) => {
     if (tool === "select") return;
@@ -108,17 +119,30 @@ export default function TakeoffStudio() {
     const meta = TOOLS[tool];
     if (meta.kind === "line") {
       const np = [...draft, p];
-      if (np.length === 2) { finishShape(np); setDraft([]); }
-      else setDraft(np);
-    } else {
-      setDraft([...draft, p]);
+      if (np.length === 2) { finishShape(np); } else setDraft(np);
+      return;
     }
+    // polygon / path: click near first point closes the shape
+    if (meta.kind === "polygon" && draft.length >= 3 && near(p, draft[0])) {
+      finishShape(draft);
+      return;
+    }
+    setDraft([...draft, p]);
   };
 
-  const finishShape = (pts) => {
+  const onCanvasDoubleClick = (e) => {
+    if (tool === "select" || tool === "count" || tool === "calibrate") return;
+    e.preventDefault();
+    e.stopPropagation();
     const meta = TOOLS[tool];
+    if (meta.kind === "polygon" && draft.length >= 3) finishShape(draft);
+  };
+
+  const finishShape = (raw) => {
+    const meta = TOOLS[tool];
+    const pts = dedupe(raw);
     const minPts = meta.kind === "polygon" ? 3 : 2;
-    if (pts.length < minPts) { toast.error(`Need at least ${minPts} points`); return; }
+    if (pts.length < minPts) { toast.error(`Add at least ${minPts} points first`); return; }
     const labelBase = { area: "Room", wall: "Wall", opening: "Opening", perimeter: "Perimeter", linear: "Line" }[tool] || tool;
     addMeasurement({
       id: `m_${Date.now()}`, type: tool, points: pts, color: meta.color,
@@ -126,19 +150,37 @@ export default function TakeoffStudio() {
       label: `${labelBase} ${measurements.filter(m => m.type === tool).length + 1}`,
     });
     setDraft([]);
+    toast.success("Measurement added");
   };
 
   const finishDraft = () => { if (draft.length) finishShape(draft); };
-  const undoDraft = () => setDraft(draft.slice(0, -1));
+  const undoDraft = () => setDraft((d) => d.slice(0, -1));
+  const cancelDraft = () => setDraft([]);
+
+  // keyboard: Enter = finish, Esc = cancel, Backspace = undo last point
+  useEffect(() => {
+    const onKey = (e) => {
+      if (tool === "select") return;
+      if (e.key === "Enter") { e.preventDefault(); finishDraft(); }
+      else if (e.key === "Escape") { setDraft([]); }
+      else if (e.key === "Backspace") { e.preventDefault(); undoDraft(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const confirmCalibration = async () => {
-    const realLen = parseFloat(calibForm.real_length);
-    if (!realLen || !calibLine) return;
+    const feet = parseFloat(calibForm.feet) || 0;
+    const inches = parseFloat(calibForm.inches) || 0;
+    let realLen, unit;
+    if (calibForm.unit === "ft") { realLen = feet + inches / 12; unit = "ft"; }
+    else { realLen = feet; unit = calibForm.unit; }  // for in/m, "feet" field holds the value
+    if (!realLen || !calibLine) { toast.error("Enter the real length of the line"); return; }
     const px = pathLength(calibLine);
     try {
-      await api.post(`/drawings/${drawing.id}/calibrate`, { pixel_length: px, real_length: realLen, unit: calibForm.unit });
-      toast.success("Scale calibrated");
-      setCalibOpen(false); setCalibLine(null); setTool("select");
+      await api.post(`/drawings/${drawing.id}/calibrate`, { pixel_length: px, real_length: realLen, unit });
+      toast.success(`Scale set · ${realLen.toFixed(2)} ${unit}`);
+      setCalibOpen(false); setCalibLine(null); setTool("select"); setCalibForm({ feet: "", inches: "", unit: "ft" });
       mutate();
     } catch (e) { toast.error(apiErr(e)); }
   };
@@ -206,26 +248,38 @@ export default function TakeoffStudio() {
           })}
           <div className="mt-auto flex flex-col gap-1">
             <button onClick={() => setZoom((z) => Math.min(z + 0.2, 3))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomIn className="w-4 h-4" /></button>
-            <button onClick={() => setZoom((z) => Math.max(z - 0.2, 0.4))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomOut className="w-4 h-4" /></button>
-            <button onClick={() => setZoom(1)} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><Maximize className="w-4 h-4" /></button>
+            <button onClick={() => setZoom((z) => Math.max(z - 0.15, 0.08))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomOut className="w-4 h-4" /></button>
+            <button onClick={fitToScreen} title="Fit to screen" className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><Maximize className="w-4 h-4" /></button>
           </div>
         </div>
 
         {/* Canvas */}
-        <div className="flex-1 relative overflow-auto dot-grid">
+        <div ref={containerRef} className="flex-1 relative overflow-auto dot-grid">
           {tool !== "select" && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-slate-950 text-white text-xs font-mono px-3 py-1.5 rounded-sm flex items-center gap-3 shadow-lg">
-              <span className="text-orange-400">{TOOLS[tool].label}</span>
-              {TOOLS[tool].kind === "polygon" && <span className="text-slate-400">click points · finish to close</span>}
-              {tool === "calibrate" && <span className="text-slate-400">draw a line of known length</span>}
-              {draft.length > 0 && TOOLS[tool]?.kind === "polygon" && (
-                <>
-                  <button onClick={finishDraft} className="text-green-400 hover:text-green-300 inline-flex items-center gap-1"><CornerDownLeft className="w-3 h-3" />Finish</button>
-                  <button onClick={undoDraft} className="text-amber-400 hover:text-amber-300 inline-flex items-center gap-1"><Undo2 className="w-3 h-3" />Undo</button>
-                </>
-              )}
+              <span className="text-orange-400 font-bold">{TOOLS[tool].label}</span>
+              {TOOLS[tool].kind === "polygon" && <span className="text-slate-400">click corners · double-click or Enter to finish</span>}
+              {TOOLS[tool].kind === "line" && <span className="text-slate-400">click start & end point</span>}
+              {tool === "count" && <span className="text-slate-400">click each item to count</span>}
+              {tool === "calibrate" && <span className="text-slate-400">draw a line along a known dimension</span>}
             </div>
           )}
+
+          {/* Prominent draft action toolbar */}
+          {draft.length > 0 && TOOLS[tool]?.kind === "polygon" && (
+            <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 bg-white border border-slate-300 shadow-xl rounded-sm flex items-stretch overflow-hidden">
+              <div className="px-4 flex items-center text-xs font-mono text-slate-600 border-r border-slate-200">
+                {draft.length} point{draft.length !== 1 ? "s" : ""}{draft.length < 3 && <span className="text-amber-600 ml-1">· need {3 - draft.length} more</span>}
+              </div>
+              <button data-testid="finish-shape-btn" onClick={finishDraft} disabled={draft.length < 3}
+                className="px-5 py-2.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-sm inline-flex items-center gap-2 transition-colors">
+                <Check className="w-4 h-4" /> Finish Shape
+              </button>
+              <button data-testid="undo-point-btn" onClick={undoDraft} className="px-3 hover:bg-slate-100 text-slate-600 inline-flex items-center gap-1 text-xs font-bold border-l border-slate-200"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
+              <button data-testid="cancel-shape-btn" onClick={cancelDraft} className="px-3 hover:bg-red-50 text-slate-500 hover:text-red-600 inline-flex items-center gap-1 text-xs font-bold border-l border-slate-200"><X className="w-3.5 h-3.5" /> Cancel</button>
+            </div>
+          )}
+
           <div style={{ width: canvas.w * zoom, height: canvas.h * zoom }} className="relative mx-auto my-8">
             {hasImg && bgUrl && <img src={bgUrl} alt="plan" className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none bg-white" draggable={false} />}
             {!hasImg && (
@@ -237,7 +291,7 @@ export default function TakeoffStudio() {
               </div>
             )}
             <svg ref={svgRef} viewBox={`0 0 ${canvas.w} ${canvas.h}`} preserveAspectRatio="none"
-              onClick={onCanvasClick} className={`absolute inset-0 w-full h-full ${tool !== "select" ? "crosshair-cursor" : ""}`}
+              onClick={onCanvasClick} onDoubleClick={onCanvasDoubleClick} className={`absolute inset-0 w-full h-full ${tool !== "select" ? "crosshair-cursor" : ""}`}
               style={{ cursor: TOOLS[tool]?.cursor }} data-testid="takeoff-canvas">
               {measurements.map((m) => <MeasurementShape key={m.id} m={m} scale={scale} unit={unit} />)}
               {/* draft */}
@@ -248,7 +302,10 @@ export default function TakeoffStudio() {
                   ) : (
                     <polyline points={draft.map((p) => p.join(",")).join(" ")} fill="none" stroke="#EA580C" strokeWidth={2 * (canvas.w / 1000)} strokeDasharray="6 4" />
                   )}
-                  {draft.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={4 * (canvas.w / 1000)} fill="#fff" stroke="#EA580C" strokeWidth={2 * (canvas.w / 1000)} />)}
+                  {draft.map((p, i) => (
+                    <circle key={i} cx={p[0]} cy={p[1]} r={(i === 0 && draft.length >= 3 ? 7 : 4) * (canvas.w / 1000)}
+                      fill={i === 0 && draft.length >= 3 ? "#16A34A" : "#fff"} stroke="#EA580C" strokeWidth={2 * (canvas.w / 1000)} />
+                  ))}
                 </g>
               )}
             </svg>
@@ -410,12 +467,22 @@ export default function TakeoffStudio() {
       <Dialog open={calibOpen} onOpenChange={setCalibOpen}>
         <DialogContent className="rounded-sm">
           <DialogHeader><DialogTitle className="font-black tracking-tight">Set Drawing Scale</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-500">You drew a reference line of {calibLine ? pathLength(calibLine).toFixed(0) : 0}px. Enter its real-world length.</p>
-          <div className="flex gap-2">
-            <input data-testid="calib-length-input" type="number" className={input} placeholder="Length" value={calibForm.real_length} onChange={(e) => setCalibForm({ ...calibForm, real_length: e.target.value })} />
-            <select className={input + " w-24"} value={calibForm.unit} onChange={(e) => setCalibForm({ ...calibForm, unit: e.target.value })}>
-              <option value="ft">ft</option><option value="in">in</option><option value="m">m</option>
+          <p className="text-sm text-slate-500">You drew a reference line of <b className="font-mono">{calibLine ? pathLength(calibLine).toFixed(0) : 0}px</b>. Enter its real-world length — trace along a known dimension on the plan (e.g. a labeled wall) for best accuracy.</p>
+          <div className="flex items-end gap-2">
+            <select className={input + " w-28"} value={calibForm.unit} onChange={(e) => setCalibForm({ ...calibForm, unit: e.target.value })}>
+              <option value="ft">feet + in</option><option value="in">inches</option><option value="m">meters</option>
             </select>
+            {calibForm.unit === "ft" ? (
+              <>
+                <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Feet</label>
+                  <input data-testid="calib-length-input" type="number" className={input} placeholder="0" value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
+                <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Inches</label>
+                  <input type="number" className={input} placeholder="0" value={calibForm.inches} onChange={(e) => setCalibForm({ ...calibForm, inches: e.target.value })} /></div>
+              </>
+            ) : (
+              <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Length</label>
+                <input data-testid="calib-length-input" type="number" className={input} placeholder="0" value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
+            )}
           </div>
           <DialogFooter><button data-testid="confirm-calib-btn" onClick={confirmCalibration} className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-4 py-2 rounded-sm">Apply Scale</button></DialogFooter>
         </DialogContent>
