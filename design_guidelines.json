@@ -1,0 +1,123 @@
+{
+  "theme": "light",
+  "archetype": "Swiss & High-Contrast (Archetype 4) - Adapted for CAD/B2B Construction SaaS",
+  "typography": {
+    "primary_font": "Chivo",
+    "secondary_font": "JetBrains Mono",
+    "heading_strategy": "Chivo for all structural headings, module titles, and UI labels. Use uppercase and tracking-wider for overlines.",
+    "body_strategy": "Chivo for readable paragraphs. JetBrains Mono for ALL measurements, quantities, coordinates, tile dimensions, and data tables. Never use generic sans.",
+    "scale": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter leading-none",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-lg sm:text-xl font-bold",
+      "h4": "text-base font-bold uppercase tracking-widest",
+      "body": "text-sm leading-relaxed",
+      "data": "text-xs font-mono tracking-tight",
+      "micro": "text-[10px] font-mono uppercase tracking-widest"
+    }
+  },
+  "colors": {
+    "background": {
+      "canvas": "#F1F5F9", 
+      "panel": "#FFFFFF",
+      "rail": "#020617"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "inverse": "#F8FAFC",
+      "accent": "#EA580C"
+    },
+    "border": {
+      "default": "#E2E8F0",
+      "active": "#0F172A",
+      "focus": "#EA580C"
+    },
+    "brand": {
+      "primary": "#EA580C",
+      "primary_hover": "#C2410C",
+      "secondary": "#020617",
+      "measurement_area": "rgba(234, 88, 12, 0.2)",
+      "measurement_stroke": "#EA580C"
+    },
+    "status": {
+      "success": "#16A34A",
+      "warning": "#EAB308",
+      "error": "#DC2626",
+      "info": "#2563EB"
+    }
+  },
+  "layout": {
+    "strategy": "The 'Control Room' Grid - Dense, functional, 1px border-driven. No soft shadows. Everything feels like a technical instrument.",
+    "spacing": "Dense and compact. p-2 to p-4 inside panels. 1px borders for all divisions.",
+    "radius": "rounded-none or max rounded-sm (2px) to maintain the CAD/Blueprint aesthetic.",
+    "takeoff_studio": {
+      "left_rail": "w-14 bg-slate-950 flex flex-col items-center py-4 space-y-4 border-r border-slate-800 z-20",
+      "center_canvas": "flex-1 bg-slate-100 relative overflow-hidden bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:16px_16px]",
+      "right_panel": "w-80 bg-white border-l border-slate-200 flex flex-col h-full z-20 overflow-y-auto",
+      "bottom_bar": "h-8 bg-white border-t border-slate-200 flex items-center px-4 text-[10px] font-mono text-slate-500 justify-between z-20"
+    },
+    "dashboard": "grid-cols-1 md:grid-cols-12 gap-px bg-slate-200 border border-slate-200, items have bg-white. Strict grid.",
+    "landing_page": "High-contrast sections. Hero with deep slate background, white text, and an orange CTA. Feature sections use the Swiss Grid strategy (asymmetric 12-col grids)."
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-sm px-4 py-2 text-sm transition-colors",
+      "secondary": "bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-sm px-4 py-2 text-sm transition-colors",
+      "outline": "border border-slate-300 hover:border-slate-900 text-slate-900 font-bold rounded-sm px-4 py-2 text-sm transition-all",
+      "tool": "w-10 h-10 flex items-center justify-center rounded-sm hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+    },
+    "panels": "bg-white border border-slate-200 rounded-sm shadow-sm",
+    "inputs": "bg-slate-50 border border-slate-200 rounded-sm px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-600 focus:ring-1 focus:ring-orange-600 transition-all",
+    "tile_swatch": "aspect-square border-2 border-slate-200 cursor-pointer transition-all hover:border-orange-600 relative group overflow-hidden rounded-sm",
+    "accordions": "border-b border-slate-200 last:border-0",
+    "data_table": "w-full text-left text-sm text-slate-600 border-collapse, th are font-mono text-xs uppercase tracking-wider text-slate-500 py-2 border-b border-slate-200"
+  },
+  "interactions_and_motion": {
+    "hover": "Instant or very fast (100ms) transitions. Tooltips appear instantly. No floaty animations.",
+    "focus": "Sharp 2px outline using the orange accent color (#EA580C).",
+    "active": "Tools in the left rail get a solid orange background when active. Cursor changes to crosshair when a measurement tool is active.",
+    "loader": "Indeterminate progress bar (1px height) at the top of the canvas, or a spinning mono-styled loader."
+  },
+  "imagery_and_assets": {
+    "strategy": "Technical, precise, and authentic. Real blueprints, clean architectural environments, high-res tile textures. No abstract illustrations.",
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1721244654392-9c912a6eb236?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwzfHxhcmNoaXRlY3R1cmFsJTIwYmx1ZXByaW50cyUyMHBsYW5uZXJ8ZW58MHx8fHwxNzgxNzMzMzkwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "A blueprint of a building with a bunch of windows",
+        "category": "landing_hero_background"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1503387762-592deb58ef4e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwyfHxhcmNoaXRlY3R1cmFsJTIwYmx1ZXByaW50cyUyMHBsYW5uZXJ8ZW58MHx8fHwxNzgxNzMzMzkwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "An architect working on a draft with a pencil and ruler",
+        "category": "landing_feature_takeoff"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1523350165414-082d792c4bcc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTN8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjZXJhbWljJTIwdGlsZSUyMHRleHR1cmV8ZW58MHx8fHwxNzgxNzMzMzkwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "gray and white tiles",
+        "category": "tile_catalog_sample_1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1678742755904-6c3fc8ba6602?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTN8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBjZXJhbWljJTIwdGlsZSUyMHRleHR1cmV8ZW58MHx8fHwxNzgxNzMzMzkwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "a close up of a tiled floor with a red and white checkerboard pattern",
+        "category": "tile_catalog_sample_2"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1778074762022-c33cc42f79ae?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwyfHxjb25zdHJ1Y3Rpb24lMjBzaXRlJTIwdGFibGV0JTIwcGxhbnxlbnwwfHx8fDE3ODE3MzMzOTB8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Two construction workers review plans on a tablet",
+        "category": "landing_mobile_companion"
+      }
+    ],
+    "icons": "lucide-react (Standardized technical look with 1.5px stroke width)."
+  },
+  "instructions_to_main_agent": [
+    "Ensure all interactive elements and key informational elements have a data-testid attribute in kebab-case (e.g., data-testid='polygon-tool-button').",
+    "Install and use 'Chivo' and 'JetBrains Mono' from Google Fonts. Do NOT use Inter.",
+    "Implement the layout as a pure flex/grid HTML structure with strict 1px borders, avoiding Shadcn 'Card' components where pure dense divs work better for the Control Room archetype.",
+    "Use standard .js files for React components. Do not output .tsx files.",
+    "The takeoff studio canvas should have a dot-matrix background using Tailwind arbitrary values or inline CSS to resemble an empty blueprint/grid.",
+    "For the 3D visualization pane, use an absolute positioned overlay or a resizable split pane. If a library is needed, use Three.js/React Three Fiber, but ensure the UI overlay remains crisp and standard DOM.",
+    "Make heavy use of Shadcn's Accordion, Tabs, and Table components for the right properties panel, but customize them to be extremely dense (h-8 instead of h-10, text-sm instead of text-base).",
+    "NEVER use placeholders like via.placeholder.com. ONLY use the provided image URLs."
+  ]
+}
