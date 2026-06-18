@@ -59,7 +59,17 @@ Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid 
 - **Mosaic pattern**: added to PATTERNS, SVG TilePattern (small chips), and Room3D texture. Calculated/sold by the sheet (`_mosaic_quantities`, 12×12 = 1 sqft sheet). Breakdown relabels Full→Sheets for mosaic.
 - Tests: /app/backend/tests/test_calc.py (8 passing). Frontend E2E verified (waste sanity, custom dims, mosaic, panel scroll all pass).
 
-## Wall-elevation + Multi-page PDF + panel fix (2026-06-19b)
+## Exports + AI page + waste override + CSV import + metrics + pan/zoom (2026-06-19c)
+- **Per-room metrics by preference (NEW)**: Layers tab has a "Show" bar (Area / W×L / Perimeter / Wall sf) persisted to `localStorage(tt_metric_prefs)`. Each room shows A=<sf>, W×L=<feet-inches>, Perim=<ft> — matches plan-style A/W/H annotations (e.g. "A=157 sf  W×L=11'-9\" × 13'-4\"  Perim=50.2 ft"). Helpers `bbox()` + `fmtFtIn()` in geometry.js.
+- **Per-room waste % override**: input in Tile tab (`room-waste-<id>`); `tile_quantities(..., waste_override)` replaces the auto allowance (accepts 15 or 0.15).
+- **Catalog CSV import**: `POST /api/tiles/import` (flexible headers, name/width/height/finish/pattern/price/etc.) + Import CSV / Template buttons on Catalog page.
+- **Multi-page AI**: `ai-analyze?page=N` rasterizes the active PDF page; frontend `runAI` passes current page.
+- **Exports**: PDF/Excel/CSV `<a>` links now force-download (download attr); all verified 200 with correct content-types.
+- **Canvas pan/zoom**: scroll-wheel zoom (existing) + middle-mouse-button hold-drag pan made robust (pointer capture + native mousedown preventDefault to kill browser autoscroll).
+- **Fixed**: Catalog.js unterminated-JSX crash (stray `<div>` balance).
+- Tests: 10 passing in test_calc.py. Full E2E iteration_4.json — all 7 asks pass, no bugs.
+
+
 - **Wall-elevation mode**: a linear/wall run can be given a height (Style tab → Wall Elevation → Height ft). The backend (`calc.py` LINEAR branch) converts it to a tiled surface area = length × height, joins it into the tile group, and it appears in Per-Room Layout for tile/size/pattern assignment. Verified: 32.6 ft × 8 ft = 261.13 sf added to net area. Door/window openings deduct via cutout rectangles.
 - **Multi-page PDF**: `pdf.js` now exposes `loadPdf`/`renderPdfPage`; the studio shows a page navigator (Page X / N) for multi-page PDFs. Markup is tagged with `page` and the canvas (fill, shapes, control points, hit-test, snapping) is filtered to the current page. Layers list shows a `pX` badge and clicking jumps to that page. (AI still rasterizes page 1 — multi-page AI is a future enhancement.)
 - **Panel-scroll fix**: scrollable `TabsContent` panels were missing `min-h-0`, so they couldn't shrink and clipped content. Added `min-h-0` to all scrollable tab panels.
