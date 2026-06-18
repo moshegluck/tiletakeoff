@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { api, apiErr, fileUrl, exportUrl } from "@/lib/api";
-import { shoelace, pathLength, centroid, realValue, AREA_TYPES, LINEAR_TYPES } from "@/lib/geometry";
+import { shoelace, pathLength, centroid, realValue, AREA_TYPES, LINEAR_TYPES, effectiveTile } from "@/lib/geometry";
 import { TilePattern, PATTERNS } from "@/lib/tilePatterns";
 import {
   ArrowLeft, MousePointer2, Hand, Ruler, Square, SquareDashedBottom, Spline, Minus, Hash, Type,
@@ -379,7 +379,7 @@ export default function TakeoffStudio() {
 
   const sel = items.find((m) => m.id === selId);
   const sw = (m) => (m.lineWidth || 2) / view.z;
-  const areaTileFor = (m) => tilesMap[m.tile_id] || defaultTile;
+  const areaTileFor = (m) => effectiveTile(m, tilesMap, defaultTile);
   const cursorClass = tool === "pan" ? "cursor-grab" : tool === "select" ? "cursor-default" : "cursor-crosshair";
 
   return (
@@ -563,31 +563,51 @@ export default function TakeoffStudio() {
               {/* per-area layout */}
               <div className="border-t border-slate-200 pt-3 space-y-2">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Per-Room Layout</div>
-                {items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction).map((m) => (
-                  <div key={m.id} className="border border-slate-200 rounded-sm p-2 space-y-1.5">
+                <p className="text-[10px] text-slate-400 leading-snug">Enter the tile <b>Width × Height</b> (inches). Pick a library tile for color &amp; pricing, or leave it on the default. Choose <b>mosaic</b> to lay small chips by the sheet.</p>
+                {items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction).map((m) => {
+                  const cw = m.custom_w, ch = m.custom_h, isCustom = cw > 0 && ch > 0;
+                  return (
+                  <div key={m.id} data-testid={`room-layout-${m.id}`} className="border border-slate-200 rounded-sm p-2 space-y-1.5">
                     <div className="text-xs font-bold">{m.label}</div>
                     <div className="grid grid-cols-2 gap-1.5">
-                      <select className={input} value={m.tile_id || ""} onChange={(e) => updateItem(m.id, { tile_id: e.target.value || null })}>
-                        <option value="">{defaultTile ? `default (${defaultTile.name})` : "default"}</option>
+                      <div>
+                        <label className="text-[9px] font-mono uppercase tracking-wider text-slate-400">Width (in)</label>
+                        <input data-testid={`room-width-${m.id}`} type="number" min="0" step="0.125" placeholder="W" className={input}
+                          value={cw ?? ""} onChange={(e) => updateItem(m.id, { custom_w: e.target.value === "" ? null : +e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono uppercase tracking-wider text-slate-400">Height (in)</label>
+                        <input data-testid={`room-height-${m.id}`} type="number" min="0" step="0.125" placeholder="H" className={input}
+                          value={ch ?? ""} onChange={(e) => updateItem(m.id, { custom_h: e.target.value === "" ? null : +e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <select data-testid={`room-tile-${m.id}`} className={input} value={m.tile_id || ""} onChange={(e) => updateItem(m.id, { tile_id: e.target.value || null })}>
+                        <option value="">{isCustom ? "custom size" : (defaultTile ? `default (${defaultTile.name})` : "library tile (optional)")}</option>
                         {(tiles || []).map((t) => <option key={t.id} value={t.id}>{String(t.name)}</option>)}
                       </select>
-                      <select className={input} value={m.pattern || ""} onChange={(e) => updateItem(m.id, { pattern: e.target.value || null })}>
-                        <option value="">pattern (tile default)</option>
+                      <select data-testid={`room-pattern-${m.id}`} className={input} value={m.pattern || ""} onChange={(e) => updateItem(m.id, { pattern: e.target.value || null })}>
+                        <option value="">pattern (default)</option>
                         {PATTERNS.map((p) => <option key={p} value={p}>{p}</option>)}
                       </select>
                     </div>
+                    {isCustom && (
+                      <div className="text-[10px] font-mono text-orange-600">Custom {cw}×{ch} in{m.pattern === "mosaic" ? " · mosaic sheet" : ""}{!m.tile_id && !defaultTile ? " · count only (no price)" : ""}</div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
               {/* quantity breakdown */}
-              <div className="border-t border-slate-200 pt-3 space-y-2">
+              <div className="border-t border-slate-200 pt-3 space-y-2 pb-6">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Quantity & Cut Breakdown</div>
-                {(summary?.lines || []).length === 0 && <div className="text-sm text-slate-400">Draw areas and assign tiles.</div>}
+                {(summary?.lines || []).length === 0 && <div className="text-sm text-slate-400">Draw areas and set a tile size.</div>}
                 {(summary?.lines || []).map((l, i) => (
-                  <div key={i} className="border border-slate-200 rounded-sm p-2.5 text-xs font-mono">
+                  <div key={i} data-testid={`breakdown-line-${i}`} className="border border-slate-200 rounded-sm p-2.5 text-xs font-mono">
                     <div className="font-bold text-sm font-sans">{l.tile_name} <span className="text-slate-400 font-normal">· {l.pattern}</span></div>
+                    <div className="text-[10px] text-slate-400">{l.tile_size}</div>
                     <div className="grid grid-cols-2 gap-1 mt-1 text-slate-600">
-                      <span>Net: {l.net_area} sf</span><span>Full: <b className="text-slate-900">{l.full_tiles}</b></span>
+                      <span>Net: {l.net_area} sf</span><span>{l.pattern === "mosaic" ? "Sheets" : "Full"}: <b className="text-slate-900">{l.full_tiles}</b></span>
                       <span>Cuts: <b className="text-slate-900">{l.cut_tiles}</b></span><span>Reused: <b className="text-green-700">{l.reused_cuts}</b></span>
                       <span>Order: <b className="text-slate-900">{l.tiles_needed}</b></span><span>Boxes: <b className="text-slate-900">{l.boxes}</b></span>
                       <span>Waste: {l.true_waste_pct}%</span><span className="text-orange-600 font-bold">${l.cost.toLocaleString()}</span>
@@ -736,7 +756,7 @@ function Plan3D({ items, tilesMap, defaultTile, scale, type, withTiles }) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   areas.forEach((m) => m.points.forEach(([x, y]) => { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }));
   const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
-  const tileFor = (m) => tilesMap[m.tile_id] || defaultTile;
+  const tileFor = (m) => effectiveTile(m, tilesMap, defaultTile);
   const vizScale = (m) => { const t = tileFor(m); const twFt = (t?.width || 12) / 12; return (twFt * 14) / w; }; // ~14 tiles across, always visible
   const W = 460, H = Math.max(Math.min(W * h / w, 420), 120);
   return (

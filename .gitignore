@@ -88,3 +88,4 @@ frontend/node_modules/.cache/default-development/1.pack
 credentials.json
 *.key
 .credentials
+frontend/node_modules/.cache/default-development/4.pack

@@ -46,3 +46,19 @@ export function realValue(m, scale) {
   if (LINEAR_TYPES.includes(m.type)) return pathLength(m.points) * scale;
   return null;
 }
+
+// Effective tile for a measurement: custom Width×Height (inches) takes priority,
+// the library tile (or default) is optional and supplies color/finish/pricing.
+export function effectiveTile(m, tilesMap, defaultTile) {
+  const base = (m.tile_id && tilesMap[m.tile_id]) || defaultTile || null;
+  const cw = parseFloat(m.custom_w), ch = parseFloat(m.custom_h);
+  if (cw > 0 && ch > 0) {
+    return {
+      ...(base || { color: "#cbd5e1", finish: "Matte", grout_spacing: 0.0625, unit: "in" }),
+      id: `${base?.id || "x"}_${cw}x${ch}`,
+      name: base?.name || `Custom ${cw}×${ch}`,
+      width: cw, height: ch,
+    };
+  }
+  return base;
+}

@@ -1,6 +1,6 @@
 import React from "react";
 
-export const PATTERNS = ["grid", "brick", "diagonal", "herringbone", "basketweave", "chevron", "checkerboard"];
+export const PATTERNS = ["grid", "brick", "diagonal", "herringbone", "basketweave", "chevron", "checkerboard", "mosaic"];
 
 function shade(hex, amt) {
   try {
@@ -65,6 +65,11 @@ export function TilePattern({ id, tile, pattern, scale, opacity = 0.85 }) {
   } else if (pat === "diagonal") {
     cw = tw + g; ch = th + g; transform = "rotate(45)";
     content = [tileRect(g / 2, g / 2, tw, th, color, "d0")];
+  } else if (pat === "mosaic") {
+    // mosaic = uniform small square chips on a sheet
+    const chip = Math.max(Math.min(tw, th), 3);
+    cw = chip + g; ch = chip + g;
+    content = [tileRect(g / 2, g / 2, chip, chip, color, "mo0")];
   } else {
     // grid
     cw = tw + g; ch = th + g;

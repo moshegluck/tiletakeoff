@@ -2,6 +2,7 @@ import React, { useMemo, Suspense } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
+import { effectiveTile } from "@/lib/geometry";
 
 function materialOf(tile) {
   const s = `${tile?.collection || ""} ${tile?.name || ""}`.toLowerCase();
@@ -89,6 +90,9 @@ function makeTileTexture(tile, pattern) {
   } else if (pat === "diagonal") {
     ctx.save(); ctx.translate(S / 2, S / 2); ctx.rotate(Math.PI / 4); ctx.translate(-S, -S);
     const n = 10, t = (2 * S) / n; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) drawTile(ctx, i * t + g, j * t + g, t - 2 * g, t - 2 * g, color, mat); ctx.restore();
+  } else if (pat === "mosaic") {
+    const n = 16, t = S / n;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) drawTile(ctx, i * t + g, j * t + g, t - 2 * g, t - 2 * g, shade(color, (Math.random() - 0.5) * 16), mat);
   } else {
     const n = 6, t = S / n, th = t * Math.min(Math.max(aspect, 0.5), 2);
     for (let i = 0; i < n; i++) for (let j = 0; j * th < S; j++) drawTile(ctx, i * t + g, j * th + g, t - 2 * g, th - 2 * g, color, mat);
@@ -116,7 +120,8 @@ function RoomMesh({ pts, tile, pattern, wallHeight }) {
     return { shape, edges, w: maxX - minX, d: maxY - minY };
   }, [pts]);
 
-  const tileFt = ((tile?.width || 12) / 12);
+  const pat = (pattern || tile?.pattern || "").toLowerCase();
+  const tileFt = pat === "mosaic" ? 1 : ((tile?.width || 12) / 12);
   const reps = Math.max(Math.min(w / (tileFt * 6), 30), 0.5);
   tex.repeat.set(reps, reps * (d / Math.max(w, 1)));
 
@@ -143,7 +148,7 @@ export default function Room3D({ rooms, scale, wallHeight = 8, tilesMap, default
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     const spanPx = Math.max(maxX - minX, maxY - minY, 1);
     const fpp = scale || 28 / spanPx;
-    return rooms.map((m) => ({ tile: tilesMap[m.tile_id] || defaultTile, pattern: m.pattern || (tilesMap[m.tile_id] || defaultTile)?.pattern,
+    return rooms.map((m) => ({ tile: effectiveTile(m, tilesMap, defaultTile), pattern: m.pattern || effectiveTile(m, tilesMap, defaultTile)?.pattern,
       pts: m.points.map(([x, y]) => [(x - cx) * fpp, (y - cy) * fpp]) }));
   }, [rooms, scale, tilesMap, defaultTile]);
 

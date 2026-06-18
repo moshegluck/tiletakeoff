@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only retest of TileTakeoff Tile tab fixes (waste calc rewrite + custom W/H + mosaic pattern + panel scroll). ALL 4 ASKS PASS. Login as admin@tiletakeoff.com -> /takeoff/tk_6c9ed25073494da9 -> Tile tab. (1) WASTE SANITY: Calacatta Gold 24x48 line shows Waste 11.2% / Order 28 (was 82.6%/46) and Nordic Oak 8x48 herringbone shows Waste 16% / Order 44 - exactly matches backend live values. (2) CUSTOM DIMENSIONS: Typing 18 into room-width-<id> and 18 into room-height-<id> on Room 1, after ~1.5s autosave, breakdown-line-0 size label updates to '18x18 in · custom', Order recomputes to 97, Waste 8.3% (realistic). (3) MOSAIC: Selecting 'mosaic' in room-pattern-<id> for Room 2, after autosave, breakdown-line-1 label becomes 'Nordic Oak · mosaic', size shows '8x48 sheet · mosaic sheet', Full field is relabeled 'Sheets: 109', Order 109, Waste 7.7%. (4) PANEL SCROLL: Last breakdown card (bottom @ 544px) sits well above the Email Report button (top @ 1002px) in a 1080px viewport - no clipping, fully reachable via scroll. Top summary tiles (NET AREA 302.68sf / TILES / COST) update live as room config changes.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tiletakeoff_api.py",
+    "/app/backend/tests/test_calc.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Calc model in /app/backend/calc.py looks correct: area-based (installed = ceil(net/tile_area), order = ceil(installed*(1+waste)) minus reused cuts, waste = max(pattern_waste, manuf_floor)). 24x48 grid on 201.5sf -> 25.18 installed -> 28 ordered (11.2% effective waste) is the right answer.",
+    "_eff_dims() honoring custom_w/custom_h in calc.py is consistent with frontend lib/geometry.js effectiveTile(). Group key in compute_summary() correctly merges by (tile_id, custom_w, custom_h, pattern) so two rooms with different custom sizes show as separate breakdown lines (verified - typing 18x18 on Room 1 split it from any other Calacatta Gold rooms - here Room 1 was the only Calacatta room so still one line, behavior is correct).",
+    "_mosaic_quantities() selling by 12x12 sheet (1 sqft each) is reflected in the UI relabel 'Full' -> 'Sheets'. The label '8x48 sheet · mosaic sheet' is slightly redundant ('sheet · mosaic sheet') - cosmetic only.",
+    "Minor: When Room 2 is set to mosaic but its tile (Nordic Oak 8x48) is a plank, the UI shows '8x48 sheet' even though mosaic sheets are conceptually 12x12. Users may expect the size label to read '12x12 sheet' for mosaic regardless of the assigned tile dimensions. Not blocking - the math sells by sheet correctly (109 sheets ~= 101.18sf net + 7.7% waste, since 1 sheet = 1sf).",
+    "Hydration warning from iteration_1 (<span> child of <option> in default-tile-select around line 556 - `${t.name} (${t.width}×${t.height})`) is unchanged but non-blocking."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100% (4/4 targeted checks pass)" },
+  "test_credentials": "admin@tiletakeoff.com / Admin123! (from /app/memory/test_credentials.md) - login OK",
+  "seed_data_creation": "None. Used existing project Artistic / takeoff tk_6c9ed25073494da9 with 2 area measurements (Calacatta Gold/grid + Nordic Oak/herringbone).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Tile-tab end-to-end verified: tab-tile, room-layout-<id>, room-width-<id>, room-height-<id>, room-tile-<id>, room-pattern-<id>, breakdown-line-<i>, default-tile-select all working. Autosave debounce ~450ms; allow 1.5-2.5s after edits before asserting breakdown re-render. To reproduce: login as admin -> /takeoff/tk_6c9ed25073494da9 -> tab-tile -> change inputs. Note that changing custom_w/custom_h on a room that shares a tile with other rooms will fork the breakdown line because compute_summary groups by (tile_id, custom_w, custom_h, pattern).",
+  "rca of the issue": "Original bug (82.6% waste / 46 tiles for 24x48 on 201.5sf) was a tile-count formula error in calc.py - it was likely computing per-tile waste against a small effective area or summing per-row cuts as ordered tiles. Fix: area-based model installed=ceil(net_sqft/tile_sqft), order=ceil(installed*(1+pattern_waste)) minus reused cut pieces, waste floor from manufacturer. 24x48 = 8sqft; 201.5/8 = 25.19 -> 26 installed (or 25 + cuts); +10% grid waste -> 28 ordered = 11.2% effective. Verified live via UI matching backend GET /api/takeoffs/tk_6c9ed25073494da9."
+}
