@@ -61,12 +61,15 @@ _ZERO_Q = {"tile_area": 0, "full_tiles": 0, "cut_tiles": 0, "reused_cuts": 0,
            "tiles_needed": 0, "true_waste_pct": 0, "boxes": 0, "cost": 0}
 
 
-def _mosaic_quantities(net_area, tile, reuse):
+def _mosaic_quantities(net_area, tile, reuse, waste_override=None):
     """Mosaic is sold by the sheet (default 12x12 = 1 sqft per sheet)."""
     sheet_area = tile.get("sheet_area_sqft", 1.0) or 1.0
-    waste_pct = max(0.10, tile.get("waste_factor", 0.10) or 0.0)
-    if reuse:
-        waste_pct = max(waste_pct - 0.03, 0.05)
+    if waste_override is not None and waste_override >= 0:
+        waste_pct = waste_override
+    else:
+        waste_pct = max(0.10, tile.get("waste_factor", 0.10) or 0.0)
+        if reuse:
+            waste_pct = max(waste_pct - 0.03, 0.05)
     sheets = math.ceil(net_area / sheet_area * (1 + waste_pct))
     box_cov = tile.get("box_coverage_sqft", 10.0) or 10.0
     boxes = math.ceil((sheets * sheet_area) / box_cov)
@@ -77,12 +80,13 @@ def _mosaic_quantities(net_area, tile, reuse):
             "boxes": boxes, "cost": round(cost, 2)}
 
 
-def tile_quantities(net_area, perimeter_ft, tile, pattern, reuse=True):
+def tile_quantities(net_area, perimeter_ft, tile, pattern, reuse=True, waste_override=None):
     """Area-based estimate (MeasureSquare-style).
 
     Tiles are ordered to cover the net area plus a single layout-appropriate waste
     allowance. The full/cut split is an informational cut sheet that sums to the number
     of tiles actually installed; the order quantity adds the waste allowance on top.
+    A per-room waste_override (fraction, e.g. 0.15) replaces the automatic allowance.
     """
     w, h = tile["width"], tile["height"]
     tile_area = (w * h) / 144.0 if tile.get("unit", "in") == "in" else w * h
@@ -91,15 +95,18 @@ def tile_quantities(net_area, perimeter_ft, tile, pattern, reuse=True):
 
     pat = (pattern or "grid").lower()
     if pat == "mosaic":
-        return _mosaic_quantities(net_area, tile, reuse)
+        return _mosaic_quantities(net_area, tile, reuse, waste_override)
 
     # tiles physically required to cover the area (rounding up captures partial-tile rows)
     installed = math.ceil(net_area / tile_area)
 
-    # single waste allowance: the larger of the pattern rule and the manufacturer floor
-    waste_pct = max(PATTERN_WASTE.get(pat, 0.10), tile.get("waste_factor", 0.10) or 0.0)
-    if reuse:  # offcuts reused on opposing edges recover a few %, floor at 5%
-        waste_pct = max(waste_pct - 0.03, 0.05)
+    if waste_override is not None and waste_override >= 0:
+        waste_pct = waste_override
+    else:
+        # single waste allowance: the larger of the pattern rule and the manufacturer floor
+        waste_pct = max(PATTERN_WASTE.get(pat, 0.10), tile.get("waste_factor", 0.10) or 0.0)
+        if reuse:  # offcuts reused on opposing edges recover a few %, floor at 5%
+            waste_pct = max(waste_pct - 0.03, 0.05)
     tiles_needed = math.ceil(installed * (1 + waste_pct))
 
     # cut sheet: interior full tiles vs perimeter cut tiles (sums to installed)
@@ -153,6 +160,11 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
         else:
             ew, eh, custom = None, None, False
         pat = (m.get("pattern") or "").lower() or None
+        try:
+            wo = float(m.get("waste_override"))
+            wo = wo / 100.0 if wo > 1 else wo  # accept 15 or 0.15
+        except (TypeError, ValueError):
+            wo = None
 
         if mtype in AREA_TYPES or mtype == "opening":
             real_area = _shoelace(pts) * (scale ** 2) if calibrated else 0.0
@@ -166,9 +178,11 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
                 g = groups.get(sig)
                 if not g:
                     g = {"tid": tid, "gross": 0.0, "ew": ew, "eh": eh, "custom": custom,
-                         "pattern": (eff_pat or "grid").lower(), "base": base_tile}
+                         "pattern": (eff_pat or "grid").lower(), "base": base_tile, "waste_override": None}
                     groups[sig] = g
                 g["gross"] += real_area
+                if wo is not None:
+                    g["waste_override"] = wo
                 rooms.append({"label": m.get("label", "Area"), "net_area": round(real_area, 2),
                               "tile_name": base_tile["name"] if base_tile else (f"Custom {ew}×{eh}" if ew else "Unassigned"),
                               "pattern": g["pattern"]})
@@ -189,9 +203,11 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
                 g = groups.get(sig)
                 if not g:
                     g = {"tid": tid, "gross": 0.0, "ew": ew, "eh": eh, "custom": custom,
-                         "pattern": (eff_pat or "grid").lower(), "base": base_tile}
+                         "pattern": (eff_pat or "grid").lower(), "base": base_tile, "waste_override": None}
                     groups[sig] = g
                 g["gross"] += wall_area
+                if wo is not None:
+                    g["waste_override"] = wo
                 rooms.append({"label": m.get("label", "Wall") + f" ({real_len:.1f}×{wh:g} ft)",
                               "net_area": round(wall_area, 2),
                               "tile_name": base_tile["name"] if base_tile else (f"Custom {ew}×{eh}" if ew else "Unassigned"),
@@ -230,7 +246,7 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
             eff_tile = dict(base) if base else {"name": f"Custom {g['ew']}×{g['eh']}", "unit": "in",
                                                 "waste_factor": 0.10, "box_coverage_sqft": 10.0, "price_per_sqft": 0.0}
             eff_tile["width"] = g["ew"]; eff_tile["height"] = g["eh"]
-            q = tile_quantities(net_area, linear, eff_tile, g["pattern"], reuse)
+            q = tile_quantities(net_area, linear, eff_tile, g["pattern"], reuse, g.get("waste_override"))
             grand_cost += q["cost"]; grand_tiles += q["tiles_needed"]; grand_boxes += q["boxes"]
             grand_full += q["full_tiles"]; grand_cuts += q["cut_tiles"]; grand_reused += q["reused_cuts"]
             unit_lbl = eff_tile.get("unit", "in")

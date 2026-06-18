@@ -85,6 +85,14 @@ def test_wall_elevation_length_times_height():
     assert s["lines"][0]["linear"] == 10.0
 
 
+def test_waste_override_applies():
+    base = _tile(12, 12)
+    auto = calc.tile_quantities(200, 0, base, "grid", True)
+    over = calc.tile_quantities(200, 0, base, "grid", True, 0.25)
+    assert over["tiles_needed"] == math.ceil(math.ceil(200) * 1.25)
+    assert over["tiles_needed"] > auto["tiles_needed"]
+
+
 def test_compute_summary_deduction_nets():
     scale = 0.05
     takeoff = {

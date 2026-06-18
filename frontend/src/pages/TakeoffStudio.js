@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { api, apiErr, fileUrl, exportUrl } from "@/lib/api";
-import { shoelace, pathLength, centroid, realValue, AREA_TYPES, LINEAR_TYPES, effectiveTile } from "@/lib/geometry";
+import { shoelace, pathLength, centroid, realValue, AREA_TYPES, LINEAR_TYPES, effectiveTile, bbox, fmtFtIn } from "@/lib/geometry";
 import { TilePattern, PATTERNS } from "@/lib/tilePatterns";
 import {
   ArrowLeft, MousePointer2, Hand, Ruler, Square, SquareDashedBottom, Spline, Minus, Hash, Type,
@@ -66,6 +66,11 @@ export default function TakeoffStudio() {
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfPageCount, setPdfPageCount] = useState(1);
   const pdfDocRef = useRef(null);
+  const [metricPrefs, setMetricPrefs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("tt_metric_prefs")) || { area: true, dims: true, perimeter: true, walls: false }; }
+    catch { return { area: true, dims: true, perimeter: true, walls: false }; }
+  });
+  const toggleMetric = (k) => setMetricPrefs((p) => { const n = { ...p, [k]: !p[k] }; localStorage.setItem("tt_metric_prefs", JSON.stringify(n)); return n; });
 
   const svgRef = useRef();
   const containerRef = useRef();
@@ -196,7 +201,9 @@ export default function TakeoffStudio() {
   // ---- pointer handlers ----
   const onPointerDown = (e) => {
     if (e.button === 1 || tool === "pan" || spaceRef.current) {
-      panRef.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }; return;
+      e.preventDefault();
+      try { svgRef.current.setPointerCapture(e.pointerId); } catch {}
+      panRef.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, pid: e.pointerId }; return;
     }
     if (e.button !== 0) return;
     const meta = TOOLS[tool];
@@ -239,7 +246,7 @@ export default function TakeoffStudio() {
     if (rectDrag) { setRectDrag({ ...rectDrag, p1: snap(toWorld(e), false) }); }
   };
   const onPointerUp = (e) => {
-    if (panRef.current) { panRef.current = null; return; }
+    if (panRef.current) { try { svgRef.current.releasePointerCapture(panRef.current.pid); } catch {} panRef.current = null; return; }
     if (editRef.current) { editRef.current = null; setItems((prev) => { persist(prev); return prev; }); return; }
     if (moveRef.current) { const moved = moveRef.current.moved; moveRef.current = null; if (moved) setItems((prev) => { persist(prev); return prev; }); return; }
     const meta = TOOLS[tool];
@@ -350,7 +357,10 @@ export default function TakeoffStudio() {
       });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    // stop the browser's middle-button autoscroll so middle-drag pans the plan instead
+    const onMouseDownNative = (e) => { if (e.button === 1) e.preventDefault(); };
+    el.addEventListener("mousedown", onMouseDownNative);
+    return () => { el.removeEventListener("wheel", onWheel); el.removeEventListener("mousedown", onMouseDownNative); };
   }, []);
 
   const confirmCalibration = async () => {
@@ -386,7 +396,7 @@ export default function TakeoffStudio() {
 
   const runAI = async () => {
     setAiLoading(true);
-    try { await api.post(`/takeoffs/${id}/ai-analyze`); toast.success("AI analysis complete"); mutate(); setTab("ai"); }
+    try { await api.post(`/takeoffs/${id}/ai-analyze?page=${pdfPage}`); toast.success(`AI analysis complete (page ${pdfPage})`); mutate(); setTab("ai"); }
     catch (e) { toast.error(apiErr(e)); } finally { setAiLoading(false); }
   };
   const sendEmail = async () => {
@@ -401,6 +411,24 @@ export default function TakeoffStudio() {
   const sw = (m) => (m.lineWidth || 2) / view.z;
   const areaTileFor = (m) => effectiveTile(m, tilesMap, defaultTile);
   const onPage = (m) => (m.page || 1) === pdfPage;
+  const roomMetrics = (m) => {
+    if (!scale) return [];
+    const out = [];
+    if (AREA_TYPES.includes(m.type)) {
+      const area = shoelace(m.points) * scale * scale;
+      const b = bbox(m.points);
+      const perim = pathLength([...(m.points || []), m.points?.[0] || [0, 0]]) * scale;
+      if (metricPrefs.area) out.push(["A", `${area.toFixed(1)} sf`]);
+      if (metricPrefs.dims) out.push(["W×L", `${fmtFtIn(b.w * scale)} × ${fmtFtIn(b.h * scale)}`]);
+      if (metricPrefs.perimeter) out.push(["Perim", `${perim.toFixed(1)} ft`]);
+      if (metricPrefs.walls && m.wall_height_ft > 0) out.push(["Wall", `${(perim * m.wall_height_ft).toFixed(0)} sf`]);
+    } else if (LINEAR_TYPES.includes(m.type)) {
+      const len = pathLength(m.points || []) * scale;
+      out.push(["Len", `${len.toFixed(1)} ft`]);
+      if (metricPrefs.walls && m.wall_height_ft > 0) out.push(["Wall", `${(len * m.wall_height_ft).toFixed(0)} sf`]);
+    } else if (m.type === "count") out.push(["Qty", `${m.count} ea`]);
+    return out;
+  };
   const cursorClass = tool === "pan" ? "cursor-grab" : tool === "select" ? "cursor-default" : "cursor-crosshair";
 
   return (
@@ -415,9 +443,9 @@ export default function TakeoffStudio() {
         <div className="flex items-center gap-2">
           <button onClick={() => setShowFill((s) => !s)} className={`text-xs font-bold px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1 ${showFill ? "bg-orange-600" : "bg-slate-800 hover:bg-slate-700"}`}><Grid3x3 className="w-3.5 h-3.5" />Tile Fill</button>
           <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-sm ${scale ? "bg-green-900/60 text-green-400" : "bg-amber-900/60 text-amber-400"}`}>{scale ? `Scale · ${unit}` : "Not calibrated"}</span>
-          <a href={exportUrl(id, "pdf")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />PDF</a>
-          <a href={exportUrl(id, "xlsx")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5" />Excel</a>
-          <a href={exportUrl(id, "csv")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileDown className="w-3.5 h-3.5" />CSV</a>
+          <a href={exportUrl(id, "pdf")} download={`${takeoff.name}.pdf`} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />PDF</a>
+          <a href={exportUrl(id, "xlsx")} download={`${takeoff.name}.xlsx`} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5" />Excel</a>
+          <a href={exportUrl(id, "csv")} download={`${takeoff.name}.csv`} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileDown className="w-3.5 h-3.5" />CSV</a>
         </div>
       </header>
 
@@ -529,9 +557,17 @@ export default function TakeoffStudio() {
 
             {/* LAYERS */}
             <TabsContent value="layers" className="flex-1 min-h-0 overflow-y-auto m-0 p-0">
+              <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center gap-x-3 gap-y-1 sticky top-0 z-10" data-testid="metric-prefs">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-slate-400">Show</span>
+                {[["area", "Area"], ["dims", "W×L"], ["perimeter", "Perimeter"], ["walls", "Wall sf"]].map(([k, l]) => (
+                  <label key={k} className="flex items-center gap-1 text-[11px] font-mono text-slate-600 cursor-pointer select-none">
+                    <input type="checkbox" data-testid={`metric-${k}`} checked={!!metricPrefs[k]} onChange={() => toggleMetric(k)} className="accent-orange-600 w-3 h-3" />{l}
+                  </label>
+                ))}
+              </div>
               {items.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Pick a tool and draw on the plan. Drag a box for areas/cutouts, click corners for rooms.</div>}
               {items.map((m) => {
-                const val = realValue(m, scale);
+                const mets = roomMetrics(m);
                 return (
                   <div key={m.id} data-testid={`measurement-${m.id}`} onClick={() => { if (pdfPageCount > 1 && (m.page || 1) !== pdfPage) goToPage(m.page || 1); setSelId(m.id); setTab("style"); }}
                     className={`px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer ${selIds.includes(m.id) ? "bg-orange-50" : "hover:bg-slate-50"}`}>
@@ -540,7 +576,11 @@ export default function TakeoffStudio() {
                     <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: m.color }} />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold truncate flex items-center gap-1">{m.label}{m.is_deduction && <span className="text-[9px] text-red-600 font-mono">DEDUCT</span>}{pdfPageCount > 1 && <span className="text-[9px] text-slate-400 font-mono">p{m.page || 1}</span>}</div>
-                      <div className="text-[11px] font-mono text-slate-500">{m.type === "count" ? `${m.count} ea` : m.type === "text" ? "note" : val != null ? `${val.toFixed(1)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : m.type}</div>
+                      {m.type === "text" ? <div className="text-[11px] font-mono text-slate-500">note</div> : !scale ? <div className="text-[11px] font-mono text-amber-600">calibrate to measure</div> : (
+                        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] font-mono text-slate-500" data-testid={`metrics-${m.id}`}>
+                          {mets.map(([k, v]) => (<span key={k}><span className="text-slate-400">{k}=</span><span className="text-slate-700 font-bold">{v}</span></span>))}
+                        </div>
+                      )}
                     </div>
                     <button onClick={(e) => { e.stopPropagation(); updateItem(m.id, { locked: !m.locked }); }} className="text-slate-300 hover:text-slate-700">{m.locked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}</button>
                     <button onClick={(e) => { e.stopPropagation(); removeItem(m.id); }} className="text-slate-300 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -637,6 +677,11 @@ export default function TakeoffStudio() {
                         <option value="">pattern (default)</option>
                         {PATTERNS.map((p) => <option key={p} value={p}>{p}</option>)}
                       </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400 whitespace-nowrap">Waste % override</span>
+                      <input data-testid={`room-waste-${m.id}`} type="number" min="0" step="1" placeholder="auto" className={input + " h-7 py-0"}
+                        value={m.waste_override ?? ""} onChange={(e) => updateItem(m.id, { waste_override: e.target.value === "" ? null : +e.target.value })} />
                     </div>
                     {isCustom && (
                       <div className="text-[10px] font-mono text-orange-600">Custom {cw}×{ch} in{m.pattern === "mosaic" ? " · mosaic sheet" : ""}{!m.tile_id && !defaultTile ? " · count only (no price)" : ""}</div>

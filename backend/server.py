@@ -230,6 +230,78 @@ async def delete_tile(tile_id: str, user: dict = Depends(current_user)):
     return {"ok": True}
 
 
+def _f(v, default=0.0):
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+@api.post("/tiles/import")
+async def import_tiles(file: UploadFile = File(...), user: dict = Depends(current_user)):
+    """Bulk-import tiles from a CSV (manufacturer SKU / price list).
+
+    Recognised headers (case-insensitive, flexible): name, collection, width, height, unit,
+    finish, color, pattern, grout/grout_spacing, waste/waste_pct/waste_factor,
+    price/price_per_sqft, box/box_coverage_sqft.
+    """
+    require_role(user, "admin", "estimator")
+    import csv as _csv
+    import io as _io
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    reader = _csv.DictReader(_io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no header row")
+    norm = {fn: (fn or "").strip().lower() for fn in reader.fieldnames}
+
+    def pick(row, *keys, default=""):
+        for fn, low in norm.items():
+            if low in keys:
+                val = row.get(fn)
+                if val not in (None, ""):
+                    return val
+        return default
+
+    docs, errors = [], []
+    for i, row in enumerate(reader, start=2):
+        name = str(pick(row, "name", "tile", "tile name")).strip()
+        if not name:
+            continue
+        waste = pick(row, "waste_factor", "waste", "waste_pct", "waste %", default="")
+        wf = _f(waste, 10.0)
+        if wf > 1:  # treat 10 / 10% as a percentage
+            wf = wf / 100.0
+        try:
+            doc = {
+                "id": new_id("tile_"), "workspace_id": user["workspace_id"], "created_at": now_iso(),
+                "name": name,
+                "collection": str(pick(row, "collection", "series", default="")).strip(),
+                "width": _f(pick(row, "width", "w", "width (in)"), 12.0),
+                "height": _f(pick(row, "height", "h", "height (in)"), 12.0),
+                "unit": (str(pick(row, "unit", default="in")).strip() or "in"),
+                "finish": str(pick(row, "finish", default="Matte")).strip() or "Matte",
+                "color": str(pick(row, "color", "colour", default="#cccccc")).strip() or "#cccccc",
+                "image_url": str(pick(row, "image_url", "image", default="")).strip(),
+                "grout_spacing": _f(pick(row, "grout_spacing", "grout", "grout (in)"), 0.125),
+                "pattern": str(pick(row, "pattern", default="Grid")).strip() or "Grid",
+                "waste_factor": wf,
+                "price_per_sqft": _f(pick(row, "price_per_sqft", "price", "$/sqft", "price/sqft"), 0.0),
+                "box_coverage_sqft": _f(pick(row, "box_coverage_sqft", "box", "box coverage", "box coverage (sf)"), 10.0),
+            }
+            docs.append(doc)
+        except Exception as e:
+            errors.append(f"row {i}: {e}")
+    if docs:
+        await db.tiles.insert_many(docs)
+        for d in docs:
+            d.pop("_id", None)
+    return {"imported": len(docs), "errors": errors, "tiles": docs}
+
+
 # ---------------- Takeoffs ----------------
 @api.post("/projects/{project_id}/takeoffs")
 async def create_takeoff(project_id: str, body: TakeoffIn, user: dict = Depends(current_user)):
@@ -277,7 +349,7 @@ async def delete_takeoff(takeoff_id: str, user: dict = Depends(current_user)):
 
 # ---------------- AI assist ----------------
 @api.post("/takeoffs/{takeoff_id}/ai-analyze")
-async def ai_analyze(takeoff_id: str, user: dict = Depends(current_user)):
+async def ai_analyze(takeoff_id: str, page: int = Query(1), user: dict = Depends(current_user)):
     require_role(user, "admin", "estimator")
     tk = await db.takeoffs.find_one({"id": takeoff_id, "workspace_id": user["workspace_id"]}, {"_id": 0})
     if not tk:
@@ -286,12 +358,14 @@ async def ai_analyze(takeoff_id: str, user: dict = Depends(current_user)):
         raise HTTPException(status_code=400, detail="Attach a drawing to the takeoff first")
     drawing = await db.drawings.find_one({"id": tk["drawing_id"]}, {"_id": 0})
     data, _ = await asyncio.to_thread(storage.get_object, drawing["storage_path"])
+    page_idx = max(int(page), 1) - 1
     if drawing.get("content_type", "").startswith("application/pdf"):
         try:
             import fitz
             doc = fitz.open(stream=data, filetype="pdf")
-            page = doc.load_page(0)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            idx = min(page_idx, doc.page_count - 1)
+            pg = doc.load_page(idx)
+            pix = pg.get_pixmap(matrix=fitz.Matrix(2, 2))
             data = pix.tobytes("png")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"PDF rasterization failed: {e}")
@@ -303,6 +377,7 @@ async def ai_analyze(takeoff_id: str, user: dict = Depends(current_user)):
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {e}")
     result["generated_at"] = now_iso()
     result["status"] = "pending"
+    result["page"] = page_idx + 1
     await db.takeoffs.update_one({"id": takeoff_id}, {"$set": {"ai_suggestions": result}})
     return result
 

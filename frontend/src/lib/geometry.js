@@ -47,6 +47,22 @@ export function realValue(m, scale) {
   return null;
 }
 
+// bounding box {w,h} in pixels
+export function bbox(points) {
+  if (!points || !points.length) return { w: 0, h: 0 };
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+
+// format decimal feet as feet-inches, e.g. 6.67 -> 6'-8"
+export function fmtFtIn(feet) {
+  if (feet == null || isNaN(feet)) return "—";
+  let whole = Math.floor(feet);
+  let inches = Math.round((feet - whole) * 12);
+  if (inches === 12) { whole += 1; inches = 0; }
+  return `${whole}'-${inches}"`;
+}
+
 // Effective tile for a measurement: custom Width×Height (inches) takes priority,
 // the library tile (or default) is optional and supplies color/finish/pricing.
 export function effectiveTile(m, tilesMap, defaultTile) {
