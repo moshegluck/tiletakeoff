@@ -213,7 +213,7 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
             q = tile_quantities(net_area, linear, eff_tile, g["pattern"], reuse)
             grand_cost += q["cost"]; grand_tiles += q["tiles_needed"]; grand_boxes += q["boxes"]
             grand_full += q["full_tiles"]; grand_cuts += q["cut_tiles"]; grand_reused += q["reused_cuts"]
-            unit_lbl = "sheet" if g["pattern"] == "mosaic" else eff_tile.get("unit", "in")
+            unit_lbl = eff_tile.get("unit", "in")
             size_lbl = f'{_fmt_dim(g["ew"])}x{_fmt_dim(g["eh"])} {unit_lbl}' + (" · mosaic sheet" if g["pattern"] == "mosaic" else (" · custom" if g["custom"] else ""))
             lines.append({
                 "tile_id": g["tid"], "tile_name": eff_tile["name"], "tile_size": size_lbl,

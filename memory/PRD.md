@@ -53,7 +53,13 @@ Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid 
 - **Per-tile cut sheet in PDF**: export now includes a cut-sheet table (full / cut / reused / boxes / true waste %) + per-room breakdown.
 - **WebGL 3D walkthrough**: Three.js + @react-three/fiber + drei OrbitControls — extrudes the actual room polygons into a floor+walls scene with tile texture and an adjustable wall-height slider (2.5D Plan ⇄ 3D Walkthrough toggle). Lazy-loaded.
 
-## Known gaps / Notes
+## Calc engine fix + Custom tile sizing (2026-06-19)
+- **FIXED critical waste/count bug**: the old engine added every perimeter edge-cut as a *whole extra tile*, so large-format tiles (e.g. 24×48 = 8 sqft) on a 201 sf room reported ~82% waste / 46 tiles. Rewrote `tile_quantities()` to an area-based model: `installed = ceil(net/tile_area)`, `order = ceil(installed × (1+waste))`, where `waste = max(pattern_rule, manufacturer_floor)` reduced ~3% when cut-reuse is on (floor 5%). Calacatta 24×48 now: 28 tiles / 11.2% waste. Full/Cut split is an informational cut sheet that sums to installed tiles.
+- **Custom tile dimensions per room (PRIMARY input)**: Tile tab → Per-Room Layout now has Width × Height (inches) number inputs. Library tile is optional (supplies color/finish/price). `_eff_dims()` + `effectiveTile()` (geometry.js) flow custom dims through canvas tile-fill, 3D, and calc. `compute_summary()` groups by tile+size+pattern so different sizes form separate lines; per-tid deductions distribute to the largest room of that tile.
+- **Mosaic pattern**: added to PATTERNS, SVG TilePattern (small chips), and Room3D texture. Calculated/sold by the sheet (`_mosaic_quantities`, 12×12 = 1 sqft sheet). Breakdown relabels Full→Sheets for mosaic.
+- Tests: /app/backend/tests/test_calc.py (8 passing). Frontend E2E verified (waste sanity, custom dims, mosaic, panel scroll all pass).
+
+
 - Email sending requires a real RESEND_API_KEY (currently returns 503).
 - PDF plans now render in the Takeoff Studio canvas (client-side via pdf.js, page 1) so calibration + markup work on PDFs.
 - AI analysis still requires an IMAGE drawing (PNG/JPG); PDF AI uses page-1 raster is a future enhancement (currently 400 on PDF).
