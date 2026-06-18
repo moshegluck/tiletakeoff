@@ -228,6 +228,46 @@ def build_pdf(project, takeoff, summary) -> bytes:
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F8FAFC")]),
     ]))
     elems.append(table)
+
+    # Cut sheet (full vs cut vs reused per tile)
+    elems.append(Spacer(1, 18))
+    elems.append(Paragraph("Cut Sheet — installed pieces & waste optimization", accent))
+    elems.append(Spacer(1, 6))
+    cut = [["Tile", "Full Tiles", "Cut Tiles", "Reused Cuts", "Boxes", "True Waste %"]]
+    for l in summary["lines"]:
+        cut.append([l["tile_name"], l.get("full_tiles", 0), l.get("cut_tiles", 0),
+                    l.get("reused_cuts", 0), l.get("boxes", 0), f'{l.get("true_waste_pct", 0)}%'])
+    ct = summary["totals"]
+    cut.append(["TOTAL", ct.get("full_tiles", 0), ct.get("cut_tiles", 0), ct.get("reused_cuts", 0), ct.get("boxes", 0), ""])
+    ctable = Table(cut, repeatRows=1)
+    ctable.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EA580C")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FFF7ED")),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F8FAFC")]),
+    ]))
+    elems.append(ctable)
+
+    if summary.get("rooms"):
+        elems.append(Spacer(1, 18))
+        elems.append(Paragraph("Per-Room Breakdown", accent))
+        elems.append(Spacer(1, 6))
+        rdata = [["Room", "Area (sf)", "Tile", "Pattern"]]
+        for r in summary["rooms"]:
+            rdata.append([r["label"], r["net_area"], r["tile_name"], r["pattern"]])
+        rtable = Table(rdata, repeatRows=1)
+        rtable.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#334155")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ]))
+        elems.append(rtable)
+
     doc.build(elems)
     return buf.getvalue()
 

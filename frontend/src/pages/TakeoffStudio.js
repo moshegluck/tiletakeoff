@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { useParams, Link } from "react-router-dom";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 const fetcher = (url) => api.get(url).then((r) => r.data);
+const Room3D = lazy(() => import("@/components/Room3D"));
 const input = "w-full bg-slate-50 border border-slate-300 rounded-sm px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-orange-600 focus:ring-1 focus:ring-orange-600";
 
 // tool -> { kind, color }
@@ -40,7 +41,9 @@ export default function TakeoffStudio() {
   const [tool, setTool] = useState("select");
   const [items, setItems] = useState([]);
   const [summary, setSummary] = useState(null);
-  const [selId, setSelId] = useState(null);
+  const [selId, _setSelId] = useState(null);
+  const [selIds, setSelIds] = useState([]);
+  const setSelId = (id) => { _setSelId(id); setSelIds(id ? [id] : []); };
   const [draft, setDraft] = useState([]);
   const [rectDrag, setRectDrag] = useState(null); // {p0,p1}
   const [view, setView] = useState({ z: 1, tx: 0, ty: 0 });
@@ -58,12 +61,15 @@ export default function TakeoffStudio() {
   const [emailTo, setEmailTo] = useState("");
   const [saving, setSaving] = useState(false);
   const [show3dTiles, setShow3dTiles] = useState(true);
+  const [mode3d, setMode3d] = useState("flat");
+  const [wallHeight, setWallHeight] = useState(8);
 
   const svgRef = useRef();
   const containerRef = useRef();
   const initRef = useRef(null);
   const panRef = useRef(null);
   const editRef = useRef(null);
+  const moveRef = useRef(null);
   const spaceRef = useRef(false);
   const saveTimer = useRef(null);
 
@@ -178,8 +184,12 @@ export default function TakeoffStudio() {
     if (meta.kind === "rect") { setRectDrag({ p0: p, p1: p }); }
     else if (meta.kind === "select") {
       const hit = hitTest(toWorld(e));
-      setSelId(hit ? hit.id : null);
-      if (hit) setTab("style");
+      if (!hit) { if (!e.shiftKey) setSelIds([]); return; }
+      let next;
+      if (e.shiftKey) next = selIds.includes(hit.id) ? selIds.filter((x) => x !== hit.id) : [...selIds, hit.id];
+      else next = selIds.includes(hit.id) ? selIds : [hit.id];
+      setSelIds(next); _setSelId(next[0] || null); setTab("style");
+      if (!hit.locked) moveRef.current = { start: toWorld(e), ids: next, orig: Object.fromEntries(items.filter((m) => next.includes(m.id)).map((m) => [m.id, m.points])), moved: false };
     }
   };
   const onPointerMove = (e) => {
@@ -191,11 +201,18 @@ export default function TakeoffStudio() {
       const { mid, idx } = editRef.current; const p = snap(toWorld(e), false);
       setItems((prev) => prev.map((x) => x.id === mid ? { ...x, points: x.points.map((pt, k) => k === idx ? p : pt) } : x)); return;
     }
+    if (moveRef.current) {
+      const cur = toWorld(e); const dx = cur[0] - moveRef.current.start[0], dy = cur[1] - moveRef.current.start[1];
+      if (Math.abs(dx) + Math.abs(dy) > 0.5 / view.z) moveRef.current.moved = true;
+      const { ids, orig } = moveRef.current;
+      setItems((prev) => prev.map((m) => ids.includes(m.id) ? { ...m, points: orig[m.id].map(([x, y]) => [x + dx, y + dy]) } : m)); return;
+    }
     if (rectDrag) { setRectDrag({ ...rectDrag, p1: snap(toWorld(e), false) }); }
   };
   const onPointerUp = (e) => {
     if (panRef.current) { panRef.current = null; return; }
     if (editRef.current) { editRef.current = null; setItems((prev) => { persist(prev); return prev; }); return; }
+    if (moveRef.current) { const moved = moveRef.current.moved; moveRef.current = null; if (moved) setItems((prev) => { persist(prev); return prev; }); return; }
     const meta = TOOLS[tool];
     if (meta.kind === "rect" && rectDrag) {
       const { p0, p1 } = rectDrag; setRectDrag(null);
@@ -281,7 +298,7 @@ export default function TakeoffStudio() {
       if (e.key === "Enter" && draft.length) { e.preventDefault(); finishPoly(); }
       else if (e.key === "Escape") { setDraft([]); setSelId(null); }
       else if (e.key === "Backspace" && draft.length) { e.preventDefault(); undoDraft(); }
-      else if ((e.key === "Delete") && selId) removeItem(selId);
+      else if ((e.key === "Delete") && selIds.length) { commit(items.filter((m) => !selIds.includes(m.id))); setSelIds([]); _setSelId(null); }
       else if (e.key === "v") setTool("select");
     };
     const ku = (e) => { if (e.key === "Shift") window.__shift = false; if (e.code === "Space") spaceRef.current = false; };
@@ -318,6 +335,24 @@ export default function TakeoffStudio() {
       setCalibOpen(false); setCalibLine(null); setTool("select"); setCalibForm({ feet: "", inches: "", unit: "ft" });
       mutate();
     } catch (e) { toast.error(apiErr(e)); }
+  };
+
+  const addAIRoom = (r) => {
+    if (!r.polygon || r.polygon.length < 3) { toast.error("No outline provided for this region"); return; }
+    const pts = r.polygon.map(([x, y]) => [Math.max(0, Math.min(1, x)) * canvas.w, Math.max(0, Math.min(1, y)) * canvas.h]);
+    const m = { id: `m_${Date.now()}_${Math.floor(Math.random() * 999)}`, type: "area", points: pts,
+      label: r.label || "AI Room", color: "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false, is_deduction: false };
+    commit([...items, m]); setSelId(m.id); setTab("style");
+    toast.success(`Added “${r.label}” — drag the handles to adjust`);
+  };
+  const addAllAIRooms = () => {
+    const regs = (takeoff.ai_suggestions?.regions || []).filter((r) => r.polygon && r.polygon.length >= 3);
+    if (!regs.length) { toast.error("No room outlines to add"); return; }
+    const news = regs.map((r, i) => ({ id: `m_${Date.now()}_${i}`, type: "area",
+      points: r.polygon.map(([x, y]) => [Math.max(0, Math.min(1, x)) * canvas.w, Math.max(0, Math.min(1, y)) * canvas.h]),
+      label: r.label || `AI Room ${i + 1}`, color: "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false, is_deduction: false }));
+    commit([...items, ...news]); setTab("layers");
+    toast.success(`Added ${news.length} AI rooms — review & edit on the plan`);
   };
 
   const runAI = async () => {
@@ -457,7 +492,7 @@ export default function TakeoffStudio() {
                 const val = realValue(m, scale);
                 return (
                   <div key={m.id} data-testid={`measurement-${m.id}`} onClick={() => { setSelId(m.id); setTab("style"); }}
-                    className={`px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer ${selId === m.id ? "bg-orange-50" : "hover:bg-slate-50"}`}>
+                    className={`px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer ${selIds.includes(m.id) ? "bg-orange-50" : "hover:bg-slate-50"}`}>
                     <button onClick={(e) => { e.stopPropagation(); updateItem(m.id, { visible: m.visible === false }); }} className="text-slate-400 hover:text-slate-900">
                       {m.visible === false ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>
                     <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: m.color }} />
@@ -561,11 +596,15 @@ export default function TakeoffStudio() {
                 <div className="space-y-3">
                   <div className="bg-orange-50 border border-orange-200 rounded-sm p-3 text-xs text-slate-700">{takeoff.ai_suggestions.summary}</div>
                   <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-slate-500"><span>Recommended waste</span><span className="text-orange-600 font-bold text-sm">{takeoff.ai_suggestions.recommended_waste_pct}%</span></div>
+                  {(takeoff.ai_suggestions.regions || []).some((r) => r.polygon?.length >= 3) && (
+                    <button data-testid="ai-add-all" onClick={addAllAIRooms} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 rounded-sm text-sm inline-flex items-center justify-center gap-2"><Check className="w-4 h-4" />Add all rooms as editable polygons</button>
+                  )}
                   {(takeoff.ai_suggestions.regions || []).map((r, i) => (
                     <div key={i} className="border border-slate-200 rounded-sm p-2.5" data-testid={`ai-region-${i}`}>
                       <div className="flex items-center justify-between"><span className="font-bold text-sm">{r.label}</span><span className="text-[11px] font-mono text-slate-500">{r.est_area_sqft} sf</span></div>
                       <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${Math.round((r.confidence || 0) * 100)}%` }} /></div>
                       <div className="text-[10px] font-mono text-slate-400 mt-1">confidence {Math.round((r.confidence || 0) * 100)}% · {r.notes}</div>
+                      {r.polygon?.length >= 3 && <button data-testid={`ai-add-${i}`} onClick={() => addAIRoom(r)} className="mt-2 text-xs font-bold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1">+ Add to plan</button>}
                     </div>
                   ))}
                 </div>
@@ -575,12 +614,35 @@ export default function TakeoffStudio() {
             {/* 3D */}
             <TabsContent value="3d" className="flex-1 overflow-hidden m-0 p-0 flex flex-col">
               <div className="flex items-center gap-1 p-2 border-b border-slate-200 shrink-0">
-                <button data-testid="3d-before" onClick={() => setShow3dTiles(false)} className={`flex-1 text-xs font-bold py-1.5 rounded-sm ${!show3dTiles ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-600"}`}>Before (bare)</button>
-                <button data-testid="3d-after" onClick={() => setShow3dTiles(true)} className={`flex-1 text-xs font-bold py-1.5 rounded-sm ${show3dTiles ? "bg-orange-600 text-white" : "border border-slate-300 text-slate-600"}`}>After (tiled)</button>
+                <button data-testid="3d-flat" onClick={() => setMode3d("flat")} className={`flex-1 text-xs font-bold py-1.5 rounded-sm ${mode3d === "flat" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-600"}`}>2.5D Plan</button>
+                <button data-testid="3d-walk" onClick={() => setMode3d("walk")} className={`flex-1 text-xs font-bold py-1.5 rounded-sm ${mode3d === "walk" ? "bg-orange-600 text-white" : "border border-slate-300 text-slate-600"}`}>3D Walkthrough</button>
               </div>
-              <div className="flex-1 min-h-0">
-                <Plan3D items={items} tilesMap={tilesMap} defaultTile={defaultTile} scale={scale} type={takeoff.type} withTiles={show3dTiles} />
-              </div>
+              {mode3d === "flat" ? (
+                <>
+                  <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-200 shrink-0">
+                    <button onClick={() => setShow3dTiles(false)} className={`flex-1 text-[11px] font-bold py-1 rounded-sm ${!show3dTiles ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}>Before</button>
+                    <button data-testid="3d-after" onClick={() => setShow3dTiles(true)} className={`flex-1 text-[11px] font-bold py-1 rounded-sm ${show3dTiles ? "bg-orange-600 text-white" : "border border-slate-300 text-slate-600"}`}>After (tiled)</button>
+                  </div>
+                  <div className="flex-1 min-h-0"><Plan3D items={items} tilesMap={tilesMap} defaultTile={defaultTile} scale={scale} type={takeoff.type} withTiles={show3dTiles} /></div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200 shrink-0 text-[11px] font-mono text-slate-600">
+                    <span>Wall ht</span>
+                    <input type="range" min="0" max="12" step="0.5" value={wallHeight} onChange={(e) => setWallHeight(+e.target.value)} className="flex-1 accent-orange-600" />
+                    <span className="w-8 text-right">{wallHeight}'</span>
+                  </div>
+                  <div className="flex-1 min-h-0" data-testid="walkthrough-3d">
+                    {(() => { const rooms = items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction && (m.points || []).length >= 3 && m.visible !== false);
+                      return rooms.length === 0
+                        ? <div className="h-full flex items-center justify-center text-center text-xs font-mono text-slate-400 px-6">Draw room areas to walk through them in 3D.</div>
+                        : <Suspense fallback={<div className="h-full flex items-center justify-center text-xs font-mono text-slate-400">Loading 3D engine…</div>}>
+                            <Room3D rooms={rooms} scale={scale} wallHeight={wallHeight} tilesMap={tilesMap} defaultTile={defaultTile} />
+                          </Suspense>; })()}
+                  </div>
+                  <div className="px-3 py-1.5 text-[10px] font-mono text-slate-400 border-t border-slate-200 shrink-0">Drag to orbit · scroll to zoom · right-drag to pan</div>
+                </>
+              )}
             </TabsContent>
           </Tabs>
 

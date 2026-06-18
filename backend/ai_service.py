@@ -22,12 +22,14 @@ async def analyze_drawing(image_b64: str, takeoff_type: str) -> dict:
         f"This is a {takeoff_type} plan. Return JSON with this exact shape:\n"
         "{\n"
         '  "regions": [ {"label": "Kitchen", "type": "room|wall", "est_area_sqft": 120.5, '
-        '"confidence": 0.0-1.0, "notes": "short"} ],\n'
+        '"confidence": 0.0-1.0, "polygon": [[x,y],[x,y],...], "notes": "short"} ],\n'
         '  "openings": [ {"label": "Door", "est_area_sqft": 21.0, "confidence": 0.0-1.0} ],\n'
         '  "recommended_waste_pct": 10,\n'
         '  "summary": "1-2 sentence overview"\n'
         "}\n"
-        "Provide 2-6 regions. Be realistic with residential/commercial scale. JSON only."
+        "For every region, ALWAYS include a 'polygon' tracing the room outline as 4-8 [x,y] points "
+        "in NORMALIZED image coordinates where x and y are each between 0.0 (left/top) and 1.0 "
+        "(right/bottom). Provide 2-6 regions. Be realistic with scale. JSON only, no markdown."
     )
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,

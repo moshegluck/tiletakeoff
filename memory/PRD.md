@@ -47,6 +47,12 @@ Major Bluebeam/MeasureSquare-grade rewrite of the Takeoff Studio:
 
 Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid on the main canvas at fit-zoom (accurate to scale — zoom in to see grid); large-format & plank tiles show clearly. 3D view always shows tiles clearly (viz-scaled).
 
+## Advanced Features (2026-06-18b)
+- **Move + multi-select**: Select tool drags whole shapes; Shift-click for multi-select; Delete removes all selected.
+- **AI → editable polygons**: Gemini now returns normalized room outlines; "Add all rooms" / per-region "+ Add to plan" drops them onto the canvas as editable area measurements (verified: 5 rooms).
+- **Per-tile cut sheet in PDF**: export now includes a cut-sheet table (full / cut / reused / boxes / true waste %) + per-room breakdown.
+- **WebGL 3D walkthrough**: Three.js + @react-three/fiber + drei OrbitControls — extrudes the actual room polygons into a floor+walls scene with tile texture and an adjustable wall-height slider (2.5D Plan ⇄ 3D Walkthrough toggle). Lazy-loaded.
+
 ## Known gaps / Notes
 - Email sending requires a real RESEND_API_KEY (currently returns 503).
 - PDF plans now render in the Takeoff Studio canvas (client-side via pdf.js, page 1) so calibration + markup work on PDFs.
