@@ -36,6 +36,38 @@ def _path_length(points):
     return total
 
 
+PATTERN_WASTE = {"grid": 0.0, "brick": 0.05, "offset": 0.05, "diagonal": 0.15,
+                 "herringbone": 0.15, "basketweave": 0.10, "chevron": 0.15, "checkerboard": 0.05}
+
+
+def tile_quantities(net_area, perimeter_ft, tile, pattern, reuse=True):
+    """MeasureSquare-style estimate: full tiles + edge cuts with leftover reuse."""
+    w, h = tile["width"], tile["height"]
+    tile_area = (w * h) / 144.0 if tile.get("unit", "in") == "in" else w * h
+    if tile_area <= 0 or net_area <= 0:
+        return {"tile_area": round(tile_area, 3), "full_tiles": 0, "cut_tiles": 0,
+                "reused_cuts": 0, "tiles_needed": 0, "true_waste_pct": 0, "boxes": 0, "cost": 0}
+    tile_w_ft = min(w, h) / 12.0
+    full_tiles = math.floor(net_area / tile_area)
+    if not perimeter_ft or perimeter_ft <= 0:
+        perimeter_ft = 4.0 * math.sqrt(net_area)
+    cuts = math.ceil(perimeter_ft / tile_w_ft) if tile_w_ft > 0 else 0
+    reused = math.floor(cuts * 0.45) if reuse else 0
+    net_cut_tiles = max(cuts - reused, 0)
+    subtotal = full_tiles + net_cut_tiles
+    pat_waste = PATTERN_WASTE.get((pattern or "grid").lower(), 0.05)
+    manuf_waste = tile.get("waste_factor", 0.10)
+    ordered = math.ceil(subtotal * (1 + pat_waste))
+    ordered = math.ceil(ordered * (1 + manuf_waste))
+    box_cov = tile.get("box_coverage_sqft", 10.0) or 10.0
+    boxes = math.ceil((ordered * tile_area) / box_cov)
+    cost = ordered * tile_area * tile.get("price_per_sqft", 0.0)
+    true_waste = (ordered * tile_area - net_area) / net_area * 100.0 if net_area else 0
+    return {"tile_area": round(tile_area, 3), "full_tiles": full_tiles, "cut_tiles": cuts,
+            "reused_cuts": reused, "tiles_needed": ordered, "true_waste_pct": round(true_waste, 1),
+            "boxes": boxes, "cost": round(cost, 2)}
+
+
 def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
     """Returns a dict with per-tile quantities and totals."""
     calib = (drawing or {}).get("calibration") or {}
@@ -43,9 +75,11 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
     unit = calib.get("unit", "ft")
     tiles_map = {t["id"]: t for t in tiles}
     default_tile_id = takeoff.get("default_tile_id")
+    reuse = takeoff.get("cut_reuse", True)
 
     groups = defaultdict(lambda: {"gross_area": 0.0, "deduct_area": 0.0,
-                                  "linear": 0.0, "count": 0})
+                                  "linear": 0.0, "count": 0, "pattern": None})
+    rooms = []
     total_gross = 0.0
     total_deduct = 0.0
     total_linear = 0.0
@@ -66,6 +100,12 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
             else:
                 g["gross_area"] += real_area
                 total_gross += real_area
+                if m.get("pattern"):
+                    g["pattern"] = m.get("pattern")
+                t = tiles_map.get(tid)
+                rooms.append({"label": m.get("label", "Area"), "net_area": round(real_area, 2),
+                              "tile_name": t["name"] if t else "Unassigned",
+                              "pattern": m.get("pattern") or (t.get("pattern") if t else "-")})
         elif mtype in LINEAR_TYPES:
             px_len = _path_length(pts)
             real_len = px_len * scale if calibrated else 0.0
@@ -79,44 +119,46 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
     grand_cost = 0.0
     grand_tiles = 0
     grand_boxes = 0
+    grand_full = 0
+    grand_cuts = 0
+    grand_reused = 0
     for tid, g in groups.items():
         net_area = max(g["gross_area"] - g["deduct_area"], 0.0)
         tile = tiles_map.get(tid)
-        if tile:
-            tile_area_sqft = (tile["width"] * tile["height"]) / 144.0 if tile.get("unit", "in") == "in" else tile["width"] * tile["height"]
-            waste = tile.get("waste_factor", 0.10)
-            area_with_waste = net_area * (1 + waste)
-            tiles_needed = math.ceil(area_with_waste / tile_area_sqft) if tile_area_sqft > 0 else 0
-            box_cov = tile.get("box_coverage_sqft", 10.0) or 10.0
-            boxes = math.ceil(area_with_waste / box_cov) if box_cov > 0 else 0
-            cost = area_with_waste * tile.get("price_per_sqft", 0.0)
-            grand_cost += cost
-            grand_tiles += tiles_needed
-            grand_boxes += boxes
+        if tile and net_area > 0:
+            pattern = g["pattern"] or tile.get("pattern", "grid")
+            q = tile_quantities(net_area, g["linear"], tile, pattern, reuse)
+            grand_cost += q["cost"]; grand_tiles += q["tiles_needed"]; grand_boxes += q["boxes"]
+            grand_full += q["full_tiles"]; grand_cuts += q["cut_tiles"]; grand_reused += q["reused_cuts"]
             lines.append({
-                "tile_id": tid, "tile_name": tile["name"], "tile_size": f'{tile["width"]}x{tile["height"]} {tile.get("unit","in")}',
-                "pattern": tile.get("pattern", ""), "gross_area": round(g["gross_area"], 2),
+                "tile_id": tid, "tile_name": tile["name"],
+                "tile_size": f'{tile["width"]}x{tile["height"]} {tile.get("unit","in")}',
+                "pattern": pattern, "gross_area": round(g["gross_area"], 2),
                 "deduct_area": round(g["deduct_area"], 2), "net_area": round(net_area, 2),
-                "waste_pct": round(waste * 100, 1), "area_with_waste": round(area_with_waste, 2),
-                "tiles_needed": tiles_needed, "boxes": boxes,
-                "price_per_sqft": tile.get("price_per_sqft", 0.0), "cost": round(cost, 2),
+                "full_tiles": q["full_tiles"], "cut_tiles": q["cut_tiles"], "reused_cuts": q["reused_cuts"],
+                "waste_pct": q["true_waste_pct"], "true_waste_pct": q["true_waste_pct"],
+                "area_with_waste": round(q["tiles_needed"] * q["tile_area"], 2),
+                "tiles_needed": q["tiles_needed"], "boxes": q["boxes"],
+                "price_per_sqft": tile.get("price_per_sqft", 0.0), "cost": q["cost"],
                 "linear": round(g["linear"], 2), "count": g["count"],
             })
-        else:
+        elif tile is None and (net_area > 0 or g["linear"] > 0 or g["count"] > 0):
             lines.append({
                 "tile_id": tid, "tile_name": "Unassigned", "tile_size": "-", "pattern": "-",
                 "gross_area": round(g["gross_area"], 2), "deduct_area": round(g["deduct_area"], 2),
-                "net_area": round(net_area, 2), "waste_pct": 0, "area_with_waste": round(net_area, 2),
+                "net_area": round(net_area, 2), "full_tiles": 0, "cut_tiles": 0, "reused_cuts": 0,
+                "waste_pct": 0, "true_waste_pct": 0, "area_with_waste": round(net_area, 2),
                 "tiles_needed": 0, "boxes": 0, "price_per_sqft": 0, "cost": 0,
                 "linear": round(g["linear"], 2), "count": g["count"],
             })
 
     return {
-        "calibrated": calibrated, "unit": unit,
+        "calibrated": calibrated, "unit": unit, "rooms": rooms,
         "totals": {
             "gross_area": round(total_gross, 2), "deduct_area": round(total_deduct, 2),
             "net_area": round(max(total_gross - total_deduct, 0.0), 2),
             "linear": round(total_linear, 2), "count": total_count,
+            "full_tiles": grand_full, "cut_tiles": grand_cuts, "reused_cuts": grand_reused,
             "tiles_needed": grand_tiles, "boxes": grand_boxes, "cost": round(grand_cost, 2),
         },
         "lines": lines,

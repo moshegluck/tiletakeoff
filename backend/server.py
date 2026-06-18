@@ -278,9 +278,16 @@ async def ai_analyze(takeoff_id: str, user: dict = Depends(current_user)):
     if not tk.get("drawing_id"):
         raise HTTPException(status_code=400, detail="Attach a drawing to the takeoff first")
     drawing = await db.drawings.find_one({"id": tk["drawing_id"]}, {"_id": 0})
-    if drawing.get("content_type", "").startswith("application/pdf"):
-        raise HTTPException(status_code=400, detail="AI analysis needs an image drawing (PNG/JPG). PDF not supported yet.")
     data, _ = await asyncio.to_thread(storage.get_object, drawing["storage_path"])
+    if drawing.get("content_type", "").startswith("application/pdf"):
+        try:
+            import fitz
+            doc = fitz.open(stream=data, filetype="pdf")
+            page = doc.load_page(0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            data = pix.tobytes("png")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"PDF rasterization failed: {e}")
     img_b64 = base64.b64encode(data).decode("utf-8")
     try:
         result = await ai_service.analyze_drawing(img_b64, tk.get("type", "floor"))

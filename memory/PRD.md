@@ -32,6 +32,21 @@ A full SaaS platform for tile-focused flooring and wall elevation takeoffs — d
 - Landing page, dashboard, full design system.
 - Tested: 21/21 backend, 100% frontend E2E.
 
+## Pro Studio Upgrade (2026-06-18)
+Major Bluebeam/MeasureSquare-grade rewrite of the Takeoff Studio:
+- **Canvas engine**: transform-based pan (Space/middle-drag) + wheel zoom-to-cursor, fit-on-load only, debounced optimistic autosave (no jumping/flicker).
+- **Markup**: drag-to-draw rectangle areas & cutouts, polygon rooms/walls, linear, perimeter, count, and text notes. Snap-to-corner + Shift ortho. Double-click/Enter/green-start-dot to finish; floating Finish/Undo/Cancel bar.
+- **Control points**: select a shape to drag vertices, click green midpoints to ADD vertices, Alt-click to DELETE.
+- **Per-shape styling (Style tab)**: line color, line width, fill color, fill opacity, label, deduction toggle, delete.
+- **Layers tab**: visibility toggle, lock, rename, color dot, delete.
+- **Tile-grid fill**: per-room tile + pattern (grid, brick, diagonal, herringbone, basketweave, chevron, checkerboard) rendered as SVG patterns clipped to each room at true calibration scale.
+- **Cut/waste engine (calc.py)**: full tiles + edge cuts with cross-area leftover reuse, pattern-based waste, true waste %, boxes, cost. Toggle cut-reuse.
+- **3D plan view**: builds from actual room polygons; Before (bare) / After (tiled) toggle showing the real tile finish in perspective.
+- **AI on PDF**: server-side PyMuPDF rasterization → Gemini 3.1 Pro vision (works on PDF & image plans).
+- Backend: Measurement model `extra="allow"` for rich fields; takeoff `cut_reuse`, per-measurement `pattern`/`tile_id`.
+
+Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid on the main canvas at fit-zoom (accurate to scale — zoom in to see grid); large-format & plank tiles show clearly. 3D view always shows tiles clearly (viz-scaled).
+
 ## Known gaps / Notes
 - Email sending requires a real RESEND_API_KEY (currently returns 503).
 - PDF plans now render in the Takeoff Studio canvas (client-side via pdf.js, page 1) so calibration + markup work on PDFs.

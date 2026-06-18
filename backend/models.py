@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Any, Dict
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -72,8 +72,9 @@ class CalibrationIn(BaseModel):
 
 
 class Measurement(BaseModel):
+    model_config = ConfigDict(extra="allow")  # allow rich style/layout fields
     id: str = Field(default_factory=lambda: new_id("m_"))
-    type: str  # area | linear | count | perimeter | polygon | wall | opening
+    type: str  # area | linear | count | perimeter | polygon | wall | opening | text
     label: Optional[str] = ""
     points: List[List[float]] = []
     count: int = 1

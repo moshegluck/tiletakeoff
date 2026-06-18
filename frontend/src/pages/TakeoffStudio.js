@@ -1,66 +1,98 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { api, apiErr, fileUrl, exportUrl } from "@/lib/api";
-import { TOOLS, AREA_TYPES, LINEAR_TYPES, shoelace, pathLength, centroid, realValue } from "@/lib/geometry";
+import { shoelace, pathLength, centroid, realValue, AREA_TYPES, LINEAR_TYPES } from "@/lib/geometry";
+import { TilePattern, PATTERNS } from "@/lib/tilePatterns";
 import {
-  ArrowLeft, MousePointer2, Ruler, Square, Layers as LayersIcon, Spline, Minus, Hash, Scan,
-  Sparkles, Box, FileSpreadsheet, FileText, FileDown, Mail, Trash2, ZoomIn, ZoomOut, Maximize,
-  Check, X, Undo2,
+  ArrowLeft, MousePointer2, Hand, Ruler, Square, SquareDashedBottom, Spline, Minus, Hash, Type,
+  Sparkles, FileSpreadsheet, FileText, FileDown, Mail, Trash2, ZoomIn, ZoomOut, Maximize,
+  Check, X, Undo2, Eye, EyeOff, Lock, LockOpen, Layers as LayersIcon, Grid3x3, Palette,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 const fetcher = (url) => api.get(url).then((r) => r.data);
-const TOOL_ICONS = { select: MousePointer2, calibrate: Ruler, area: Square, wall: LayersIcon, perimeter: Spline, linear: Minus, opening: Scan, count: Hash };
 const input = "w-full bg-slate-50 border border-slate-300 rounded-sm px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-orange-600 focus:ring-1 focus:ring-orange-600";
+
+// tool -> { kind, color }
+const TOOLS = {
+  select: { icon: MousePointer2, label: "Select / Edit", kind: "select" },
+  pan: { icon: Hand, label: "Pan", kind: "pan" },
+  calibrate: { icon: Ruler, label: "Set Scale", kind: "line", color: "#0F172A" },
+  area: { icon: Square, label: "Area (drag box)", kind: "rect", color: "#EA580C" },
+  room: { icon: Spline, label: "Room (polygon)", kind: "poly", color: "#EA580C" },
+  wall: { icon: LayersIcon, label: "Wall surface", kind: "poly", color: "#7C3AED" },
+  cutout: { icon: SquareDashedBottom, label: "Cutout / Deduct (box)", kind: "rect", color: "#DC2626", deduct: true },
+  linear: { icon: Minus, label: "Linear", kind: "line", color: "#2563EB" },
+  perimeter: { icon: Spline, label: "Perimeter", kind: "poly", color: "#0EA5E9", openPath: true },
+  count: { icon: Hash, label: "Count", kind: "count", color: "#16A34A" },
+  text: { icon: Type, label: "Text note", kind: "text", color: "#0F172A" },
+};
+const TOOL_ORDER = ["select", "pan", "calibrate", "area", "room", "wall", "cutout", "linear", "perimeter", "count", "text"];
 
 export default function TakeoffStudio() {
   const { id } = useParams();
   const { data, mutate } = useSWR(`/takeoffs/${id}`, fetcher);
+  const { data: tiles } = useSWR("/tiles", fetcher);
+
   const [tool, setTool] = useState("select");
+  const [items, setItems] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [selId, setSelId] = useState(null);
   const [draft, setDraft] = useState([]);
-  const [zoom, setZoom] = useState(1);
+  const [rectDrag, setRectDrag] = useState(null); // {p0,p1}
+  const [view, setView] = useState({ z: 1, tx: 0, ty: 0 });
   const [canvas, setCanvas] = useState({ w: 1200, h: 800 });
   const [hasImg, setHasImg] = useState(false);
   const [bgUrl, setBgUrl] = useState(null);
   const [planLoading, setPlanLoading] = useState(false);
+  const [showFill, setShowFill] = useState(true);
+  const [tab, setTab] = useState("layers");
+  const [aiLoading, setAiLoading] = useState(false);
   const [calibOpen, setCalibOpen] = useState(false);
   const [calibLine, setCalibLine] = useState(null);
   const [calibForm, setCalibForm] = useState({ feet: "", inches: "", unit: "ft" });
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [tab, setTab] = useState("measure");
+  const [saving, setSaving] = useState(false);
+  const [show3dTiles, setShow3dTiles] = useState(true);
+
   const svgRef = useRef();
   const containerRef = useRef();
-
-  const fitToScreen = useCallback(() => {
-    const el = containerRef.current;
-    if (!el || !canvas.w) return;
-    const z = Math.min((el.clientWidth - 48) / canvas.w, (el.clientHeight - 96) / canvas.h);
-    setZoom(Math.max(Math.min(z, 1.5), 0.08));
-  }, [canvas]);
-
-  useEffect(() => { const t = setTimeout(fitToScreen, 60); return () => clearTimeout(t); }, [canvas.w, canvas.h, fitToScreen]);
+  const initRef = useRef(null);
+  const panRef = useRef(null);
+  const editRef = useRef(null);
+  const spaceRef = useRef(false);
+  const saveTimer = useRef(null);
 
   const takeoff = data?.takeoff;
   const drawing = data?.drawing;
-  const summary = data?.summary;
   const scale = drawing?.calibration?.scale || null;
   const unit = drawing?.calibration?.unit || "ft";
-  const measurements = takeoff?.measurements || [];
+  const tilesMap = useMemo(() => Object.fromEntries((tiles || []).map((t) => [t.id, t]), [tiles]), [tiles]);
+  const defaultTileId = takeoff?.default_tile_id || null;
+  const defaultTile = tilesMap[defaultTileId];
 
+  // init local items from server once per takeoff
+  useEffect(() => {
+    if (takeoff && initRef.current !== takeoff.id) {
+      initRef.current = takeoff.id;
+      setItems(takeoff.measurements || []);
+      setSummary(data.summary);
+    }
+  }, [takeoff, data]);
+
+  // load plan (image or pdf)
   useEffect(() => {
     let cancelled = false;
-    setHasImg(false);
-    setBgUrl(null);
+    setHasImg(false); setBgUrl(null);
     if (!drawing) { setCanvas({ w: 1200, h: 800 }); return; }
     const ct = drawing.content_type || "";
     if (ct.startsWith("image")) {
       const im = new Image();
-      im.onload = () => { if (cancelled) return; setCanvas({ w: im.naturalWidth, h: im.naturalHeight }); setBgUrl(fileUrl(drawing.id)); setHasImg(true); };
+      im.onload = () => { if (!cancelled) { setCanvas({ w: im.naturalWidth, h: im.naturalHeight }); setBgUrl(fileUrl(drawing.id)); setHasImg(true); } };
       im.src = fileUrl(drawing.id);
     } else if (ct.includes("pdf")) {
       setPlanLoading(true);
@@ -70,332 +102,452 @@ export default function TakeoffStudio() {
           const { renderPdfFirstPage } = await import("@/lib/pdf");
           const res = await renderPdfFirstPage(buf, 2);
           if (cancelled) return;
-          setCanvas({ w: res.width, h: res.height });
-          setBgUrl(res.dataUrl);
-          setHasImg(true);
-        } catch (e) {
-          if (!cancelled) { toast.error("Could not render PDF plan"); setCanvas({ w: 1200, h: 800 }); }
-        } finally {
-          if (!cancelled) setPlanLoading(false);
-        }
+          setCanvas({ w: res.width, h: res.height }); setBgUrl(res.dataUrl); setHasImg(true);
+        } catch { if (!cancelled) { toast.error("Could not render PDF"); setCanvas({ w: 1200, h: 800 }); } }
+        finally { if (!cancelled) setPlanLoading(false); }
       })();
-    } else {
-      setCanvas({ w: 1200, h: 800 });
-    }
+    } else setCanvas({ w: 1200, h: 800 });
     return () => { cancelled = true; };
   }, [drawing]);
 
-  const save = useCallback(async (patch) => {
-    try {
-      const { data: res } = await api.put(`/takeoffs/${id}`, patch);
-      mutate({ ...data, takeoff: res.takeoff, summary: res.summary }, false);
-    } catch (e) { toast.error(apiErr(e)); }
-  }, [id, data, mutate]);
+  const fitToScreen = useCallback(() => {
+    const el = containerRef.current; if (!el || !canvas.w) return;
+    const z = Math.min((el.clientWidth - 40) / canvas.w, (el.clientHeight - 60) / canvas.h);
+    const zoom = Math.max(Math.min(z, 1.5), 0.05);
+    setView({ z: zoom, tx: (el.clientWidth - canvas.w * zoom) / 2, ty: (el.clientHeight - canvas.h * zoom) / 2 });
+  }, [canvas]);
+  useEffect(() => { const t = setTimeout(fitToScreen, 80); return () => clearTimeout(t); }, [canvas.w, canvas.h, fitToScreen]);
 
-  const toCoords = (e) => {
+  // persist measurements (debounced, optimistic — no reload/jump)
+  const persist = useCallback((nextItems, extra = {}) => {
+    setSaving(true);
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        const { data: res } = await api.put(`/takeoffs/${id}`, { measurements: nextItems, ...extra });
+        setSummary(res.summary);
+      } catch (e) { toast.error(apiErr(e)); }
+      finally { setSaving(false); }
+    }, 450);
+  }, [id]);
+
+  const commit = (next, extra) => { setItems(next); persist(next, extra); };
+  const updateItem = (mid, patch) => commit(items.map((m) => m.id === mid ? { ...m, ...patch } : m));
+  const removeItem = (mid) => { commit(items.filter((m) => m.id !== mid)); if (selId === mid) setSelId(null); };
+
+  const setDefaultTile = async (tileId) => {
+    try { const { data: res } = await api.put(`/takeoffs/${id}`, { default_tile_id: tileId || null }); setSummary(res.summary); mutate(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const setReuse = async (val) => {
+    try { const { data: res } = await api.put(`/takeoffs/${id}`, { cut_reuse: val }); setSummary(res.summary); mutate(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+
+  // ---- coordinate + snapping ----
+  const toWorld = (e) => {
     const r = svgRef.current.getBoundingClientRect();
-    return [(e.clientX - r.left) / r.width * canvas.w, (e.clientY - r.top) / r.height * canvas.h];
+    return [(e.clientX - r.left - view.tx) / view.z, (e.clientY - r.top - view.ty) / view.z];
+  };
+  const allVertices = () => {
+    const vs = [];
+    items.forEach((m) => { if (m.visible !== false) (m.points || []).forEach((p) => vs.push(p)); });
+    return vs;
+  };
+  const snap = (p, useDraft) => {
+    const thr = 12 / view.z;
+    let best = null, bd = thr;
+    for (const v of allVertices()) { const d = Math.hypot(v[0] - p[0], v[1] - p[1]); if (d < bd) { bd = d; best = v; } }
+    if (best) return [best[0], best[1]];
+    if (useDraft && draft.length && spaceRef.current === false) {
+      // ortho lock when Shift
+      const last = draft[draft.length - 1];
+      if (window.__shift) { return Math.abs(p[0] - last[0]) > Math.abs(p[1] - last[1]) ? [p[0], last[1]] : [last[0], p[1]]; }
+    }
+    return p;
   };
 
-  const closeThreshold = Math.max(canvas.w * 0.012, 8);
-  const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= closeThreshold;
-  const dedupe = (pts) => pts.filter((p, i) => i === 0 || !near(p, pts[i - 1]));
-
-  const addMeasurement = (m) => save({ measurements: [...measurements, m] });
-
-  const onCanvasClick = (e) => {
-    if (tool === "select") return;
-    const p = toCoords(e);
-    if (tool === "count") {
-      addMeasurement({ id: `m_${Date.now()}`, type: "count", points: [p], count: 1, color: TOOLS.count.color, label: `Count ${measurements.filter(m => m.type === "count").length + 1}` });
-      return;
+  // ---- pointer handlers ----
+  const onPointerDown = (e) => {
+    if (e.button === 1 || tool === "pan" || spaceRef.current) {
+      panRef.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }; return;
     }
-    if (tool === "calibrate") {
-      const np = [...draft, p];
-      if (np.length === 2) { setCalibLine(np); setDraft([]); setCalibOpen(true); }
-      else setDraft(np);
-      return;
-    }
+    if (e.button !== 0) return;
     const meta = TOOLS[tool];
-    if (meta.kind === "line") {
-      const np = [...draft, p];
-      if (np.length === 2) { finishShape(np); } else setDraft(np);
+    const p = snap(toWorld(e), false);
+    if (meta.kind === "rect") { setRectDrag({ p0: p, p1: p }); }
+    else if (meta.kind === "select") {
+      const hit = hitTest(toWorld(e));
+      setSelId(hit ? hit.id : null);
+      if (hit) setTab("style");
+    }
+  };
+  const onPointerMove = (e) => {
+    if (panRef.current) {
+      const dx = e.clientX - panRef.current.x, dy = e.clientY - panRef.current.y;
+      setView((v) => ({ ...v, tx: panRef.current.tx + dx, ty: panRef.current.ty + dy })); return;
+    }
+    if (editRef.current) {
+      const { mid, idx } = editRef.current; const p = snap(toWorld(e), false);
+      setItems((prev) => prev.map((x) => x.id === mid ? { ...x, points: x.points.map((pt, k) => k === idx ? p : pt) } : x)); return;
+    }
+    if (rectDrag) { setRectDrag({ ...rectDrag, p1: snap(toWorld(e), false) }); }
+  };
+  const onPointerUp = (e) => {
+    if (panRef.current) { panRef.current = null; return; }
+    if (editRef.current) { editRef.current = null; setItems((prev) => { persist(prev); return prev; }); return; }
+    const meta = TOOLS[tool];
+    if (meta.kind === "rect" && rectDrag) {
+      const { p0, p1 } = rectDrag; setRectDrag(null);
+      if (Math.abs(p1[0] - p0[0]) * view.z < 4 || Math.abs(p1[1] - p0[1]) * view.z < 4) return;
+      const pts = [[p0[0], p0[1]], [p1[0], p0[1]], [p1[0], p1[1]], [p0[0], p1[1]]];
+      addShape(meta.deduct ? "area" : "area", pts, { is_deduction: !!meta.deduct, color: meta.color });
       return;
     }
-    // polygon / path: click near first point closes the shape
-    if (meta.kind === "polygon" && draft.length >= 3 && near(p, draft[0])) {
-      finishShape(draft);
-      return;
+    if (meta.kind === "poly") { setDraft((d) => [...d, snap(toWorld(e), true)]); }
+    else if (meta.kind === "line") {
+      const np = [...draft, snap(toWorld(e), true)];
+      if (np.length === 2) {
+        if (tool === "calibrate") { setCalibLine(np); setDraft([]); setCalibOpen(true); }
+        else { addShape("linear", np, { color: meta.color }); setDraft([]); }
+      } else setDraft(np);
     }
-    setDraft([...draft, p]);
+    else if (meta.kind === "count") { addShape("count", [toWorld(e)], { color: meta.color, count: 1 }); }
+    else if (meta.kind === "text") {
+      const txt = window.prompt("Note text:"); if (txt) addShape("text", [toWorld(e)], { color: meta.color, text: txt });
+    }
   };
 
-  const onCanvasDoubleClick = (e) => {
-    if (tool === "select" || tool === "count" || tool === "calibrate") return;
-    e.preventDefault();
+  const hitTest = (p) => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const m = items[i]; if (m.visible === false) continue;
+      if (AREA_TYPES.includes(m.type) && m.points.length >= 3 && pointInPoly(p, m.points)) return m;
+      if (m.type === "count" || m.type === "text") { const d = Math.hypot(m.points[0][0] - p[0], m.points[0][1] - p[1]); if (d < 14 / view.z) return m; }
+    }
+    return null;
+  };
+
+  // control-point editing
+  const onVtxDown = (e, mid, idx) => {
     e.stopPropagation();
-    const meta = TOOLS[tool];
-    if (meta.kind === "polygon" && draft.length >= 3) finishShape(draft);
+    const m = items.find((x) => x.id === mid);
+    if (e.altKey) {
+      const minP = AREA_TYPES.includes(m.type) ? 4 : 3;
+      if (m.points.length >= minP) commit(items.map((x) => x.id === mid ? { ...x, points: x.points.filter((_, k) => k !== idx) } : x));
+      else toast.error("Can't delete — minimum points reached");
+      return;
+    }
+    editRef.current = { mid, idx };
+  };
+  const onMidDown = (e, mid, idx, mp) => {
+    e.stopPropagation();
+    const m = items.find((x) => x.id === mid);
+    const np = [...m.points]; np.splice(idx + 1, 0, mp);
+    setItems(items.map((x) => x.id === mid ? { ...x, points: np } : x));
+    editRef.current = { mid, idx: idx + 1 };
   };
 
-  const finishShape = (raw) => {
-    const meta = TOOLS[tool];
-    const pts = dedupe(raw);
-    const minPts = meta.kind === "polygon" ? 3 : 2;
-    if (pts.length < minPts) { toast.error(`Add at least ${minPts} points first`); return; }
-    const labelBase = { area: "Room", wall: "Wall", opening: "Opening", perimeter: "Perimeter", linear: "Line" }[tool] || tool;
-    addMeasurement({
-      id: `m_${Date.now()}`, type: tool, points: pts, color: meta.color,
-      is_deduction: tool === "opening",
-      label: `${labelBase} ${measurements.filter(m => m.type === tool).length + 1}`,
-    });
-    setDraft([]);
-    toast.success("Measurement added");
-  };
-
-  const finishDraft = () => { if (draft.length) finishShape(draft); };
-  const undoDraft = () => setDraft((d) => d.slice(0, -1));
-  const cancelDraft = () => setDraft([]);
-
-  // keyboard: Enter = finish, Esc = cancel, Backspace = undo last point
-  useEffect(() => {
-    const onKey = (e) => {
-      if (tool === "select") return;
-      if (e.key === "Enter") { e.preventDefault(); finishDraft(); }
-      else if (e.key === "Escape") { setDraft([]); }
-      else if (e.key === "Backspace") { e.preventDefault(); undoDraft(); }
+  const addShape = (type, points, extra = {}) => {
+    const labelBase = { area: extra.is_deduction ? "Cutout" : (tool === "wall" ? "Wall" : tool === "room" ? "Room" : "Area"), linear: "Line", perimeter: "Perimeter", count: "Count", text: "Note" }[tool] || type;
+    const realType = tool === "wall" ? "wall" : tool === "perimeter" ? "perimeter" : tool === "linear" ? "linear" : tool === "count" ? "count" : tool === "text" ? "text" : "area";
+    const m = {
+      id: `m_${Date.now()}_${Math.floor(Math.random() * 999)}`, type: realType, points,
+      label: `${labelBase} ${items.filter((x) => x.type === realType).length + 1}`,
+      color: extra.color || TOOLS[tool].color, fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false,
+      is_deduction: !!extra.is_deduction, count: extra.count, text: extra.text, tile_id: null, pattern: null,
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    commit([...items, m]);
+    setSelId(m.id);
+    if (realType === "area" && !extra.is_deduction) setTab("tile"); else setTab("style");
+    toast.success(`${labelBase} added`);
+  };
+
+  const finishPoly = () => {
+    const meta = TOOLS[tool];
+    if (meta.kind !== "poly" || draft.length < (meta.openPath ? 2 : 3)) { toast.error("Add more points first"); return; }
+    const type = tool === "wall" ? "wall" : tool === "perimeter" ? "perimeter" : "area";
+    addShape(type, draft, { color: meta.color });
+    setDraft([]);
+  };
+  const cancelDraft = () => setDraft([]);
+  const undoDraft = () => setDraft((d) => d.slice(0, -1));
+
+  // keyboard
+  useEffect(() => {
+    const kd = (e) => {
+      if (e.key === "Shift") window.__shift = true;
+      if (e.code === "Space" && !["INPUT", "TEXTAREA"].includes(e.target.tagName)) { spaceRef.current = true; e.preventDefault(); }
+      if (["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+      if (e.key === "Enter" && draft.length) { e.preventDefault(); finishPoly(); }
+      else if (e.key === "Escape") { setDraft([]); setSelId(null); }
+      else if (e.key === "Backspace" && draft.length) { e.preventDefault(); undoDraft(); }
+      else if ((e.key === "Delete") && selId) removeItem(selId);
+      else if (e.key === "v") setTool("select");
+    };
+    const ku = (e) => { if (e.key === "Shift") window.__shift = false; if (e.code === "Space") spaceRef.current = false; };
+    window.addEventListener("keydown", kd); window.addEventListener("keyup", ku);
+    return () => { window.removeEventListener("keydown", kd); window.removeEventListener("keyup", ku); };
   });
 
+  // wheel zoom to cursor
+  useEffect(() => {
+    const el = containerRef.current; if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      setView((v) => {
+        const factor = Math.exp(-e.deltaY * 0.0012);
+        const nz = Math.max(0.05, Math.min(v.z * factor, 6));
+        const wx = (sx - v.tx) / v.z, wy = (sy - v.ty) / v.z;
+        return { z: nz, tx: sx - wx * nz, ty: sy - wy * nz };
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   const confirmCalibration = async () => {
-    const feet = parseFloat(calibForm.feet) || 0;
-    const inches = parseFloat(calibForm.inches) || 0;
-    let realLen, unit;
-    if (calibForm.unit === "ft") { realLen = feet + inches / 12; unit = "ft"; }
-    else { realLen = feet; unit = calibForm.unit; }  // for in/m, "feet" field holds the value
-    if (!realLen || !calibLine) { toast.error("Enter the real length of the line"); return; }
-    const px = pathLength(calibLine);
+    const feet = parseFloat(calibForm.feet) || 0, inches = parseFloat(calibForm.inches) || 0;
+    let realLen, u;
+    if (calibForm.unit === "ft") { realLen = feet + inches / 12; u = "ft"; } else { realLen = feet; u = calibForm.unit; }
+    if (!realLen || !calibLine) { toast.error("Enter the real length"); return; }
     try {
-      await api.post(`/drawings/${drawing.id}/calibrate`, { pixel_length: px, real_length: realLen, unit });
-      toast.success(`Scale set · ${realLen.toFixed(2)} ${unit}`);
+      await api.post(`/drawings/${drawing.id}/calibrate`, { pixel_length: pathLength(calibLine), real_length: realLen, unit: u });
+      toast.success(`Scale set · ${realLen.toFixed(2)} ${u}`);
       setCalibOpen(false); setCalibLine(null); setTool("select"); setCalibForm({ feet: "", inches: "", unit: "ft" });
       mutate();
     } catch (e) { toast.error(apiErr(e)); }
   };
 
-  const deleteMeasurement = (mid) => save({ measurements: measurements.filter((m) => m.id !== mid) });
-  const assignTile = (mid, tileId) => save({ measurements: measurements.map((m) => m.id === mid ? { ...m, tile_id: tileId || null } : m) });
-  const setDefaultTile = (tileId) => save({ default_tile_id: tileId || null });
-
   const runAI = async () => {
     setAiLoading(true);
-    try {
-      await api.post(`/takeoffs/${id}/ai-analyze`);
-      toast.success("AI analysis complete");
-      mutate();
-      setTab("ai");
-    } catch (e) { toast.error(apiErr(e)); }
-    finally { setAiLoading(false); }
+    try { await api.post(`/takeoffs/${id}/ai-analyze`); toast.success("AI analysis complete"); mutate(); setTab("ai"); }
+    catch (e) { toast.error(apiErr(e)); } finally { setAiLoading(false); }
   };
-
   const sendEmail = async () => {
     if (!emailTo) return toast.error("Enter recipient");
     try { await api.post(`/takeoffs/${id}/email`, { recipient_email: emailTo }); toast.success("Report emailed"); setEmailOpen(false); }
     catch (e) { toast.error(apiErr(e)); }
   };
 
-  const { data: tiles } = useSWR("/tiles", fetcher);
-  const tilesMap = Object.fromEntries((tiles || []).map((t) => [t.id, t]));
-  const defaultTile = tilesMap[takeoff?.default_tile_id];
-
   if (!data) return <div className="h-screen flex items-center justify-center font-mono text-sm text-slate-400">Loading studio…</div>;
 
+  const sel = items.find((m) => m.id === selId);
+  const sw = (m) => (m.lineWidth || 2) / view.z;
+  const areaTileFor = (m) => tilesMap[m.tile_id] || defaultTile;
+  const cursorClass = tool === "pan" ? "cursor-grab" : tool === "select" ? "cursor-default" : "cursor-crosshair";
+
   return (
-    <div className="h-screen flex flex-col bg-slate-100 overflow-hidden">
+    <div className="h-screen flex flex-col bg-slate-100 overflow-hidden select-none">
       {/* Top bar */}
       <header className="h-12 bg-slate-950 text-white flex items-center justify-between px-4 shrink-0 border-b border-slate-800 z-30">
         <div className="flex items-center gap-3 min-w-0">
           <Link to={`/projects/${takeoff.project_id}`} className="text-slate-400 hover:text-white"><ArrowLeft className="w-4 h-4" /></Link>
-          <div className="min-w-0">
-            <div className="text-sm font-bold truncate">{takeoff.name}</div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-orange-500">{takeoff.type} takeoff</div>
-          </div>
+          <div className="min-w-0"><div className="text-sm font-bold truncate">{takeoff.name}</div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-orange-500">{takeoff.type} takeoff {saving && <span className="text-slate-500">· saving…</span>}</div></div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-sm ${scale ? "bg-green-900/60 text-green-400" : "bg-amber-900/60 text-amber-400"}`}>
-            {scale ? `Scale set · ${unit}` : "Not calibrated"}
-          </span>
-          <a data-testid="export-pdf" href={exportUrl(id, "pdf")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />PDF</a>
-          <a data-testid="export-xlsx" href={exportUrl(id, "xlsx")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5" />Excel</a>
-          <a data-testid="export-csv" href={exportUrl(id, "csv")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileDown className="w-3.5 h-3.5" />CSV</a>
+          <button onClick={() => setShowFill((s) => !s)} className={`text-xs font-bold px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1 ${showFill ? "bg-orange-600" : "bg-slate-800 hover:bg-slate-700"}`}><Grid3x3 className="w-3.5 h-3.5" />Tile Fill</button>
+          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-sm ${scale ? "bg-green-900/60 text-green-400" : "bg-amber-900/60 text-amber-400"}`}>{scale ? `Scale · ${unit}` : "Not calibrated"}</span>
+          <a href={exportUrl(id, "pdf")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />PDF</a>
+          <a href={exportUrl(id, "xlsx")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5" />Excel</a>
+          <a href={exportUrl(id, "csv")} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileDown className="w-3.5 h-3.5" />CSV</a>
         </div>
       </header>
 
       <div className="flex-1 flex min-h-0">
         {/* Left tool rail */}
         <div className="w-14 bg-slate-950 flex flex-col items-center py-3 gap-1 border-r border-slate-800 z-20">
-          {Object.keys(TOOLS).map((t) => {
-            const Icon = TOOL_ICONS[t];
-            const active = tool === t;
-            return (
-              <button key={t} data-testid={`tool-${t}`} onClick={() => { setTool(t); setDraft([]); }} title={TOOLS[t].label}
-                className={`w-10 h-10 flex items-center justify-center rounded-sm transition-colors ${active ? "bg-orange-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}>
-                <Icon className="w-5 h-5" strokeWidth={1.75} />
-              </button>
-            );
+          {TOOL_ORDER.map((t) => { const Icon = TOOLS[t].icon; const active = tool === t;
+            return <button key={t} data-testid={`tool-${t}`} title={TOOLS[t].label} onClick={() => { setTool(t); setDraft([]); }}
+              className={`w-10 h-10 flex items-center justify-center rounded-sm transition-colors ${active ? "bg-orange-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}><Icon className="w-5 h-5" strokeWidth={1.7} /></button>;
           })}
           <div className="mt-auto flex flex-col gap-1">
-            <button onClick={() => setZoom((z) => Math.min(z + 0.2, 3))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomIn className="w-4 h-4" /></button>
-            <button onClick={() => setZoom((z) => Math.max(z - 0.15, 0.08))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomOut className="w-4 h-4" /></button>
-            <button onClick={fitToScreen} title="Fit to screen" className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><Maximize className="w-4 h-4" /></button>
+            <button onClick={() => setView((v) => ({ ...v, z: Math.min(v.z * 1.2, 6) }))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomIn className="w-4 h-4" /></button>
+            <button onClick={() => setView((v) => ({ ...v, z: Math.max(v.z / 1.2, 0.05) }))} className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><ZoomOut className="w-4 h-4" /></button>
+            <button onClick={fitToScreen} title="Fit" className="w-10 h-10 flex items-center justify-center rounded-sm text-slate-400 hover:bg-slate-800 hover:text-white"><Maximize className="w-4 h-4" /></button>
           </div>
         </div>
 
         {/* Canvas */}
-        <div ref={containerRef} className="flex-1 relative overflow-auto dot-grid">
-          {tool !== "select" && (
+        <div ref={containerRef} className="flex-1 relative overflow-hidden dot-grid">
+          {tool !== "select" && tool !== "pan" && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-slate-950 text-white text-xs font-mono px-3 py-1.5 rounded-sm flex items-center gap-3 shadow-lg">
               <span className="text-orange-400 font-bold">{TOOLS[tool].label}</span>
-              {TOOLS[tool].kind === "polygon" && <span className="text-slate-400">click corners · double-click or Enter to finish</span>}
-              {TOOLS[tool].kind === "line" && <span className="text-slate-400">click start & end point</span>}
-              {tool === "count" && <span className="text-slate-400">click each item to count</span>}
-              {tool === "calibrate" && <span className="text-slate-400">draw a line along a known dimension</span>}
+              {TOOLS[tool].kind === "rect" && <span className="text-slate-400">click-drag a box</span>}
+              {TOOLS[tool].kind === "poly" && <span className="text-slate-400">click corners · Enter/double-click to finish · Shift = straight</span>}
+              {TOOLS[tool].kind === "line" && <span className="text-slate-400">click two points</span>}
             </div>
           )}
-
-          {/* Prominent draft action toolbar */}
-          {draft.length > 0 && TOOLS[tool]?.kind === "polygon" && (
+          {draft.length > 0 && TOOLS[tool]?.kind === "poly" && (
             <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 bg-white border border-slate-300 shadow-xl rounded-sm flex items-stretch overflow-hidden">
-              <div className="px-4 flex items-center text-xs font-mono text-slate-600 border-r border-slate-200">
-                {draft.length} point{draft.length !== 1 ? "s" : ""}{draft.length < 3 && <span className="text-amber-600 ml-1">· need {3 - draft.length} more</span>}
-              </div>
-              <button data-testid="finish-shape-btn" onClick={finishDraft} disabled={draft.length < 3}
-                className="px-5 py-2.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-sm inline-flex items-center gap-2 transition-colors">
-                <Check className="w-4 h-4" /> Finish Shape
-              </button>
-              <button data-testid="undo-point-btn" onClick={undoDraft} className="px-3 hover:bg-slate-100 text-slate-600 inline-flex items-center gap-1 text-xs font-bold border-l border-slate-200"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
-              <button data-testid="cancel-shape-btn" onClick={cancelDraft} className="px-3 hover:bg-red-50 text-slate-500 hover:text-red-600 inline-flex items-center gap-1 text-xs font-bold border-l border-slate-200"><X className="w-3.5 h-3.5" /> Cancel</button>
+              <div className="px-4 flex items-center text-xs font-mono text-slate-600 border-r border-slate-200">{draft.length} pt{draft.length !== 1 ? "s" : ""}</div>
+              <button data-testid="finish-shape-btn" onClick={finishPoly} className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold text-sm inline-flex items-center gap-2"><Check className="w-4 h-4" />Finish</button>
+              <button onClick={undoDraft} className="px-3 hover:bg-slate-100 text-slate-600 inline-flex items-center gap-1 text-xs font-bold border-l border-slate-200"><Undo2 className="w-3.5 h-3.5" />Undo</button>
+              <button onClick={cancelDraft} className="px-3 hover:bg-red-50 text-slate-500 hover:text-red-600 inline-flex items-center gap-1 text-xs font-bold border-l border-slate-200"><X className="w-3.5 h-3.5" />Cancel</button>
             </div>
           )}
 
-          <div style={{ width: canvas.w * zoom, height: canvas.h * zoom }} className="relative mx-auto my-8">
-            {hasImg && bgUrl && <img src={bgUrl} alt="plan" className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none bg-white" draggable={false} />}
-            {!hasImg && (
-              <div className="absolute inset-0 blueprint-grid border border-slate-700 flex items-center justify-center">
-                <div className="text-center text-slate-400 font-mono text-xs">
-                  {planLoading ? "Rendering plan…" : !drawing ? "No drawing attached to this takeoff" : "Plan preview unavailable"}
-                  {!drawing && <div className="text-[10px] mt-1 text-slate-500">Attach a drawing from the project page, or measure on this blank canvas.</div>}
-                </div>
-              </div>
-            )}
-            <svg ref={svgRef} viewBox={`0 0 ${canvas.w} ${canvas.h}`} preserveAspectRatio="none"
-              onClick={onCanvasClick} onDoubleClick={onCanvasDoubleClick} className={`absolute inset-0 w-full h-full ${tool !== "select" ? "crosshair-cursor" : ""}`}
-              style={{ cursor: TOOLS[tool]?.cursor }} data-testid="takeoff-canvas">
-              {measurements.map((m) => <MeasurementShape key={m.id} m={m} scale={scale} unit={unit} />)}
-              {/* draft */}
-              {draft.length > 0 && (
-                <g>
-                  {(TOOLS[tool]?.kind === "polygon") ? (
-                    <polygon points={draft.map((p) => p.join(",")).join(" ")} fill="rgba(234,88,12,0.15)" stroke="#EA580C" strokeWidth={2 * (canvas.w / 1000)} strokeDasharray="6 4" />
-                  ) : (
-                    <polyline points={draft.map((p) => p.join(",")).join(" ")} fill="none" stroke="#EA580C" strokeWidth={2 * (canvas.w / 1000)} strokeDasharray="6 4" />
-                  )}
-                  {draft.map((p, i) => (
-                    <circle key={i} cx={p[0]} cy={p[1]} r={(i === 0 && draft.length >= 3 ? 7 : 4) * (canvas.w / 1000)}
-                      fill={i === 0 && draft.length >= 3 ? "#16A34A" : "#fff"} stroke="#EA580C" strokeWidth={2 * (canvas.w / 1000)} />
+          <svg ref={svgRef} className={`absolute inset-0 w-full h-full ${cursorClass}`} data-testid="takeoff-canvas"
+            onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+            onDoubleClick={() => { if (TOOLS[tool]?.kind === "poly") finishPoly(); }}>
+            <defs>
+              {showFill && items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction && m.visible !== false && areaTileFor(m)).map((m) => (
+                <TilePattern key={m.id} id={`tilepat_${m.id}`} tile={areaTileFor(m)} pattern={m.pattern || areaTileFor(m)?.pattern} scale={scale} />
+              ))}
+            </defs>
+            <g transform={`translate(${view.tx} ${view.ty}) scale(${view.z})`}>
+              {hasImg && bgUrl && <image href={bgUrl} x={0} y={0} width={canvas.w} height={canvas.h} />}
+              {!hasImg && <rect x={0} y={0} width={canvas.w} height={canvas.h} className="blueprint-grid" fill="#0b1220" />}
+              {items.map((m) => m.visible === false ? null : (
+                <ShapeRender key={m.id} m={m} sw={sw(m)} z={view.z} scale={scale} unit={unit} selected={m.id === selId}
+                  fillTile={showFill && AREA_TYPES.includes(m.type) && !m.is_deduction && areaTileFor(m)} />
+              ))}
+              {/* control-point handles for selected shape */}
+              {tool === "select" && sel && sel.points && sel.type !== "count" && sel.type !== "text" && (
+                <g data-testid="control-points">
+                  {AREA_TYPES.includes(sel.type) && sel.points.map((p, i) => {
+                    const n = sel.points[(i + 1) % sel.points.length]; const mx = (p[0] + n[0]) / 2, my = (p[1] + n[1]) / 2;
+                    return <circle key={`mid${i}`} cx={mx} cy={my} r={4.5 / view.z} fill="#16A34A" stroke="#fff" strokeWidth={1.2 / view.z} style={{ cursor: "copy" }} onPointerDown={(e) => onMidDown(e, sel.id, i, [mx, my])} />;
+                  })}
+                  {sel.points.map((p, i) => (
+                    <rect key={`v${i}`} data-testid={`vertex-${i}`} x={p[0] - 5.5 / view.z} y={p[1] - 5.5 / view.z} width={11 / view.z} height={11 / view.z}
+                      fill="#fff" stroke="#0F172A" strokeWidth={1.6 / view.z} style={{ cursor: "move" }} onPointerDown={(e) => onVtxDown(e, sel.id, i)} />
                   ))}
                 </g>
               )}
-            </svg>
-          </div>
+              {/* rect drag preview */}
+              {rectDrag && (() => { const { p0, p1 } = rectDrag; return (
+                <rect x={Math.min(p0[0], p1[0])} y={Math.min(p0[1], p1[1])} width={Math.abs(p1[0] - p0[0])} height={Math.abs(p1[1] - p0[1])}
+                  fill={`${TOOLS[tool].color}22`} stroke={TOOLS[tool].color} strokeWidth={2 / view.z} strokeDasharray={`${6 / view.z} ${4 / view.z}`} />); })()}
+              {/* poly/line draft */}
+              {draft.length > 0 && (
+                <g>
+                  {TOOLS[tool]?.kind === "poly" && !TOOLS[tool].openPath
+                    ? <polygon points={draft.map((p) => p.join(",")).join(" ")} fill="rgba(234,88,12,0.12)" stroke="#EA580C" strokeWidth={2 / view.z} strokeDasharray={`${6 / view.z} ${4 / view.z}`} />
+                    : <polyline points={draft.map((p) => p.join(",")).join(" ")} fill="none" stroke="#EA580C" strokeWidth={2 / view.z} strokeDasharray={`${6 / view.z} ${4 / view.z}`} />}
+                  {draft.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={(i === 0 && draft.length >= 3 ? 6 : 4) / view.z} fill={i === 0 && draft.length >= 3 ? "#16A34A" : "#fff"} stroke="#EA580C" strokeWidth={2 / view.z} />)}
+                </g>
+              )}
+            </g>
+          </svg>
         </div>
 
         {/* Right panel */}
         <div className="w-96 bg-white border-l border-slate-200 flex flex-col z-20">
-          {/* Totals */}
           <div className="grid grid-cols-3 gap-px bg-slate-200 border-b border-slate-200 shrink-0">
-            {[["NET AREA", scale ? `${summary.totals.net_area}` : "—", "sf"], ["TILES", summary.totals.tiles_needed, "ea"], ["COST", `$${summary.totals.cost.toLocaleString()}`, ""]].map(([k, v, u]) => (
-              <div key={k} className="bg-white p-3 text-center">
-                <div className="text-[9px] font-mono uppercase tracking-widest text-slate-500">{k}</div>
-                <div className="text-base font-black font-data text-slate-900 truncate">{v}<span className="text-[10px] text-slate-400 ml-0.5">{u}</span></div>
-              </div>
+            {[["NET AREA", summary && scale ? summary.totals.net_area : "—", "sf"], ["TILES", summary?.totals.tiles_needed ?? 0, "ea"], ["COST", `$${(summary?.totals.cost ?? 0).toLocaleString()}`, ""]].map(([k, v, u]) => (
+              <div key={k} className="bg-white p-3 text-center"><div className="text-[9px] font-mono uppercase tracking-widest text-slate-500">{k}</div>
+                <div className="text-base font-black font-data text-slate-900 truncate">{v}<span className="text-[10px] text-slate-400 ml-0.5">{u}</span></div></div>
             ))}
           </div>
 
           <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col min-h-0">
-            <TabsList className="grid grid-cols-4 rounded-none bg-slate-100 border-b border-slate-200 h-9 shrink-0">
-              <TabsTrigger value="measure" data-testid="tab-measure" className="text-xs rounded-none data-[state=active]:bg-white">Measure</TabsTrigger>
-              <TabsTrigger value="tiles" data-testid="tab-tiles" className="text-xs rounded-none data-[state=active]:bg-white">Tile</TabsTrigger>
-              <TabsTrigger value="ai" data-testid="tab-ai" className="text-xs rounded-none data-[state=active]:bg-white">AI</TabsTrigger>
-              <TabsTrigger value="3d" data-testid="tab-3d" className="text-xs rounded-none data-[state=active]:bg-white">3D</TabsTrigger>
+            <TabsList className="grid grid-cols-5 rounded-none bg-slate-100 border-b border-slate-200 h-9 shrink-0">
+              {[["layers", "Layers"], ["style", "Style"], ["tile", "Tile"], ["ai", "AI"], ["3d", "3D"]].map(([v, l]) => (
+                <TabsTrigger key={v} value={v} data-testid={`tab-${v}`} className="text-xs rounded-none data-[state=active]:bg-white">{l}</TabsTrigger>
+              ))}
             </TabsList>
 
-            {/* Measurements */}
-            <TabsContent value="measure" className="flex-1 overflow-y-auto m-0 p-0">
-              {measurements.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Pick a tool and start measuring on the canvas.</div>}
-              {measurements.map((m) => {
+            {/* LAYERS */}
+            <TabsContent value="layers" className="flex-1 overflow-y-auto m-0 p-0">
+              {items.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Pick a tool and draw on the plan. Drag a box for areas/cutouts, click corners for rooms.</div>}
+              {items.map((m) => {
                 const val = realValue(m, scale);
                 return (
-                  <div key={m.id} data-testid={`measurement-${m.id}`} className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between hover:bg-slate-50">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: m.color }} />
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold truncate flex items-center gap-1">{m.label}{m.is_deduction && <span className="text-[9px] text-red-600 font-mono">DEDUCT</span>}</div>
-                        <div className="text-[11px] font-mono text-slate-500">
-                          {m.type === "count" ? `${m.count} ea` :
-                            val != null ? `${val.toFixed(2)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : `${m.type} · calibrate to size`}
-                        </div>
-                      </div>
+                  <div key={m.id} data-testid={`measurement-${m.id}`} onClick={() => { setSelId(m.id); setTab("style"); }}
+                    className={`px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer ${selId === m.id ? "bg-orange-50" : "hover:bg-slate-50"}`}>
+                    <button onClick={(e) => { e.stopPropagation(); updateItem(m.id, { visible: m.visible === false }); }} className="text-slate-400 hover:text-slate-900">
+                      {m.visible === false ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>
+                    <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: m.color }} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold truncate flex items-center gap-1">{m.label}{m.is_deduction && <span className="text-[9px] text-red-600 font-mono">DEDUCT</span>}</div>
+                      <div className="text-[11px] font-mono text-slate-500">{m.type === "count" ? `${m.count} ea` : m.type === "text" ? "note" : val != null ? `${val.toFixed(1)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : m.type}</div>
                     </div>
-                    <button onClick={() => deleteMeasurement(m.id)} className="text-slate-300 hover:text-red-600 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={(e) => { e.stopPropagation(); updateItem(m.id, { locked: !m.locked }); }} className="text-slate-300 hover:text-slate-700">{m.locked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}</button>
+                    <button onClick={(e) => { e.stopPropagation(); removeItem(m.id); }} className="text-slate-300 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 );
               })}
             </TabsContent>
 
-            {/* Tiles */}
-            <TabsContent value="tiles" className="flex-1 overflow-y-auto m-0 p-4 space-y-4">
+            {/* STYLE (properties of selected) */}
+            <TabsContent value="style" className="flex-1 overflow-y-auto m-0 p-4 space-y-3">
+              {!sel ? <div className="text-sm text-slate-400 text-center mt-6">Select a measurement (Select tool) to edit its properties — color, fill, line width, label.</div> : (
+                <>
+                  <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Label</label>
+                    <input className={input} value={sel.label || ""} onChange={(e) => updateItem(sel.id, { label: e.target.value })} data-testid="style-label" /></div>
+                  {sel.type === "text" && <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Note text</label>
+                    <input className={input} value={sel.text || ""} onChange={(e) => updateItem(sel.id, { text: e.target.value })} /></div>}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Line / Text Color</label>
+                      <input type="color" className="w-full h-9 border border-slate-300 rounded-sm" value={sel.color || "#EA580C"} onChange={(e) => updateItem(sel.id, { color: e.target.value })} data-testid="style-color" /></div>
+                    <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Line Width</label>
+                      <input type="range" min="1" max="8" value={sel.lineWidth || 2} onChange={(e) => updateItem(sel.id, { lineWidth: +e.target.value })} className="w-full mt-3 accent-orange-600" /></div>
+                  </div>
+                  {AREA_TYPES.includes(sel.type) && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Fill Color</label>
+                        <input type="color" className="w-full h-9 border border-slate-300 rounded-sm" value={sel.fillColor || sel.color || "#EA580C"} onChange={(e) => updateItem(sel.id, { fillColor: e.target.value })} data-testid="style-fill" /></div>
+                      <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Fill Opacity</label>
+                        <input type="range" min="0" max="0.8" step="0.05" value={sel.fillOpacity ?? 0.22} onChange={(e) => updateItem(sel.id, { fillOpacity: +e.target.value })} className="w-full mt-3 accent-orange-600" /></div>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-2">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Deduction (cutout)</label>
+                    <input type="checkbox" checked={!!sel.is_deduction} onChange={(e) => updateItem(sel.id, { is_deduction: e.target.checked })} className="accent-red-600 w-4 h-4" />
+                  </div>
+                  <button onClick={() => removeItem(sel.id)} className="w-full border border-red-200 text-red-600 hover:bg-red-50 font-bold py-2 rounded-sm inline-flex items-center justify-center gap-2 text-sm"><Trash2 className="w-4 h-4" />Delete</button>
+                </>
+              )}
+            </TabsContent>
+
+            {/* TILE */}
+            <TabsContent value="tile" className="flex-1 overflow-y-auto m-0 p-4 space-y-4">
               <div>
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Default Tile (all surfaces)</label>
-                <select data-testid="default-tile-select" className={input + " mt-1"} value={takeoff.default_tile_id || ""} onChange={(e) => setDefaultTile(e.target.value)}>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Default Tile (all areas)</label>
+                <select data-testid="default-tile-select" className={input + " mt-1"} value={defaultTileId || ""} onChange={(e) => setDefaultTile(e.target.value)}>
                   <option value="">— none —</option>
                   {(tiles || []).map((t) => <option key={t.id} value={t.id}>{`${t.name} (${t.width}×${t.height})`}</option>)}
                 </select>
-                {defaultTile && (
-                  <div className="mt-2 flex items-center gap-3 border border-slate-200 p-2 rounded-sm">
-                    <div className="w-12 h-12 rounded-sm border border-slate-200" style={{ background: defaultTile.color }}>{defaultTile.image_url && <img src={defaultTile.image_url} alt="" className="w-full h-full object-cover" />}</div>
-                    <div className="text-[11px] font-mono text-slate-600">
-                      <div>{defaultTile.pattern} · {defaultTile.finish}</div>
-                      <div>waste {Math.round(defaultTile.waste_factor * 100)}% · ${defaultTile.price_per_sqft}/sf</div>
-                    </div>
-                  </div>
-                )}
               </div>
-              <div className="space-y-2">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Quantity Breakdown</div>
-                {summary.lines.length === 0 && <div className="text-sm text-slate-400">Add measurements + assign a tile.</div>}
-                {summary.lines.map((l, i) => (
-                  <div key={i} className="border border-slate-200 rounded-sm p-2.5 text-xs font-mono">
-                    <div className="font-bold text-sm font-sans">{l.tile_name}</div>
-                    <div className="grid grid-cols-2 gap-1 mt-1 text-slate-600">
-                      <span>Net: {l.net_area} sf</span><span>Waste: {l.waste_pct}%</span>
-                      <span>Tiles: <b className="text-slate-900">{l.tiles_needed}</b></span><span>Boxes: <b className="text-slate-900">{l.boxes}</b></span>
-                      <span className="col-span-2 text-orange-600 font-bold">Cost: ${l.cost.toLocaleString()}</span>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Cut reuse (waste optimization)</label>
+                <input type="checkbox" checked={takeoff.cut_reuse !== false} onChange={(e) => setReuse(e.target.checked)} className="accent-orange-600 w-4 h-4" />
+              </div>
+              {/* per-area layout */}
+              <div className="border-t border-slate-200 pt-3 space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Per-Room Layout</div>
+                {items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction).map((m) => (
+                  <div key={m.id} className="border border-slate-200 rounded-sm p-2 space-y-1.5">
+                    <div className="text-xs font-bold">{m.label}</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <select className={input} value={m.tile_id || ""} onChange={(e) => updateItem(m.id, { tile_id: e.target.value || null })}>
+                        <option value="">{defaultTile ? `default (${defaultTile.name})` : "default"}</option>
+                        {(tiles || []).map((t) => <option key={t.id} value={t.id}>{String(t.name)}</option>)}
+                      </select>
+                      <select className={input} value={m.pattern || ""} onChange={(e) => updateItem(m.id, { pattern: e.target.value || null })}>
+                        <option value="">pattern (tile default)</option>
+                        {PATTERNS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="border-t border-slate-200 pt-3">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Per-Surface Override</div>
-                {measurements.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction).map((m) => (
-                  <div key={m.id} className="flex items-center gap-2 mb-1.5">
-                    <span className="text-xs flex-1 truncate">{m.label}</span>
-                    <select className={input + " w-40"} value={m.tile_id || ""} onChange={(e) => assignTile(m.id, e.target.value)}>
-                      <option value="">default</option>
-                      {(tiles || []).map((t) => <option key={t.id} value={t.id}>{String(t.name)}</option>)}
-                    </select>
+              {/* quantity breakdown */}
+              <div className="border-t border-slate-200 pt-3 space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Quantity & Cut Breakdown</div>
+                {(summary?.lines || []).length === 0 && <div className="text-sm text-slate-400">Draw areas and assign tiles.</div>}
+                {(summary?.lines || []).map((l, i) => (
+                  <div key={i} className="border border-slate-200 rounded-sm p-2.5 text-xs font-mono">
+                    <div className="font-bold text-sm font-sans">{l.tile_name} <span className="text-slate-400 font-normal">· {l.pattern}</span></div>
+                    <div className="grid grid-cols-2 gap-1 mt-1 text-slate-600">
+                      <span>Net: {l.net_area} sf</span><span>Full: <b className="text-slate-900">{l.full_tiles}</b></span>
+                      <span>Cuts: <b className="text-slate-900">{l.cut_tiles}</b></span><span>Reused: <b className="text-green-700">{l.reused_cuts}</b></span>
+                      <span>Order: <b className="text-slate-900">{l.tiles_needed}</b></span><span>Boxes: <b className="text-slate-900">{l.boxes}</b></span>
+                      <span>Waste: {l.true_waste_pct}%</span><span className="text-orange-600 font-bold">${l.cost.toLocaleString()}</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -403,92 +555,63 @@ export default function TakeoffStudio() {
 
             {/* AI */}
             <TabsContent value="ai" className="flex-1 overflow-y-auto m-0 p-4">
-              <button data-testid="run-ai-btn" onClick={runAI} disabled={aiLoading}
-                className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-60 text-white font-bold py-2.5 rounded-sm transition-colors inline-flex items-center justify-center gap-2 mb-4">
-                <Sparkles className="w-4 h-4" /> {aiLoading ? "Analyzing drawing…" : "Run AI Takeoff Assist"}
-              </button>
-              {!takeoff.ai_suggestions && <p className="text-xs text-slate-400 text-center">AI detects tileable regions, openings, and a recommended waste allowance from an image drawing. Review & approve below.</p>}
+              <button data-testid="run-ai-btn" onClick={runAI} disabled={aiLoading} className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-60 text-white font-bold py-2.5 rounded-sm inline-flex items-center justify-center gap-2 mb-4"><Sparkles className="w-4 h-4" />{aiLoading ? "Analyzing…" : "Run AI Takeoff Assist"}</button>
+              {!takeoff.ai_suggestions && <p className="text-xs text-slate-400 text-center">Works on PDF & image plans. Detects tileable regions, openings, and recommends a waste allowance to review.</p>}
               {takeoff.ai_suggestions && (
                 <div className="space-y-3">
                   <div className="bg-orange-50 border border-orange-200 rounded-sm p-3 text-xs text-slate-700">{takeoff.ai_suggestions.summary}</div>
-                  <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-slate-500">
-                    <span>Recommended waste</span><span className="text-orange-600 font-bold text-sm">{takeoff.ai_suggestions.recommended_waste_pct}%</span>
-                  </div>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Detected Regions</div>
+                  <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-slate-500"><span>Recommended waste</span><span className="text-orange-600 font-bold text-sm">{takeoff.ai_suggestions.recommended_waste_pct}%</span></div>
                   {(takeoff.ai_suggestions.regions || []).map((r, i) => (
                     <div key={i} className="border border-slate-200 rounded-sm p-2.5" data-testid={`ai-region-${i}`}>
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-sm">{r.label}</span>
-                        <span className="text-[11px] font-mono text-slate-500">{r.est_area_sqft} sf</span>
-                      </div>
-                      <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-green-500" style={{ width: `${Math.round((r.confidence || 0) * 100)}%` }} />
-                      </div>
+                      <div className="flex items-center justify-between"><span className="font-bold text-sm">{r.label}</span><span className="text-[11px] font-mono text-slate-500">{r.est_area_sqft} sf</span></div>
+                      <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${Math.round((r.confidence || 0) * 100)}%` }} /></div>
                       <div className="text-[10px] font-mono text-slate-400 mt-1">confidence {Math.round((r.confidence || 0) * 100)}% · {r.notes}</div>
                     </div>
                   ))}
-                  {(takeoff.ai_suggestions.openings || []).length > 0 && (
-                    <>
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Openings to Deduct</div>
-                      {takeoff.ai_suggestions.openings.map((o, i) => (
-                        <div key={i} className="flex justify-between text-xs font-mono border border-red-100 bg-red-50 rounded-sm px-2.5 py-1.5">
-                          <span>{o.label}</span><span className="text-red-600">-{o.est_area_sqft} sf</span>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                  <p className="text-[10px] text-slate-400 italic">AI is assistive. Trace surfaces on the canvas to lock in approved quantities.</p>
                 </div>
               )}
             </TabsContent>
 
             {/* 3D */}
-            <TabsContent value="3d" className="flex-1 overflow-hidden m-0 p-0">
-              <Preview3D tile={defaultTile} type={takeoff.type} />
+            <TabsContent value="3d" className="flex-1 overflow-hidden m-0 p-0 flex flex-col">
+              <div className="flex items-center gap-1 p-2 border-b border-slate-200 shrink-0">
+                <button data-testid="3d-before" onClick={() => setShow3dTiles(false)} className={`flex-1 text-xs font-bold py-1.5 rounded-sm ${!show3dTiles ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-600"}`}>Before (bare)</button>
+                <button data-testid="3d-after" onClick={() => setShow3dTiles(true)} className={`flex-1 text-xs font-bold py-1.5 rounded-sm ${show3dTiles ? "bg-orange-600 text-white" : "border border-slate-300 text-slate-600"}`}>After (tiled)</button>
+              </div>
+              <div className="flex-1 min-h-0">
+                <Plan3D items={items} tilesMap={tilesMap} defaultTile={defaultTile} scale={scale} type={takeoff.type} withTiles={show3dTiles} />
+              </div>
             </TabsContent>
           </Tabs>
 
-          {/* Email footer */}
           <div className="border-t border-slate-200 p-3 shrink-0">
-            <button data-testid="email-report-btn" onClick={() => setEmailOpen(true)} className="w-full border border-slate-300 hover:border-slate-900 text-slate-800 font-bold py-2 rounded-sm transition-colors inline-flex items-center justify-center gap-2 text-sm">
-              <Mail className="w-4 h-4" /> Email Report
-            </button>
+            <button data-testid="email-report-btn" onClick={() => setEmailOpen(true)} className="w-full border border-slate-300 hover:border-slate-900 text-slate-800 font-bold py-2 rounded-sm inline-flex items-center justify-center gap-2 text-sm"><Mail className="w-4 h-4" />Email Report</button>
           </div>
         </div>
       </div>
 
-      {/* Bottom status bar */}
+      {/* Status bar */}
       <div className="h-7 bg-white border-t border-slate-200 flex items-center px-4 text-[10px] font-mono text-slate-500 justify-between shrink-0">
-        <span>{measurements.length} measurements · {hasImg ? `${canvas.w}×${canvas.h}px` : "blank canvas"}</span>
-        <span>{scale ? `1px = ${scale.toFixed(4)} ${unit}` : "uncalibrated"} · zoom {Math.round(zoom * 100)}%</span>
+        <span>{items.length} markups · {hasImg ? `${canvas.w}×${canvas.h}px` : "blank canvas"} · {summary?.totals.cut_tiles ?? 0} cuts ({summary?.totals.reused_cuts ?? 0} reused)</span>
+        <span>{scale ? `1px = ${scale.toFixed(4)} ${unit}` : "uncalibrated"} · zoom {Math.round(view.z * 100)}% · Space/middle-drag = pan</span>
       </div>
 
       {/* Calibration dialog */}
       <Dialog open={calibOpen} onOpenChange={setCalibOpen}>
         <DialogContent className="rounded-sm">
           <DialogHeader><DialogTitle className="font-black tracking-tight">Set Drawing Scale</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-500">You drew a reference line of <b className="font-mono">{calibLine ? pathLength(calibLine).toFixed(0) : 0}px</b>. Enter its real-world length — trace along a known dimension on the plan (e.g. a labeled wall) for best accuracy.</p>
+          <p className="text-sm text-slate-500">Reference line: <b className="font-mono">{calibLine ? pathLength(calibLine).toFixed(0) : 0}px</b>. Trace along a labeled dimension for accuracy.</p>
           <div className="flex items-end gap-2">
-            <select className={input + " w-28"} value={calibForm.unit} onChange={(e) => setCalibForm({ ...calibForm, unit: e.target.value })}>
-              <option value="ft">feet + in</option><option value="in">inches</option><option value="m">meters</option>
-            </select>
-            {calibForm.unit === "ft" ? (
-              <>
-                <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Feet</label>
-                  <input data-testid="calib-length-input" type="number" className={input} placeholder="0" value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
-                <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Inches</label>
-                  <input type="number" className={input} placeholder="0" value={calibForm.inches} onChange={(e) => setCalibForm({ ...calibForm, inches: e.target.value })} /></div>
-              </>
-            ) : (
-              <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Length</label>
-                <input data-testid="calib-length-input" type="number" className={input} placeholder="0" value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
-            )}
+            <select className={input + " w-28"} value={calibForm.unit} onChange={(e) => setCalibForm({ ...calibForm, unit: e.target.value })}><option value="ft">feet + in</option><option value="in">inches</option><option value="m">meters</option></select>
+            {calibForm.unit === "ft" ? (<>
+              <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Feet</label><input data-testid="calib-length-input" type="number" className={input} value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
+              <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Inches</label><input type="number" className={input} value={calibForm.inches} onChange={(e) => setCalibForm({ ...calibForm, inches: e.target.value })} /></div>
+            </>) : (<div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Length</label><input data-testid="calib-length-input" type="number" className={input} value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>)}
           </div>
           <DialogFooter><button data-testid="confirm-calib-btn" onClick={confirmCalibration} className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-4 py-2 rounded-sm">Apply Scale</button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Email dialog */}
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
         <DialogContent className="rounded-sm">
           <DialogHeader><DialogTitle className="font-black tracking-tight">Email Estimate Report</DialogTitle></DialogHeader>
@@ -500,49 +623,71 @@ export default function TakeoffStudio() {
   );
 }
 
-function MeasurementShape({ m, scale, unit }) {
-  const sw = 2;
+function pointInPoly(p, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > p[1]) !== (yj > p[1])) && (p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+function ShapeRender({ m, sw, z, scale, unit, selected, fillTile }) {
   const val = realValue(m, scale);
-  const label = m.type === "count" ? `${m.count}` : (val != null ? `${val.toFixed(1)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : "");
+  const label = m.type === "count" ? `${m.count}` : m.type === "text" ? m.text : (val != null ? `${val.toFixed(1)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : "");
+  const fs = 13 / z;
   if (m.type === "count") {
     const [x, y] = m.points[0];
-    return (
-      <g>
-        <circle cx={x} cy={y} r={10} fill={m.color} />
-        <text x={x} y={y + 4} textAnchor="middle" fontSize={12} fill="#fff" fontFamily="JetBrains Mono">{m.count}</text>
-      </g>
-    );
+    return <g><circle cx={x} cy={y} r={10 / z} fill={m.color} stroke={selected ? "#0F172A" : "none"} strokeWidth={2 / z} /><text x={x} y={y + 4 / z} textAnchor="middle" fontSize={fs} fill="#fff" fontFamily="JetBrains Mono">{m.count}</text></g>;
+  }
+  if (m.type === "text") {
+    const [x, y] = m.points[0];
+    return <text x={x} y={y} fontSize={16 / z} fill={m.color} fontFamily="Chivo" fontWeight="700" stroke="#fff" strokeWidth={0.6 / z} paintOrder="stroke" style={{ textDecoration: selected ? "underline" : "none" }}>{m.text}</text>;
   }
   const isArea = AREA_TYPES.includes(m.type);
   const [cx, cy] = centroid(m.points);
+  const ptsStr = m.points.map((p) => p.join(",")).join(" ");
+  const fill = fillTile ? `url(#tilepat_${m.id})` : isArea ? (m.fillColor || m.color) : "none";
+  const fo = fillTile ? 1 : (m.fillOpacity ?? 0.22);
   return (
     <g>
-      {isArea ? (
-        <polygon points={m.points.map((p) => p.join(",")).join(" ")} fill={m.color + "33"} stroke={m.color} strokeWidth={sw} />
-      ) : (
-        <polyline points={m.points.map((p) => p.join(",")).join(" ")} fill="none" stroke={m.color} strokeWidth={sw} />
-      )}
-      {m.points.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={3} fill="#fff" stroke={m.color} strokeWidth={1.5} />)}
-      {label && <text x={cx} y={cy} textAnchor="middle" fontSize={11} fill={m.color} fontFamily="JetBrains Mono" stroke="#fff" strokeWidth={0.5} paintOrder="stroke">{label}</text>}
+      {isArea ? <polygon points={ptsStr} fill={fill} fillOpacity={fo} stroke={m.color} strokeWidth={sw} />
+        : <polyline points={ptsStr} fill="none" stroke={m.color} strokeWidth={sw} />}
+      {label && <text x={cx} y={cy} textAnchor="middle" fontSize={fs} fill={m.color} fontFamily="JetBrains Mono" stroke="#fff" strokeWidth={0.6 / z} paintOrder="stroke" fontWeight="700">{label}</text>}
     </g>
   );
 }
 
-function Preview3D({ tile, type }) {
-  const color = tile?.color || "#cbd5e1";
-  const cells = Array.from({ length: 100 });
-  const cols = 10;
+function Plan3D({ items, tilesMap, defaultTile, scale, type, withTiles }) {
+  const areas = items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction && (m.points || []).length >= 3 && m.visible !== false);
+  const deds = items.filter((m) => m.is_deduction && (m.points || []).length >= 3 && m.visible !== false);
+  if (!areas.length) return <div className="h-full flex items-center justify-center text-center text-xs font-mono text-slate-400 px-6">Draw room areas on the plan — the 3D layout builds automatically.<br />Toggle Before / After to preview the tile finish.</div>;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  areas.forEach((m) => m.points.forEach(([x, y]) => { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }));
+  const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
+  const tileFor = (m) => tilesMap[m.tile_id] || defaultTile;
+  const vizScale = (m) => { const t = tileFor(m); const twFt = (t?.width || 12) / 12; return (twFt * 14) / w; }; // ~14 tiles across, always visible
+  const W = 460, H = Math.max(Math.min(W * h / w, 420), 120);
   return (
-    <div className="h-full bg-gradient-to-b from-slate-100 to-slate-300 flex items-center justify-center overflow-hidden relative">
-      <div className="absolute top-3 left-3 text-[10px] font-mono uppercase tracking-widest text-slate-500">3D {type} preview</div>
+    <div className="h-full bg-gradient-to-b from-slate-200 to-slate-400 flex items-center justify-center overflow-hidden relative">
+      <div className="absolute top-3 left-3 text-[10px] font-mono uppercase tracking-widest text-slate-600 z-10">3D {type} · {withTiles ? "tiled" : "bare"} · {areas.length} room{areas.length !== 1 ? "s" : ""}</div>
       <div className={type === "wall" ? "tile-3d-wall" : "tile-3d-floor"}>
-        <div className="grid gap-[2px] p-1 bg-slate-400/40" style={{ gridTemplateColumns: `repeat(${cols}, 36px)` }}>
-          {cells.map((_, i) => (
-            <div key={i} className="w-9 h-9 border border-white/30 shadow-sm" style={{ background: color, backgroundImage: tile?.image_url ? `url(${tile.image_url})` : "none", backgroundSize: "cover" }} />
+        <svg viewBox={`${minX} ${minY} ${w} ${h}`} width={W} height={H} style={{ filter: "drop-shadow(0 18px 24px rgba(0,0,0,0.35))" }}>
+          <defs>{withTiles && areas.filter((m) => tileFor(m)).map((m) => (
+            <TilePattern key={m.id} id={`p3d_${m.id}`} tile={tileFor(m)} pattern={m.pattern || tileFor(m)?.pattern} scale={vizScale(m)} opacity={1} />
+          ))}</defs>
+          {areas.map((m) => (
+            <polygon key={m.id} points={m.points.map((p) => p.join(",")).join(" ")}
+              fill={withTiles && tileFor(m) ? `url(#p3d_${m.id})` : "#e7eaef"} stroke="#475569" strokeWidth={w * 0.004} strokeLinejoin="round" />
           ))}
-        </div>
+          {deds.map((m) => (
+            <polygon key={m.id} points={m.points.map((p) => p.join(",")).join(" ")} fill="#cbd5e1" stroke="#94a3b8" strokeWidth={w * 0.003} />
+          ))}
+        </svg>
       </div>
-      {!tile && <div className="absolute bottom-4 text-xs text-slate-500 font-mono">Assign a default tile to preview the finish</div>}
+      {withTiles && !defaultTile && !areas.some((m) => tilesMap[m.tile_id]) && (
+        <div className="absolute bottom-3 text-[11px] font-mono text-slate-700 bg-white/70 px-2 py-1 rounded-sm">Assign tiles in the Tile tab to see the finish</div>
+      )}
     </div>
   );
 }
