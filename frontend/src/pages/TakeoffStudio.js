@@ -202,9 +202,17 @@ export default function TakeoffStudio() {
       setItems((prev) => prev.map((x) => x.id === mid ? { ...x, points: x.points.map((pt, k) => k === idx ? p : pt) } : x)); return;
     }
     if (moveRef.current) {
-      const cur = toWorld(e); const dx = cur[0] - moveRef.current.start[0], dy = cur[1] - moveRef.current.start[1];
+      const cur = toWorld(e); let dx = cur[0] - moveRef.current.start[0], dy = cur[1] - moveRef.current.start[1];
       if (Math.abs(dx) + Math.abs(dy) > 0.5 / view.z) moveRef.current.moved = true;
       const { ids, orig } = moveRef.current;
+      // snap-to-edge: align nearest moved vertex to a nearby vertex of another shape
+      const others = items.filter((m) => !ids.includes(m.id) && m.visible !== false).flatMap((m) => m.points);
+      if (others.length) {
+        let bd = 11 / view.z, sdx = 0, sdy = 0;
+        for (const idk of ids) for (const [ox, oy] of orig[idk]) { const vx = ox + dx, vy = oy + dy;
+          for (const o of others) { const d = Math.hypot(o[0] - vx, o[1] - vy); if (d < bd) { bd = d; sdx = o[0] - vx; sdy = o[1] - vy; } } }
+        dx += sdx; dy += sdy;
+      }
       setItems((prev) => prev.map((m) => ids.includes(m.id) ? { ...m, points: orig[m.id].map(([x, y]) => [x + dx, y + dy]) } : m)); return;
     }
     if (rectDrag) { setRectDrag({ ...rectDrag, p1: snap(toWorld(e), false) }); }
