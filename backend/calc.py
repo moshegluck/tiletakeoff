@@ -176,6 +176,26 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
             real_len = _path_length(pts) * scale if calibrated else 0.0
             linear_by_tid[tid] += real_len
             total_linear += real_len
+            # wall-elevation: a wall line with a height becomes an area (length x height)
+            try:
+                wh = float(m.get("wall_height_ft") or m.get("wall_height") or 0)
+            except (TypeError, ValueError):
+                wh = 0.0
+            if wh > 0 and real_len > 0:
+                wall_area = real_len * wh
+                total_gross += wall_area
+                eff_pat = pat or (base_tile.get("pattern") if base_tile else "grid")
+                sig = f"{tid}|{ew}|{eh}|{(eff_pat or 'grid').lower()}"
+                g = groups.get(sig)
+                if not g:
+                    g = {"tid": tid, "gross": 0.0, "ew": ew, "eh": eh, "custom": custom,
+                         "pattern": (eff_pat or "grid").lower(), "base": base_tile}
+                    groups[sig] = g
+                g["gross"] += wall_area
+                rooms.append({"label": m.get("label", "Wall") + f" ({real_len:.1f}×{wh:g} ft)",
+                              "net_area": round(wall_area, 2),
+                              "tile_name": base_tile["name"] if base_tile else (f"Custom {ew}×{eh}" if ew else "Unassigned"),
+                              "pattern": g["pattern"]})
         elif mtype == "count":
             count_by_tid[tid] += int(m.get("count", 1))
             total_count += int(m.get("count", 1))

@@ -67,6 +67,24 @@ def test_compute_summary_custom_dims_separate_lines():
     assert any("12x24" in x for x in sizes) and any("24x48" in x for x in sizes)
 
 
+def test_wall_elevation_length_times_height():
+    scale = 0.05
+    # a 10ft wall line (200px * 0.05 = 10ft) with 8ft height => 80 sqft of wall
+    takeoff = {
+        "default_tile_id": "t1", "cut_reuse": True,
+        "measurements": [
+            {"id": "w", "type": "linear", "label": "Wall A", "points": [[0, 0], [200, 0]], "wall_height_ft": 8},
+        ],
+    }
+    tiles = [{"id": "t1", "name": "Sub", "width": 3, "height": 6, "unit": "in",
+              "waste_factor": 0.1, "box_coverage_sqft": 10.0, "price_per_sqft": 2.1, "pattern": "brick"}]
+    drawing = {"calibration": {"scale": scale, "unit": "ft"}}
+    s = calc.compute_summary(takeoff, drawing, tiles)
+    assert s["totals"]["net_area"] == 80.0, s["totals"]
+    assert s["lines"][0]["tiles_needed"] > 0
+    assert s["lines"][0]["linear"] == 10.0
+
+
 def test_compute_summary_deduction_nets():
     scale = 0.05
     takeoff = {

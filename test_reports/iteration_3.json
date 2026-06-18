@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only retest of TileTakeoff Wall-Elevation + Multi-Page PDF + Panel Scroll on /takeoff/tk_6c9ed25073494da9 (3-page PDF, calibrated). ALL 6 ASKS PASS. (1) MULTI-PAGE NAV: pdf-page-nav visible at bottom-center with pdf-page-label='Page 1 / 3'. Clicking pdf-next-page -> 'Page 2 / 3' and the bg image href actually changes (page1 bg=1295130 chars vs page2 bg=735374 chars, not equal). pdf-prev-page brings it back to 'Page 1 / 3'. (2) PAGE FILTERING: On page 1 the canvas renders all 24 existing markups (paths/polygons count=24). On page 2 BEFORE drawing, canvas renders 0 shapes (Rooms 1 & 2 and other 22 markups correctly hidden). (3) MULTI-PAGE MARKUP TAGGING: Drew a new area rectangle on page 2 with tool-area; Layers list shows 25 items, 24 with 'p1' badge and exactly 1 new item ('Area 24p2 722.8 sf') with 'p2' badge. Going back to page 1 -> 24 shapes render and the new p2 area is hidden. (4) LAYER PAGE BADGES: Confirmed every measurement card in Layers shows pX after the label (e.g., 'Room 1p1', 'Area 24p2'). (5) WALL-ELEVATION: Drew linear with tool-linear on page 1, selected with tool-select, Style tab auto-revealed wall-elevation-panel + wall-height-input. Entered 8, waited 2.8s for autosave. NET AREA top stat increased from 3655.03 sf to 3916.16 sf — delta 261.13 sf which EXACTLY equals length 32.6 linear ft (shown in legend 'FULLY TILED WALL (LINEAR FT.) 32.6 ft') × 8 ft height. TILES went 627->661, COST $33,280.67->$35,592.67. Per-Room Layout grew by 1 row, breakdown lines all show realistic waste (16.1%, 16%, 14.7%, 7% — none over 20%). The wall surface (assigned to default Calacatta Gold 24x48 grid) rolled into BD[3] which became 3535 sf net. (6) PANEL SCROLL REGRESSION: In a 1080px viewport with Tile tab open, the last breakdown card sits at y=406 h=138 (bottom 544) while Email Report button is at y=1002 — fully reachable, no overlap. (7) WASTE SANITY: All 4 breakdown lines show 7-16.1% — no 80%+.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "onPage(m) = (m.page || 1) === pdfPage is correctly applied at all 5 places that consume items: canvas defs (TilePattern), ShapeRender map, control points, hitTest snapping vs, hitTest body (lines 180, 230, 269, 461, 468 of TakeoffStudio.js). Solid.",
+    "goToPage() uses pdfDocRef.current and clamps n correctly; updates bgUrl via renderPdfPage(). Verified that bg href actually changes between pages (different byte length).",
+    "Style tab Wall Elevation panel only renders for LINEAR_TYPES — gated behavior correct (panel did NOT appear for area selections during manual cross-check).",
+    "Per-Room Layout filter `LINEAR_TYPES with wall_height_ft>0` works — the wall row appeared in the room layout list after entering 8.",
+    "Backend calc.py LINEAR branch correctly converts length × wall_height_ft into a surface area that is folded into the assigned tile group: NET delta 261.13 sf == 32.6 × 8 exactly. Math is exact.",
+    "Layer card has page badge `pN` and clicking it triggers goToPage(m.page || 1) before selecting — verified by code-read and side-effect of having p2 badge appear after draw.",
+    "No console errors observed during full flow (login → multi-page nav → draw on page 2 → wall draw → wall height set → tile tab)."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100% (6/6 targeted checks pass)" },
+  "test_credentials": "admin@tiletakeoff.com / Admin123! (from /app/memory/test_credentials.md) — login OK",
+  "seed_data_creation": "During testing I added 1 area rectangle on page 2 ('Area 24', ~722.8 sf) and 1 linear wall on page 1 (~32.6 ft with wall_height_ft=8) to takeoff tk_6c9ed25073494da9. These persist via autosave. Main agent may want to clean up before next demo or treat as intentional fixtures.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "TakeoffStudio testids confirmed: pdf-page-nav, pdf-page-label, pdf-prev-page, pdf-next-page, tab-tile/style/layers/ai/3d, tool-area/linear/select/etc, wall-elevation-panel, wall-height-input, room-layout-<id>, breakdown-line-<i>, email-report-btn, takeoff-canvas (svg). PDF page rerender is async ~2-3s after click. Autosave debounce ~450ms; allow 2-2.5s before asserting. Login uses login-email/login-password/login-submit testids (not type='email'). Tk tk_6c9ed25073494da9 has 24 markups on page 1; bg href byte-length differs per page so it is a reliable signal of true page switch. Wall-elevation NET delta math: length_ft × wall_height_ft, added to assigned tile group via backend calc.py LINEAR branch.",
+  "rca of the issue": "n/a — no bugs found. Multi-page filtering, page badges, layer-click-jumps-to-page, wall elevation surface-area calc, and panel scroll all work end-to-end against the live preview."
+}

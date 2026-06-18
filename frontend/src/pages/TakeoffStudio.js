@@ -63,6 +63,9 @@ export default function TakeoffStudio() {
   const [show3dTiles, setShow3dTiles] = useState(true);
   const [mode3d, setMode3d] = useState("flat");
   const [wallHeight, setWallHeight] = useState(8);
+  const [pdfPage, setPdfPage] = useState(1);
+  const [pdfPageCount, setPdfPageCount] = useState(1);
+  const pdfDocRef = useRef(null);
 
   const svgRef = useRef();
   const containerRef = useRef();
@@ -94,6 +97,7 @@ export default function TakeoffStudio() {
   useEffect(() => {
     let cancelled = false;
     setHasImg(false); setBgUrl(null);
+    pdfDocRef.current = null; setPdfPageCount(1); setPdfPage(1);
     if (!drawing) { setCanvas({ w: 1200, h: 800 }); return; }
     const ct = drawing.content_type || "";
     if (ct.startsWith("image")) {
@@ -105,8 +109,12 @@ export default function TakeoffStudio() {
       (async () => {
         try {
           const { data: buf } = await api.get(`/drawings/${drawing.id}/file`, { responseType: "arraybuffer" });
-          const { renderPdfFirstPage } = await import("@/lib/pdf");
-          const res = await renderPdfFirstPage(buf, 2);
+          const { loadPdf, renderPdfPage } = await import("@/lib/pdf");
+          const pdf = await loadPdf(buf);
+          if (cancelled) return;
+          pdfDocRef.current = pdf;
+          setPdfPageCount(pdf.numPages);
+          const res = await renderPdfPage(pdf, 1, 2);
           if (cancelled) return;
           setCanvas({ w: res.width, h: res.height }); setBgUrl(res.dataUrl); setHasImg(true);
         } catch { if (!cancelled) { toast.error("Could not render PDF"); setCanvas({ w: 1200, h: 800 }); } }
@@ -115,6 +123,18 @@ export default function TakeoffStudio() {
     } else setCanvas({ w: 1200, h: 800 });
     return () => { cancelled = true; };
   }, [drawing]);
+
+  const goToPage = useCallback(async (n) => {
+    if (!pdfDocRef.current || n < 1 || n > pdfPageCount || n === pdfPage) return;
+    setPdfPage(n);
+    setSelId(null);
+    try {
+      const { renderPdfPage } = await import("@/lib/pdf");
+      const res = await renderPdfPage(pdfDocRef.current, n, 2);
+      setCanvas({ w: res.width, h: res.height }); setBgUrl(res.dataUrl);
+      setTimeout(fitToScreen, 80);
+    } catch { toast.error("Could not render page"); }
+  }, [pdfPage, pdfPageCount]); // eslint-disable-line
 
   const fitToScreen = useCallback(() => {
     const el = containerRef.current; if (!el || !canvas.w) return;
@@ -157,7 +177,7 @@ export default function TakeoffStudio() {
   };
   const allVertices = () => {
     const vs = [];
-    items.forEach((m) => { if (m.visible !== false) (m.points || []).forEach((p) => vs.push(p)); });
+    items.forEach((m) => { if (m.visible !== false && (m.page || 1) === pdfPage) (m.points || []).forEach((p) => vs.push(p)); });
     return vs;
   };
   const snap = (p, useDraft) => {
@@ -207,7 +227,7 @@ export default function TakeoffStudio() {
       if (Math.abs(dx) + Math.abs(dy) > 0.5 / view.z) moveRef.current.moved = true;
       const { ids, orig } = moveRef.current;
       // snap-to-edge: align nearest moved vertex to a nearby vertex of another shape
-      const others = items.filter((m) => !ids.includes(m.id) && m.visible !== false).flatMap((m) => m.points);
+      const others = items.filter((m) => !ids.includes(m.id) && m.visible !== false && (m.page || 1) === pdfPage).flatMap((m) => m.points);
       if (others.length) {
         let bd = 11 / view.z, sdx = 0, sdy = 0;
         for (const idk of ids) for (const [ox, oy] of orig[idk]) { const vx = ox + dx, vy = oy + dy;
@@ -246,7 +266,7 @@ export default function TakeoffStudio() {
 
   const hitTest = (p) => {
     for (let i = items.length - 1; i >= 0; i--) {
-      const m = items[i]; if (m.visible === false) continue;
+      const m = items[i]; if (m.visible === false || (m.page || 1) !== pdfPage) continue;
       if (AREA_TYPES.includes(m.type) && m.points.length >= 3 && pointInPoly(p, m.points)) return m;
       if (m.type === "count" || m.type === "text") { const d = Math.hypot(m.points[0][0] - p[0], m.points[0][1] - p[1]); if (d < 14 / view.z) return m; }
     }
@@ -280,7 +300,7 @@ export default function TakeoffStudio() {
       id: `m_${Date.now()}_${Math.floor(Math.random() * 999)}`, type: realType, points,
       label: `${labelBase} ${items.filter((x) => x.type === realType).length + 1}`,
       color: extra.color || TOOLS[tool].color, fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false,
-      is_deduction: !!extra.is_deduction, count: extra.count, text: extra.text, tile_id: null, pattern: null,
+      is_deduction: !!extra.is_deduction, count: extra.count, text: extra.text, tile_id: null, pattern: null, page: pdfPage,
     };
     commit([...items, m]);
     setSelId(m.id);
@@ -350,7 +370,7 @@ export default function TakeoffStudio() {
     if (!r.polygon || r.polygon.length < 3) { toast.error("No outline provided for this region"); return; }
     const pts = r.polygon.map(([x, y]) => [Math.max(0, Math.min(1, x)) * canvas.w, Math.max(0, Math.min(1, y)) * canvas.h]);
     const m = { id: `m_${Date.now()}_${Math.floor(Math.random() * 999)}`, type: "area", points: pts,
-      label: r.label || "AI Room", color: "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false, is_deduction: false };
+      label: r.label || "AI Room", color: "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false, is_deduction: false, page: pdfPage };
     commit([...items, m]); setSelId(m.id); setTab("style");
     toast.success(`Added “${r.label}” — drag the handles to adjust`);
   };
@@ -359,7 +379,7 @@ export default function TakeoffStudio() {
     if (!regs.length) { toast.error("No room outlines to add"); return; }
     const news = regs.map((r, i) => ({ id: `m_${Date.now()}_${i}`, type: "area",
       points: r.polygon.map(([x, y]) => [Math.max(0, Math.min(1, x)) * canvas.w, Math.max(0, Math.min(1, y)) * canvas.h]),
-      label: r.label || `AI Room ${i + 1}`, color: "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false, is_deduction: false }));
+      label: r.label || `AI Room ${i + 1}`, color: "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false, is_deduction: false, page: pdfPage }));
     commit([...items, ...news]); setTab("layers");
     toast.success(`Added ${news.length} AI rooms — review & edit on the plan`);
   };
@@ -380,6 +400,7 @@ export default function TakeoffStudio() {
   const sel = items.find((m) => m.id === selId);
   const sw = (m) => (m.lineWidth || 2) / view.z;
   const areaTileFor = (m) => effectiveTile(m, tilesMap, defaultTile);
+  const onPage = (m) => (m.page || 1) === pdfPage;
   const cursorClass = tool === "pan" ? "cursor-grab" : tool === "select" ? "cursor-default" : "cursor-crosshair";
 
   return (
@@ -437,19 +458,19 @@ export default function TakeoffStudio() {
             onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
             onDoubleClick={() => { if (TOOLS[tool]?.kind === "poly") finishPoly(); }}>
             <defs>
-              {showFill && items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction && m.visible !== false && areaTileFor(m)).map((m) => (
+              {showFill && items.filter((m) => onPage(m) && AREA_TYPES.includes(m.type) && !m.is_deduction && m.visible !== false && areaTileFor(m)).map((m) => (
                 <TilePattern key={m.id} id={`tilepat_${m.id}`} tile={areaTileFor(m)} pattern={m.pattern || areaTileFor(m)?.pattern} scale={scale} />
               ))}
             </defs>
             <g transform={`translate(${view.tx} ${view.ty}) scale(${view.z})`}>
               {hasImg && bgUrl && <image href={bgUrl} x={0} y={0} width={canvas.w} height={canvas.h} />}
               {!hasImg && <rect x={0} y={0} width={canvas.w} height={canvas.h} className="blueprint-grid" fill="#0b1220" />}
-              {items.map((m) => m.visible === false ? null : (
+              {items.map((m) => (m.visible === false || !onPage(m)) ? null : (
                 <ShapeRender key={m.id} m={m} sw={sw(m)} z={view.z} scale={scale} unit={unit} selected={m.id === selId}
                   fillTile={showFill && AREA_TYPES.includes(m.type) && !m.is_deduction && areaTileFor(m)} />
               ))}
               {/* control-point handles for selected shape */}
-              {tool === "select" && sel && sel.points && sel.type !== "count" && sel.type !== "text" && (
+              {tool === "select" && sel && onPage(sel) && sel.points && sel.type !== "count" && sel.type !== "text" && (
                 <g data-testid="control-points">
                   {AREA_TYPES.includes(sel.type) && sel.points.map((p, i) => {
                     const n = sel.points[(i + 1) % sel.points.length]; const mx = (p[0] + n[0]) / 2, my = (p[1] + n[1]) / 2;
@@ -476,6 +497,18 @@ export default function TakeoffStudio() {
               )}
             </g>
           </svg>
+          {pdfPageCount > 1 && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-slate-950 text-white rounded-sm shadow-lg flex items-stretch overflow-hidden" data-testid="pdf-page-nav">
+              <button data-testid="pdf-prev-page" disabled={pdfPage <= 1} onClick={() => goToPage(pdfPage - 1)}
+                className="px-3 py-1.5 text-sm font-bold disabled:opacity-40 hover:bg-slate-800 border-r border-slate-800">‹</button>
+              <span className="px-4 py-1.5 text-xs font-mono flex items-center" data-testid="pdf-page-label">Page {pdfPage} / {pdfPageCount}</span>
+              <button data-testid="pdf-next-page" disabled={pdfPage >= pdfPageCount} onClick={() => goToPage(pdfPage + 1)}
+                className="px-3 py-1.5 text-sm font-bold disabled:opacity-40 hover:bg-slate-800 border-l border-slate-800">›</button>
+            </div>
+          )}
+          {planLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-900/40 z-20 text-white text-sm font-mono">Rendering plan…</div>
+          )}
         </div>
 
         {/* Right panel */}
@@ -495,18 +528,18 @@ export default function TakeoffStudio() {
             </TabsList>
 
             {/* LAYERS */}
-            <TabsContent value="layers" className="flex-1 overflow-y-auto m-0 p-0">
+            <TabsContent value="layers" className="flex-1 min-h-0 overflow-y-auto m-0 p-0">
               {items.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Pick a tool and draw on the plan. Drag a box for areas/cutouts, click corners for rooms.</div>}
               {items.map((m) => {
                 const val = realValue(m, scale);
                 return (
-                  <div key={m.id} data-testid={`measurement-${m.id}`} onClick={() => { setSelId(m.id); setTab("style"); }}
+                  <div key={m.id} data-testid={`measurement-${m.id}`} onClick={() => { if (pdfPageCount > 1 && (m.page || 1) !== pdfPage) goToPage(m.page || 1); setSelId(m.id); setTab("style"); }}
                     className={`px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer ${selIds.includes(m.id) ? "bg-orange-50" : "hover:bg-slate-50"}`}>
                     <button onClick={(e) => { e.stopPropagation(); updateItem(m.id, { visible: m.visible === false }); }} className="text-slate-400 hover:text-slate-900">
                       {m.visible === false ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>
                     <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: m.color }} />
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-bold truncate flex items-center gap-1">{m.label}{m.is_deduction && <span className="text-[9px] text-red-600 font-mono">DEDUCT</span>}</div>
+                      <div className="text-sm font-bold truncate flex items-center gap-1">{m.label}{m.is_deduction && <span className="text-[9px] text-red-600 font-mono">DEDUCT</span>}{pdfPageCount > 1 && <span className="text-[9px] text-slate-400 font-mono">p{m.page || 1}</span>}</div>
                       <div className="text-[11px] font-mono text-slate-500">{m.type === "count" ? `${m.count} ea` : m.type === "text" ? "note" : val != null ? `${val.toFixed(1)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : m.type}</div>
                     </div>
                     <button onClick={(e) => { e.stopPropagation(); updateItem(m.id, { locked: !m.locked }); }} className="text-slate-300 hover:text-slate-700">{m.locked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}</button>
@@ -517,7 +550,7 @@ export default function TakeoffStudio() {
             </TabsContent>
 
             {/* STYLE (properties of selected) */}
-            <TabsContent value="style" className="flex-1 overflow-y-auto m-0 p-4 space-y-3">
+            <TabsContent value="style" className="flex-1 min-h-0 overflow-y-auto m-0 p-4 space-y-3">
               {!sel ? <div className="text-sm text-slate-400 text-center mt-6">Select a measurement (Select tool) to edit its properties — color, fill, line width, label.</div> : (
                 <>
                   <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Label</label>
@@ -538,6 +571,20 @@ export default function TakeoffStudio() {
                         <input type="range" min="0" max="0.8" step="0.05" value={sel.fillOpacity ?? 0.22} onChange={(e) => updateItem(sel.id, { fillOpacity: +e.target.value })} className="w-full mt-3 accent-orange-600" /></div>
                     </div>
                   )}
+                  {LINEAR_TYPES.includes(sel.type) && (
+                    <div className="border border-violet-200 bg-violet-50/50 rounded-sm p-2.5 space-y-1.5" data-testid="wall-elevation-panel">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-violet-700">Wall Elevation</label>
+                      <p className="text-[10px] text-slate-500 leading-snug">Set a wall height to estimate this run as a tiled wall surface (length × height). Assign its tile in the Tile tab.</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono text-slate-500">Height (ft)</span>
+                        <input data-testid="wall-height-input" type="number" min="0" step="0.25" placeholder="e.g. 8" className={input}
+                          value={sel.wall_height_ft ?? ""} onChange={(e) => updateItem(sel.id, { wall_height_ft: e.target.value === "" ? null : +e.target.value })} />
+                      </div>
+                      {sel.wall_height_ft > 0 && scale && (
+                        <div className="text-[11px] font-mono text-violet-700">Wall area ≈ {(pathLength(sel.points || []) * scale * sel.wall_height_ft).toFixed(1)} sf</div>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-2">
                     <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Deduction (cutout)</label>
                     <input type="checkbox" checked={!!sel.is_deduction} onChange={(e) => updateItem(sel.id, { is_deduction: e.target.checked })} className="accent-red-600 w-4 h-4" />
@@ -548,7 +595,7 @@ export default function TakeoffStudio() {
             </TabsContent>
 
             {/* TILE */}
-            <TabsContent value="tile" className="flex-1 overflow-y-auto m-0 p-4 space-y-4">
+            <TabsContent value="tile" className="flex-1 min-h-0 overflow-y-auto m-0 p-4 space-y-4">
               <div>
                 <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Default Tile (all areas)</label>
                 <select data-testid="default-tile-select" className={input + " mt-1"} value={defaultTileId || ""} onChange={(e) => setDefaultTile(e.target.value)}>
@@ -564,7 +611,7 @@ export default function TakeoffStudio() {
               <div className="border-t border-slate-200 pt-3 space-y-2">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Per-Room Layout</div>
                 <p className="text-[10px] text-slate-400 leading-snug">Enter the tile <b>Width × Height</b> (inches). Pick a library tile for color &amp; pricing, or leave it on the default. Choose <b>mosaic</b> to lay small chips by the sheet.</p>
-                {items.filter((m) => AREA_TYPES.includes(m.type) && !m.is_deduction).map((m) => {
+                {items.filter((m) => (AREA_TYPES.includes(m.type) && !m.is_deduction) || (LINEAR_TYPES.includes(m.type) && m.wall_height_ft > 0)).map((m) => {
                   const cw = m.custom_w, ch = m.custom_h, isCustom = cw > 0 && ch > 0;
                   return (
                   <div key={m.id} data-testid={`room-layout-${m.id}`} className="border border-slate-200 rounded-sm p-2 space-y-1.5">
@@ -618,7 +665,7 @@ export default function TakeoffStudio() {
             </TabsContent>
 
             {/* AI */}
-            <TabsContent value="ai" className="flex-1 overflow-y-auto m-0 p-4">
+            <TabsContent value="ai" className="flex-1 min-h-0 overflow-y-auto m-0 p-4">
               <button data-testid="run-ai-btn" onClick={runAI} disabled={aiLoading} className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-60 text-white font-bold py-2.5 rounded-sm inline-flex items-center justify-center gap-2 mb-4"><Sparkles className="w-4 h-4" />{aiLoading ? "Analyzing…" : "Run AI Takeoff Assist"}</button>
               {!takeoff.ai_suggestions && <p className="text-xs text-slate-400 text-center">Works on PDF & image plans. Detects tileable regions, openings, and recommends a waste allowance to review.</p>}
               {takeoff.ai_suggestions && (
