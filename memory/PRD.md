@@ -59,6 +59,13 @@ Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid 
 - **Mosaic pattern**: added to PATTERNS, SVG TilePattern (small chips), and Room3D texture. Calculated/sold by the sheet (`_mosaic_quantities`, 12×12 = 1 sqft sheet). Breakdown relabels Full→Sheets for mosaic.
 - Tests: /app/backend/tests/test_calc.py (8 passing). Frontend E2E verified (waste sanity, custom dims, mosaic, panel scroll all pass).
 
+## Wall-elevation + Multi-page PDF + panel fix (2026-06-19b)
+- **Wall-elevation mode**: a linear/wall run can be given a height (Style tab → Wall Elevation → Height ft). The backend (`calc.py` LINEAR branch) converts it to a tiled surface area = length × height, joins it into the tile group, and it appears in Per-Room Layout for tile/size/pattern assignment. Verified: 32.6 ft × 8 ft = 261.13 sf added to net area. Door/window openings deduct via cutout rectangles.
+- **Multi-page PDF**: `pdf.js` now exposes `loadPdf`/`renderPdfPage`; the studio shows a page navigator (Page X / N) for multi-page PDFs. Markup is tagged with `page` and the canvas (fill, shapes, control points, hit-test, snapping) is filtered to the current page. Layers list shows a `pX` badge and clicking jumps to that page. (AI still rasterizes page 1 — multi-page AI is a future enhancement.)
+- **Panel-scroll fix**: scrollable `TabsContent` panels were missing `min-h-0`, so they couldn't shrink and clipped content. Added `min-h-0` to all scrollable tab panels.
+- Tests: 9 passing in test_calc.py (added wall-elevation). Frontend E2E: all 6 asks pass (iteration_3.json).
+
+
 
 - Email sending requires a real RESEND_API_KEY (currently returns 503).
 - PDF plans now render in the Takeoff Studio canvas (client-side via pdf.js, page 1) so calibration + markup work on PDFs.
