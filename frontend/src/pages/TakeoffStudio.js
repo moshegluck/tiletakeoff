@@ -194,8 +194,9 @@ export default function TakeoffStudio() {
   };
   const onPointerMove = (e) => {
     if (panRef.current) {
-      const dx = e.clientX - panRef.current.x, dy = e.clientY - panRef.current.y;
-      setView((v) => ({ ...v, tx: panRef.current.tx + dx, ty: panRef.current.ty + dy })); return;
+      const pr = panRef.current;
+      const dx = e.clientX - pr.x, dy = e.clientY - pr.y;
+      setView((v) => ({ ...v, tx: pr.tx + dx, ty: pr.ty + dy })); return;
     }
     if (editRef.current) {
       const { mid, idx } = editRef.current; const p = snap(toWorld(e), false);

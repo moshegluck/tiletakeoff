@@ -115,9 +115,16 @@ async def invite_member(body: InviteRequest, user: dict = Depends(current_user))
 @api.get("/projects")
 async def list_projects(user: dict = Depends(current_user)):
     projects = await db.projects.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    ids = [p["id"] for p in projects]
+    async def _counts(coll):
+        rows = await coll.aggregate([{"$match": {"project_id": {"$in": ids}}},
+                                     {"$group": {"_id": "$project_id", "c": {"$sum": 1}}}]).to_list(1000)
+        return {r["_id"]: r["c"] for r in rows}
+    dmap = await _counts(db.drawings)
+    tmap = await _counts(db.takeoffs)
     for p in projects:
-        p["drawing_count"] = await db.drawings.count_documents({"project_id": p["id"]})
-        p["takeoff_count"] = await db.takeoffs.count_documents({"project_id": p["id"]})
+        p["drawing_count"] = dmap.get(p["id"], 0)
+        p["takeoff_count"] = tmap.get(p["id"], 0)
     return projects
 
 
