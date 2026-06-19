@@ -59,7 +59,13 @@ Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid 
 - **Mosaic pattern**: added to PATTERNS, SVG TilePattern (small chips), and Room3D texture. Calculated/sold by the sheet (`_mosaic_quantities`, 12×12 = 1 sqft sheet). Breakdown relabels Full→Sheets for mosaic.
 - Tests: /app/backend/tests/test_calc.py (8 passing). Frontend E2E verified (waste sanity, custom dims, mosaic, panel scroll all pass).
 
+## In-app subscription management (2026-06-19f)
+- Billing now tracks a **30-day plan period** (`current_period_end`) set on each successful payment; `ws_plan` lazily downgrades to Free when a canceled period lapses.
+- **Self-serve management**: `/billing/cancel` (cancel at period end) + `/billing/reactivate`; Billing page shows "Active · renews <date>" / "Cancels on <date>" with Cancel / Reactivate buttons. Verified (iteration_6, 6/6 pass).
+- NOTE: true Stripe auto-charging recurring + hosted Customer Portal require the user's REAL Stripe secret key + recurring Price IDs (the Emergent-managed `sk_test_emergent` sandbox only supports one-time Checkout). This in-app model is the working equivalent until a live key is added.
+
 ## Plan feature-gating + live email (2026-06-19e)
+
 - **Stripe plans now enforce real limits** server-side (`PLAN_LIMITS`): Free = 1 project, no AI/exports/email/audit, 1 seat; Pro = unlimited projects + AI + exports + email; Team = + audit log + 10 seats. Gated routes return **HTTP 402** with an upgrade message; frontend axios interceptor shows an "View plans" toast. Verified: free blocks 2nd project/AI/export/email/audit, team allows all.
 - `/billing/me` returns `limits` + live `usage` (projects, members); Billing page shows per-plan feature checklist + current usage.
 - **Email is LIVE** with the user's Resend key — sends HTML + PDF attachment (test mode: deliverable only to the Resend account email until a domain is verified).
