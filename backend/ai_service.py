@@ -12,7 +12,9 @@ SYSTEM_PROMPT = (
     "You analyze architectural floor plans and wall elevation drawings. "
     "Identify tileable regions (rooms for floor takeoffs, wall faces for wall takeoffs), "
     "estimate their approximate dimensions and areas, detect openings (doors, windows) that "
-    "should be deducted, and recommend a waste allowance percentage based on layout complexity. "
+    "should be deducted, detect plumbing/fixture symbols (toilet, sink, vanity, tub, shower, "
+    "drain) and read any visible room labels or finish-schedule text (OCR), and recommend a "
+    "waste allowance percentage based on layout complexity. "
     "Always respond with STRICT, valid JSON only — no markdown, no prose."
 )
 
@@ -24,12 +26,16 @@ async def analyze_drawing(image_b64: str, takeoff_type: str) -> dict:
         '  "regions": [ {"label": "Kitchen", "type": "room|wall", "est_area_sqft": 120.5, '
         '"confidence": 0.0-1.0, "polygon": [[x,y],[x,y],...], "notes": "short"} ],\n'
         '  "openings": [ {"label": "Door", "est_area_sqft": 21.0, "confidence": 0.0-1.0} ],\n'
+        '  "symbols": [ {"label": "Toilet", "type": "fixture|door|window|drain", "confidence": 0.0-1.0, "position": [x,y]} ],\n'
+        '  "text_annotations": [ "BATHRM A=43 sf", "GUEST BEDROOM 199 sf" ],\n'
         '  "recommended_waste_pct": 10,\n'
         '  "summary": "1-2 sentence overview"\n'
         "}\n"
         "For every region, ALWAYS include a 'polygon' tracing the room outline as 4-8 [x,y] points "
         "in NORMALIZED image coordinates where x and y are each between 0.0 (left/top) and 1.0 "
-        "(right/bottom). Provide 2-6 regions. Be realistic with scale. JSON only, no markdown."
+        "(right/bottom). Use the same normalized coords for symbol 'position'. Provide 2-6 regions. "
+        "In 'text_annotations' put any room names, area callouts, or finish-schedule text you can read "
+        "(OCR). Be realistic with scale. JSON only, no markdown."
     )
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
@@ -57,5 +63,6 @@ def _parse_json(text: str) -> dict:
     try:
         return json.loads(text)
     except Exception:
-        return {"regions": [], "openings": [], "recommended_waste_pct": 10,
+        return {"regions": [], "openings": [], "symbols": [], "text_annotations": [],
+                "recommended_waste_pct": 10,
                 "summary": "AI response could not be parsed.", "raw": text[:500]}

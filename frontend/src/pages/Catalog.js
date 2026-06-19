@@ -10,7 +10,7 @@ const fetcher = (url) => api.get(url).then((r) => r.data);
 const input = "w-full bg-slate-50 border border-slate-300 rounded-sm px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-600 focus:ring-1 focus:ring-orange-600";
 const PATTERNS = ["Grid", "Brick", "Herringbone", "Diagonal", "Basketweave"];
 const FINISHES = ["Matte", "Polished", "Gloss", "Textured", "Honed"];
-const CSV_TEMPLATE = "name,collection,width,height,unit,finish,color,pattern,grout_spacing,waste_pct,price_per_sqft,box_coverage_sqft\nCalacatta Gold,Marble Look,24,48,in,Polished,#e9e6df,Grid,0.0625,12,8.50,16\nNordic Oak,Wood Plank,8,48,in,Matte,#c9a36a,Herringbone,0.125,15,5.75,21\n";
+const CSV_TEMPLATE = "name,sku,manufacturer,distributor,collection,width,height,unit,finish,color,pattern,grout_spacing,waste_pct,price_per_sqft,box_coverage_sqft\nCalacatta Gold,CG-2448,Daltile,ProSource,Marble Look,24,48,in,Polished,#e9e6df,Grid,0.0625,12,8.50,16\nNordic Oak,NO-848,MSI,Floor & Decor,Wood Plank,8,48,in,Matte,#c9a36a,Herringbone,0.125,15,5.75,21\n";
 
 const blank = { name: "", collection: "", width: 12, height: 12, unit: "in", finish: "Matte", color: "#cbd5e1", image_url: "", grout_spacing: 0.125, pattern: "Grid", waste_factor: 0.10, price_per_sqft: 0, box_coverage_sqft: 10 };
 
@@ -111,6 +111,7 @@ export default function Catalog() {
             <div className="p-3">
               <div className="font-bold text-sm truncate">{t.name}</div>
               <div className="text-[11px] font-mono text-slate-500 truncate">{t.collection || "—"}</div>
+              {(t.sku || t.manufacturer) && <div className="text-[10px] font-mono text-slate-400 truncate" data-testid={`tile-sku-${t.id}`}>{[t.manufacturer, t.sku].filter(Boolean).join(" · ")}</div>}
               <div className="flex justify-between mt-2 text-[11px] font-mono">
                 <span className="text-slate-500">{t.pattern} · {t.finish}</span>
                 <span className="font-bold text-orange-600">${t.price_per_sqft?.toFixed(2)}</span>

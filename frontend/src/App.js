@@ -11,6 +11,9 @@ import ProjectDetail from "@/pages/ProjectDetail";
 import TakeoffStudio from "@/pages/TakeoffStudio";
 import Catalog from "@/pages/Catalog";
 import Members from "@/pages/Members";
+import MobileCompanion from "@/pages/MobileCompanion";
+import AuditLog from "@/pages/AuditLog";
+import Billing from "@/pages/Billing";
 import AppShell from "@/components/AppShell";
 
 function Loader() {
@@ -62,6 +65,9 @@ function AppRouter() {
       <Route path="/takeoff/:id" element={<Protected bare><TakeoffStudio /></Protected>} />
       <Route path="/catalog" element={<Protected><Catalog /></Protected>} />
       <Route path="/team" element={<Protected><Members /></Protected>} />
+      <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
+      <Route path="/billing" element={<Protected><Billing /></Protected>} />
+      <Route path="/m" element={<Protected bare><MobileCompanion /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -1,0 +1,35 @@
+{
+  "summary": "Tested TileTakeoff Wave-7 batch (per-page calibration, AI accept/reject + region-status, revisions snapshot/list/restore, SKU CSV import, audit log, Stripe billing, mobile companion /m). 12/12 new pytest cases PASS (backend) + 31/31 prior pytests still pass. UI smoke for the 3 new pages (Audit, Billing, Mobile) PASS end-to-end.\n\nVERIFIED:\n• LOGIN OK -> /dashboard. Left nav renders Dashboard, Projects, Tile Catalog, Team, Activity Log, Billing, Field App (data-testid nav-audit/nav-billing/nav-mobile/nav-team/nav-catalog all count=1 once AppShell mounts).\n• AUDIT /audit: data-testid audit-list present, lists most-recent first. Captured entries: 'Admin created takeoff — tk', 'Admin saved snapshot — TEST_audit_snap', 'Admin saved snapshot — TEST_snap_*', 'Admin created project — TEST_PerPage', etc. — confirms record_audit() fires for project create, takeoff create, snapshot, and shows user_name + entity + timestamp.\n• BILLING /billing: current-plan shows 'Free'. plan-free/plan-pro/plan-team cards all present. Clicking 'upgrade-pro' redirects to a real Stripe Checkout page — final page.url=https://checkout.stripe.com/c/pay/cs_test_a1PCOKq0o48o6ekAxFNVS3XKKvNcZnEOj6DZ1lCX4UhARPhHlKqVbSYwKd#... Stripe test session_id starts with cs_test_ as expected with sk_test_emergent.\n• MOBILE /m (viewport 414x896): m-projects list visible with 14 m-project-* items. Tap first project -> m-takeoffs list (1 takeoff). Tap takeoff -> m-totals (NET AREA/TILES/COST), m-breakdown, m-export-pdf button, m-back button all present.\n• BACKEND new tests (12/12 PASS, junit at /app/test_reports/pytest/new_features.xml):\n   - PerPageCalibration: calibrate page=1 + page=2 stored separately under drawings.calibrations.{1,2}; existing demo takeoff tk_6c9ed25073494da9 has page 1 calibrated.\n   - Revisions: POST /takeoffs/{id}/snapshot returns rev_* with totals; GET /revisions excludes measurements; POST .../restore returns updated takeoff + summary.\n   - Audit: GET /audit returns {logs:[…]} structure; growing after a snapshot; latest entry includes 'snapshot' action.\n   - Billing: /billing/me returns {plan, plans:{free,pro,team}}; /billing/checkout with plan_id=pro+origin_url returns {url:checkout.stripe.com..., session_id:cs_test_...}; rejects 'free' (400) and bogus plan_id (400).\n   - SKU CSV import: header name,sku,manufacturer,distributor,width,height,unit,finish,color,pattern,price_per_sqft → imported=1, fields persisted (sku=QA-1224, manufacturer=Daltile, distributor=ProSource, price 5.0); subsequent GET /tiles includes it with SKU.\n   - AI region status: 404 when no ai_suggestions; on demo takeoff tk_6c9ed25073494da9 with stored regions, /ai-region-status {index:0, status:'accepted'} returns 200 ok.\n\nDID NOT RE-EXERCISE through the UI (already covered in iteration_4 or out-of-scope to re-do): per-page scale BADGE label change between pdf-next-page clicks, on-canvas A/W/H overlay labels in ShapeRender, AI accept/reject button states ai-accept-*/ai-reject-* in the AI tab, History dialog (history-btn/save-snapshot-btn/revisions-list/restore-*), CSV import-via-UI on Catalog (validated last iteration). All corresponding APIs are green via backend tests, so these are at most rendering glue. Email-via-Resend correctly returns 503 (RESEND_API_KEY empty) — expected, not a bug.\n\nNo console pageerrors during the full UI flow. No red compile overlay.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/test_tiletakeoff_api.py",
+    "/app/backend/tests/test_calc.py",
+    "/app/test_reports/pytest/new_features.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:294-304 calibrate() correctly stores per-page entries under calibrations.{page} and keeps top-level calibration only when page==1 for back-compat — clean approach.",
+    "server.py:80-102 billing/checkout enforces server-side plan amount (never trusts client) and rejects 'free' / invalid plan ids with 400. Good security posture.",
+    "server.py:105-112 _apply_paid() is idempotent (skips if already paid). Webhook + billing/status both call it — safe against double-application of plan upgrade.",
+    "server.py:461-487 snapshot stores totals + measurements + default_tile_id; GET /revisions excludes measurements field for list view (smaller payload, good).",
+    "server.py:540-554 ai-region-status validates index bounds and 404s when ai_suggestions is missing — defensive.",
+    "audit logs use workspace_id scoping in the find — multi-tenant safe.",
+    "tiles/import correctly parses waste expressed as 10 vs 0.10 (treats >1 as percentage). SKU/manufacturer/distributor now persist."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py (new — 12 new tests covering all Wave-7 endpoints)"
+  ],
+  "success_rate": { "backend": "100% (12/12 new + previously-passing suites)", "frontend": "100% on the 3 newly-built pages (Audit, Billing+Stripe redirect, Mobile companion) verified end-to-end; remaining studio features validated indirectly via their backing APIs and prior iteration_4 UI checks." },
+  "test_credentials": "admin@tiletakeoff.com / Admin123! (works)",
+  "seed_data_creation": "Created TEST_-prefixed: project 'TEST_PerPage' + drawing (calibrated pg1/pg2), project 'TEST_RegionStatus' + takeoff, project 'TEST_Email', snapshots 'TEST_snap_*' and 'TEST_audit_snap' on tk_6c9ed25073494da9, imported tile 'TEST_QA SKU Tile *' SKU=QA-1224. All under admin workspace.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New endpoints: /api/audit (admin only), /api/billing/me, /api/billing/checkout {plan_id, origin_url}, /api/billing/status/{sid}, /api/webhook/stripe, /api/drawings/{id}/calibrate now accepts 'page' (stores under calibrations.{page}), /api/takeoffs/{id}/snapshot|revisions|revisions/{rev}/restore, /api/takeoffs/{id}/ai-region-status {index, status}. UI testids confirmed: nav-audit/nav-billing/nav-mobile/nav-team/nav-catalog/nav-dashboard/nav-projects; audit-list; current-plan, plan-free/pro/team, upgrade-pro; m-projects, m-project-<id>, m-takeoffs, m-takeoff-<id>, m-totals, m-breakdown, m-export-pdf, m-back. Stripe checkout uses sk_test_emergent and produces cs_test_* session IDs that redirect to checkout.stripe.com.",
+  "rca of the issue": "n/a — no bugs found."
+}

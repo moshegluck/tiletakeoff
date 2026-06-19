@@ -85,6 +85,24 @@ def test_wall_elevation_length_times_height():
     assert s["lines"][0]["linear"] == 10.0
 
 
+def test_per_page_calibration():
+    # page 1 uses scale 0.05, page 2 uses scale 0.10; same pixel polygon => different areas
+    takeoff = {
+        "default_tile_id": "t1", "cut_reuse": True,
+        "measurements": [
+            {"id": "a", "type": "area", "label": "P1", "points": [[0, 0], [200, 0], [200, 200], [0, 200]], "page": 1},
+            {"id": "b", "type": "area", "label": "P2", "points": [[0, 0], [200, 0], [200, 200], [0, 200]], "page": 2},
+        ],
+    }
+    tiles = [{"id": "t1", "name": "Base", "width": 12, "height": 12, "unit": "in",
+              "waste_factor": 0.1, "box_coverage_sqft": 10.0, "price_per_sqft": 4.0, "pattern": "grid"}]
+    drawing = {"calibration": {"scale": 0.05, "unit": "ft"},
+               "calibrations": {"1": {"scale": 0.05, "unit": "ft"}, "2": {"scale": 0.10, "unit": "ft"}}}
+    s = calc.compute_summary(takeoff, drawing, tiles)
+    # page1: (200*0.05)^2 = 100 sf ; page2: (200*0.10)^2 = 400 sf ; total 500
+    assert round(s["totals"]["net_area"]) == 500, s["totals"]
+
+
 def test_waste_override_applies():
     base = _tile(12, 12)
     auto = calc.tile_quantities(200, 0, base, "grid", True)

@@ -21,6 +21,7 @@ from auth import (hash_password, verify_password, create_access_token, set_auth_
 import storage
 import ai_service
 import calc
+from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,6 +35,106 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
 
 async def current_user(request: Request) -> dict:
     return await get_current_user(request)
+
+
+async def record_audit(user: dict, action: str, entity: str = "", detail: str = ""):
+    """Best-effort audit trail entry."""
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id("aud_"), "workspace_id": user.get("workspace_id"),
+            "user_name": user.get("name") or user.get("email"), "user_id": user.get("id"),
+            "action": action, "entity": entity, "detail": detail, "created_at": now_iso(),
+        })
+    except Exception as e:  # never let logging break the request
+        logger.warning(f"audit log failed: {e}")
+
+
+@api.get("/audit")
+async def list_audit(user: dict = Depends(current_user)):
+    require_role(user, "admin")
+    logs = await db.audit_logs.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"logs": logs}
+
+
+# ---------------- Billing (Stripe) ----------------
+# Plans are defined server-side ONLY — never trust amounts from the client.
+PLANS = {
+    "free": {"name": "Free", "price": 0.0, "blurb": "1 project · core takeoff tools"},
+    "pro": {"name": "Pro", "price": 29.0, "blurb": "Unlimited projects · AI takeoff · exports"},
+    "team": {"name": "Team", "price": 99.0, "blurb": "Everything in Pro · multi-seat · audit log · priority"},
+}
+
+
+def _stripe(request: Request) -> StripeCheckout:
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
+    return StripeCheckout(api_key=os.environ.get("STRIPE_API_KEY", ""), webhook_url=webhook_url)
+
+
+@api.get("/billing/me")
+async def billing_me(user: dict = Depends(current_user)):
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+    return {"plan": (ws or {}).get("plan", "free"), "plan_status": (ws or {}).get("plan_status"), "plans": PLANS}
+
+
+@api.post("/billing/checkout")
+async def billing_checkout(request: Request, user: dict = Depends(current_user)):
+    require_role(user, "admin")
+    body = await request.json()
+    plan_id = body.get("plan_id")
+    origin = (body.get("origin_url") or "").rstrip("/")
+    if plan_id not in PLANS or plan_id == "free":
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    if not origin:
+        raise HTTPException(status_code=400, detail="origin_url required")
+    amount = float(PLANS[plan_id]["price"])  # server-side amount
+    metadata = {"workspace_id": user["workspace_id"], "plan_id": plan_id, "user_id": user.get("id", "")}
+    success_url = f"{origin}/billing?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/billing"
+    stripe = _stripe(request)
+    req = CheckoutSessionRequest(amount=amount, currency="usd", success_url=success_url, cancel_url=cancel_url, metadata=metadata)
+    session = await stripe.create_checkout_session(req)
+    await db.payment_transactions.insert_one({
+        "id": new_id("pay_"), "session_id": session.session_id, "workspace_id": user["workspace_id"],
+        "user_id": user.get("id"), "plan_id": plan_id, "amount": amount, "currency": "usd",
+        "payment_status": "initiated", "status": "open", "metadata": metadata, "created_at": now_iso(),
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+
+async def _apply_paid(session_id: str):
+    """Idempotently mark a transaction paid and upgrade the workspace plan."""
+    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not txn or txn.get("payment_status") == "paid":
+        return txn
+    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"payment_status": "paid", "status": "complete", "paid_at": now_iso()}})
+    await db.workspaces.update_one({"id": txn["workspace_id"]}, {"$set": {"plan": txn["plan_id"], "plan_status": "active"}})
+    return txn
+
+
+@api.get("/billing/status/{session_id}")
+async def billing_status(session_id: str, request: Request, user: dict = Depends(current_user)):
+    stripe = _stripe(request)
+    cs = await stripe.get_checkout_status(session_id)
+    update = {"payment_status": cs.payment_status, "status": cs.status}
+    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
+    if cs.payment_status == "paid":
+        await _apply_paid(session_id)
+    return {"status": cs.status, "payment_status": cs.payment_status, "amount_total": cs.amount_total, "currency": cs.currency}
+
+
+@api.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    stripe = _stripe(request)
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature")
+    try:
+        evt = await stripe.handle_webhook(body, sig)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
+    if evt.payment_status == "paid" and evt.session_id:
+        await _apply_paid(evt.session_id)
+    return {"received": True}
 
 
 # ---------------- Auth ----------------
@@ -135,6 +236,7 @@ async def create_project(body: ProjectIn, user: dict = Depends(current_user)):
            "created_at": now_iso(), **body.model_dump()}
     await db.projects.insert_one(doc)
     doc.pop("_id", None)
+    await record_audit(user, "created project", "project", doc.get("name", ""))
     return doc
 
 
@@ -192,11 +294,14 @@ async def get_drawing_file(drawing_id: str, auth: str = Query(None), authorizati
 @api.post("/drawings/{drawing_id}/calibrate")
 async def calibrate(drawing_id: str, body: CalibrationIn, user: dict = Depends(current_user)):
     scale = body.real_length / body.pixel_length if body.pixel_length else None
+    page = max(int(body.page or 1), 1)
+    entry = {"scale": scale, "unit": body.unit, "pixel_length": body.pixel_length, "real_length": body.real_length}
+    update = {f"calibrations.{page}": entry}
+    if page == 1:  # keep top-level calibration for back-compat / default
+        update["calibration"] = entry
     await db.drawings.update_one(
-        {"id": drawing_id, "workspace_id": user["workspace_id"]},
-        {"$set": {"calibration": {"scale": scale, "unit": body.unit,
-                                  "pixel_length": body.pixel_length, "real_length": body.real_length}}})
-    return {"scale": scale, "unit": body.unit}
+        {"id": drawing_id, "workspace_id": user["workspace_id"]}, {"$set": update})
+    return {"scale": scale, "unit": body.unit, "page": page}
 
 
 # ---------------- Tiles catalog ----------------
@@ -279,6 +384,9 @@ async def import_tiles(file: UploadFile = File(...), user: dict = Depends(curren
             doc = {
                 "id": new_id("tile_"), "workspace_id": user["workspace_id"], "created_at": now_iso(),
                 "name": name,
+                "sku": str(pick(row, "sku", "item", "item #", "item number", "model", default="")).strip(),
+                "manufacturer": str(pick(row, "manufacturer", "mfr", "brand", "maker", default="")).strip(),
+                "distributor": str(pick(row, "distributor", "supplier", "vendor", "dealer", default="")).strip(),
                 "collection": str(pick(row, "collection", "series", default="")).strip(),
                 "width": _f(pick(row, "width", "w", "width (in)"), 12.0),
                 "height": _f(pick(row, "height", "h", "height (in)"), 12.0),
@@ -312,6 +420,7 @@ async def create_takeoff(project_id: str, body: TakeoffIn, user: dict = Depends(
            "created_at": now_iso(), "updated_at": now_iso()}
     await db.takeoffs.insert_one(doc)
     doc.pop("_id", None)
+    await record_audit(user, "created takeoff", "takeoff", body.name)
     return doc
 
 
@@ -344,7 +453,53 @@ async def update_takeoff(takeoff_id: str, body: TakeoffUpdate, user: dict = Depe
 async def delete_takeoff(takeoff_id: str, user: dict = Depends(current_user)):
     require_role(user, "admin", "estimator")
     await db.takeoffs.delete_one({"id": takeoff_id, "workspace_id": user["workspace_id"]})
+    await db.takeoff_revisions.delete_many({"takeoff_id": takeoff_id})
     return {"ok": True}
+
+
+# ---------------- Revision history ----------------
+@api.post("/takeoffs/{takeoff_id}/snapshot")
+async def snapshot_takeoff(takeoff_id: str, request: Request, user: dict = Depends(current_user)):
+    require_role(user, "admin", "estimator")
+    tk = await db.takeoffs.find_one({"id": takeoff_id, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not tk:
+        raise HTTPException(status_code=404, detail="Takeoff not found")
+    body = await request.json() if await request.body() else {}
+    drawing = await db.drawings.find_one({"id": tk.get("drawing_id")}, {"_id": 0}) if tk.get("drawing_id") else None
+    tiles = await db.tiles.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).to_list(500)
+    summary = calc.compute_summary(tk, drawing, tiles)
+    rev = {"id": new_id("rev_"), "takeoff_id": takeoff_id, "workspace_id": user["workspace_id"],
+           "created_at": now_iso(), "created_by": user.get("name") or user.get("email"),
+           "label": (body.get("label") or "").strip() or f"Snapshot {now_iso()[:19].replace('T', ' ')}",
+           "measurements": tk.get("measurements", []), "default_tile_id": tk.get("default_tile_id"),
+           "totals": summary.get("totals", {})}
+    await db.takeoff_revisions.insert_one(dict(rev))
+    rev.pop("_id", None)
+    await record_audit(user, "saved snapshot", "takeoff", rev["label"])
+    return rev
+
+
+@api.get("/takeoffs/{takeoff_id}/revisions")
+async def list_revisions(takeoff_id: str, user: dict = Depends(current_user)):
+    revs = await db.takeoff_revisions.find(
+        {"takeoff_id": takeoff_id, "workspace_id": user["workspace_id"]},
+        {"_id": 0, "measurements": 0}).sort("created_at", -1).to_list(100)
+    return {"revisions": revs}
+
+
+@api.post("/takeoffs/{takeoff_id}/revisions/{rev_id}/restore")
+async def restore_revision(takeoff_id: str, rev_id: str, user: dict = Depends(current_user)):
+    require_role(user, "admin", "estimator")
+    rev = await db.takeoff_revisions.find_one({"id": rev_id, "takeoff_id": takeoff_id, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not rev:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    await db.takeoffs.update_one({"id": takeoff_id, "workspace_id": user["workspace_id"]},
+                                 {"$set": {"measurements": rev.get("measurements", []),
+                                           "default_tile_id": rev.get("default_tile_id"), "updated_at": now_iso()}})
+    tk = await db.takeoffs.find_one({"id": takeoff_id}, {"_id": 0})
+    drawing = await db.drawings.find_one({"id": tk.get("drawing_id")}, {"_id": 0}) if tk.get("drawing_id") else None
+    tiles = await db.tiles.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).to_list(500)
+    return {"takeoff": tk, "summary": calc.compute_summary(tk, drawing, tiles)}
 
 
 # ---------------- AI assist ----------------
@@ -380,6 +535,23 @@ async def ai_analyze(takeoff_id: str, page: int = Query(1), user: dict = Depends
     result["page"] = page_idx + 1
     await db.takeoffs.update_one({"id": takeoff_id}, {"$set": {"ai_suggestions": result}})
     return result
+
+
+@api.post("/takeoffs/{takeoff_id}/ai-region-status")
+async def ai_region_status(takeoff_id: str, request: Request, user: dict = Depends(current_user)):
+    require_role(user, "admin", "estimator")
+    body = await request.json()
+    idx = int(body.get("index", -1))
+    status = body.get("status")  # 'accepted' | 'rejected' | 'pending'
+    tk = await db.takeoffs.find_one({"id": takeoff_id, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not tk or not tk.get("ai_suggestions"):
+        raise HTTPException(status_code=404, detail="No AI suggestions to update")
+    regions = tk["ai_suggestions"].get("regions", [])
+    if idx < 0 or idx >= len(regions):
+        raise HTTPException(status_code=400, detail="Invalid region index")
+    regions[idx]["status"] = status
+    await db.takeoffs.update_one({"id": takeoff_id}, {"$set": {"ai_suggestions.regions": regions}})
+    return {"ok": True, "index": idx, "status": status}
 
 
 # ---------------- Reports / export ----------------
@@ -422,11 +594,18 @@ async def email_report(takeoff_id: str, request: Request, user: dict = Depends(c
     html = calc.summary_html(project, tk, summary)
     if not resend.api_key:
         raise HTTPException(status_code=503, detail="Email not configured: set RESEND_API_KEY")
-    params = {"from": SENDER_EMAIL, "to": [recipient],
-              "subject": f"TileTakeoff Estimate — {project['name']}", "html": html}
+    pdf_bytes = calc.build_pdf(project, tk, summary)
+    params = {
+        "from": SENDER_EMAIL, "to": [recipient],
+        "subject": f"TileTakeoff Estimate — {project['name']}", "html": html,
+        "attachments": [{"filename": f"{tk['name']}.pdf", "content": list(pdf_bytes)}],
+    }
+    if body.get("message"):
+        params["html"] = f"<p>{body['message']}</p>" + html
     try:
         result = await asyncio.to_thread(resend.Emails.send, params)
-        return {"status": "success", "email_id": result.get("id")}
+        await record_audit(user, "emailed report", "takeoff", f"{tk['name']} → {recipient}")
+        return {"status": "success", "email_id": result.get("id") if isinstance(result, dict) else getattr(result, "id", None)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
 

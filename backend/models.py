@@ -69,6 +69,7 @@ class CalibrationIn(BaseModel):
     pixel_length: float
     real_length: float
     unit: str = "ft"
+    page: int = 1
 
 
 class Measurement(BaseModel):

@@ -127,8 +127,13 @@ def tile_quantities(net_area, perimeter_ft, tile, pattern, reuse=True, waste_ove
 def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
     """Returns a dict with per-tile quantities and totals."""
     calib = (drawing or {}).get("calibration") or {}
-    scale = calib.get("scale")  # real units per pixel
+    calibs = (drawing or {}).get("calibrations") or {}
+    scale = calib.get("scale")  # default (page 1) real units per pixel
     unit = calib.get("unit", "ft")
+
+    def page_scale(m):
+        c = calibs.get(str(m.get("page", 1))) or calibs.get(m.get("page", 1)) or calib
+        return c.get("scale") if c else None
     tiles_map = {t["id"]: t for t in tiles}
     default_tile_id = takeoff.get("default_tile_id")
     reuse = takeoff.get("cut_reuse", True)
@@ -145,9 +150,11 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
     total_deduct = 0.0
     total_linear = 0.0
     total_count = 0
-    calibrated = scale is not None
+    calibrated = scale is not None or any((c or {}).get("scale") for c in calibs.values())
 
     for m in takeoff.get("measurements", []):
+        s = page_scale(m)
+        m_cal = s is not None
         tid = m.get("tile_id") or default_tile_id or "__unassigned__"
         mtype = m.get("type")
         pts = m.get("points", [])
@@ -167,7 +174,7 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
             wo = None
 
         if mtype in AREA_TYPES or mtype == "opening":
-            real_area = _shoelace(pts) * (scale ** 2) if calibrated else 0.0
+            real_area = _shoelace(pts) * (s ** 2) if m_cal else 0.0
             if m.get("is_deduction") or mtype == "opening":
                 deduct_by_tid[tid] += real_area
                 total_deduct += real_area
@@ -187,7 +194,7 @@ def compute_summary(takeoff: dict, drawing: dict, tiles: list) -> dict:
                               "tile_name": base_tile["name"] if base_tile else (f"Custom {ew}×{eh}" if ew else "Unassigned"),
                               "pattern": g["pattern"]})
         elif mtype in LINEAR_TYPES:
-            real_len = _path_length(pts) * scale if calibrated else 0.0
+            real_len = _path_length(pts) * s if m_cal else 0.0
             linear_by_tid[tid] += real_len
             total_linear += real_len
             # wall-elevation: a wall line with a height becomes an area (length x height)

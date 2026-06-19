@@ -1,0 +1,18 @@
+{
+  "short_name": "TileTakeoff",
+  "name": "TileTakeoff — Field Companion",
+  "description": "Tile flooring & wall takeoffs — field review companion",
+  "start_url": "/m",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#ea580c",
+  "background_color": "#0f172a",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}

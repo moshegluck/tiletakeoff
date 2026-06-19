@@ -8,7 +8,7 @@ import { TilePattern, PATTERNS } from "@/lib/tilePatterns";
 import {
   ArrowLeft, MousePointer2, Hand, Ruler, Square, SquareDashedBottom, Spline, Minus, Hash, Type,
   Sparkles, FileSpreadsheet, FileText, FileDown, Mail, Trash2, ZoomIn, ZoomOut, Maximize,
-  Check, X, Undo2, Eye, EyeOff, Lock, LockOpen, Layers as LayersIcon, Grid3x3, Palette,
+  Check, X, Undo2, Eye, EyeOff, Lock, LockOpen, Layers as LayersIcon, Grid3x3, Palette, History, RotateCcw,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -59,6 +59,8 @@ export default function TakeoffStudio() {
   const [calibForm, setCalibForm] = useState({ feet: "", inches: "", unit: "ft" });
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
+  const [histOpen, setHistOpen] = useState(false);
+  const [revisions, setRevisions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [show3dTiles, setShow3dTiles] = useState(true);
   const [mode3d, setMode3d] = useState("flat");
@@ -83,8 +85,9 @@ export default function TakeoffStudio() {
 
   const takeoff = data?.takeoff;
   const drawing = data?.drawing;
-  const scale = drawing?.calibration?.scale || null;
-  const unit = drawing?.calibration?.unit || "ft";
+  const pageCal = drawing?.calibrations?.[pdfPage] || drawing?.calibrations?.[String(pdfPage)] || (pdfPage === 1 ? drawing?.calibration : null);
+  const scale = pageCal?.scale || null;
+  const unit = pageCal?.unit || drawing?.calibration?.unit || "ft";
   const tilesMap = useMemo(() => Object.fromEntries((tiles || []).map((t) => [t.id, t]), [tiles]), [tiles]);
   const defaultTileId = takeoff?.default_tile_id || null;
   const defaultTile = tilesMap[defaultTileId];
@@ -369,8 +372,8 @@ export default function TakeoffStudio() {
     if (calibForm.unit === "ft") { realLen = feet + inches / 12; u = "ft"; } else { realLen = feet; u = calibForm.unit; }
     if (!realLen || !calibLine) { toast.error("Enter the real length"); return; }
     try {
-      await api.post(`/drawings/${drawing.id}/calibrate`, { pixel_length: pathLength(calibLine), real_length: realLen, unit: u });
-      toast.success(`Scale set · ${realLen.toFixed(2)} ${u}`);
+      await api.post(`/drawings/${drawing.id}/calibrate`, { pixel_length: pathLength(calibLine), real_length: realLen, unit: u, page: pdfPage });
+      toast.success(`Scale set for page ${pdfPage} · ${realLen.toFixed(2)} ${u}`);
       setCalibOpen(false); setCalibLine(null); setTool("select"); setCalibForm({ feet: "", inches: "", unit: "ft" });
       mutate();
     } catch (e) { toast.error(apiErr(e)); }
@@ -394,6 +397,12 @@ export default function TakeoffStudio() {
     toast.success(`Added ${news.length} AI rooms — review & edit on the plan`);
   };
 
+  const setRegionStatus = async (i, status) => {
+    try { await api.post(`/takeoffs/${id}/ai-region-status`, { index: i, status }); mutate(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const acceptAIRoom = (r, i) => { addAIRoom(r); setRegionStatus(i, "accepted"); };
+
   const runAI = async () => {
     setAiLoading(true);
     try { await api.post(`/takeoffs/${id}/ai-analyze?page=${pdfPage}`); toast.success(`AI analysis complete (page ${pdfPage})`); mutate(); setTab("ai"); }
@@ -402,6 +411,22 @@ export default function TakeoffStudio() {
   const sendEmail = async () => {
     if (!emailTo) return toast.error("Enter recipient");
     try { await api.post(`/takeoffs/${id}/email`, { recipient_email: emailTo }); toast.success("Report emailed"); setEmailOpen(false); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const openHistory = async () => {
+    setHistOpen(true);
+    try { const { data } = await api.get(`/takeoffs/${id}/revisions`); setRevisions(data.revisions || []); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const saveSnapshot = async () => {
+    try {
+      await api.post(`/takeoffs/${id}/snapshot`, {});
+      const { data } = await api.get(`/takeoffs/${id}/revisions`); setRevisions(data.revisions || []);
+      toast.success("Snapshot saved");
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  const restoreRevision = async (rid) => {
+    try { await api.post(`/takeoffs/${id}/revisions/${rid}/restore`); await mutate(); setHistOpen(false); toast.success("Revision restored"); }
     catch (e) { toast.error(apiErr(e)); }
   };
 
@@ -442,7 +467,8 @@ export default function TakeoffStudio() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowFill((s) => !s)} className={`text-xs font-bold px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1 ${showFill ? "bg-orange-600" : "bg-slate-800 hover:bg-slate-700"}`}><Grid3x3 className="w-3.5 h-3.5" />Tile Fill</button>
-          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-sm ${scale ? "bg-green-900/60 text-green-400" : "bg-amber-900/60 text-amber-400"}`}>{scale ? `Scale · ${unit}` : "Not calibrated"}</span>
+          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-sm ${scale ? "bg-green-900/60 text-green-400" : "bg-amber-900/60 text-amber-400"}`}>{scale ? `Scale · ${unit}${pdfPageCount > 1 ? ` · p${pdfPage}` : ""}` : `Not calibrated${pdfPageCount > 1 ? ` (p${pdfPage})` : ""}`}</span>
+          <button data-testid="history-btn" onClick={openHistory} className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><History className="w-3.5 h-3.5" />History</button>
           <a href={exportUrl(id, "pdf")} download={`${takeoff.name}.pdf`} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />PDF</a>
           <a href={exportUrl(id, "xlsx")} download={`${takeoff.name}.xlsx`} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5" />Excel</a>
           <a href={exportUrl(id, "csv")} download={`${takeoff.name}.csv`} target="_blank" rel="noreferrer" className="text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded-sm inline-flex items-center gap-1"><FileDown className="w-3.5 h-3.5" />CSV</a>
@@ -494,7 +520,7 @@ export default function TakeoffStudio() {
               {hasImg && bgUrl && <image href={bgUrl} x={0} y={0} width={canvas.w} height={canvas.h} />}
               {!hasImg && <rect x={0} y={0} width={canvas.w} height={canvas.h} className="blueprint-grid" fill="#0b1220" />}
               {items.map((m) => (m.visible === false || !onPage(m)) ? null : (
-                <ShapeRender key={m.id} m={m} sw={sw(m)} z={view.z} scale={scale} unit={unit} selected={m.id === selId}
+                <ShapeRender key={m.id} m={m} sw={sw(m)} z={view.z} scale={scale} unit={unit} selected={m.id === selId} prefs={metricPrefs}
                   fillTile={showFill && AREA_TYPES.includes(m.type) && !m.is_deduction && areaTileFor(m)} />
               ))}
               {/* control-point handles for selected shape */}
@@ -720,14 +746,41 @@ export default function TakeoffStudio() {
                   {(takeoff.ai_suggestions.regions || []).some((r) => r.polygon?.length >= 3) && (
                     <button data-testid="ai-add-all" onClick={addAllAIRooms} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 rounded-sm text-sm inline-flex items-center justify-center gap-2"><Check className="w-4 h-4" />Add all rooms as editable polygons</button>
                   )}
-                  {(takeoff.ai_suggestions.regions || []).map((r, i) => (
-                    <div key={i} className="border border-slate-200 rounded-sm p-2.5" data-testid={`ai-region-${i}`}>
-                      <div className="flex items-center justify-between"><span className="font-bold text-sm">{r.label}</span><span className="text-[11px] font-mono text-slate-500">{r.est_area_sqft} sf</span></div>
+                  {(takeoff.ai_suggestions.regions || []).map((r, i) => {
+                    const st = r.status || "pending";
+                    return (
+                    <div key={i} className={`border rounded-sm p-2.5 ${st === "accepted" ? "border-green-300 bg-green-50/50" : st === "rejected" ? "border-slate-200 bg-slate-50 opacity-60" : "border-slate-200"}`} data-testid={`ai-region-${i}`}>
+                      <div className="flex items-center justify-between"><span className={`font-bold text-sm ${st === "rejected" ? "line-through text-slate-400" : ""}`}>{r.label}</span><span className="text-[11px] font-mono text-slate-500">{r.est_area_sqft} sf</span></div>
                       <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${Math.round((r.confidence || 0) * 100)}%` }} /></div>
-                      <div className="text-[10px] font-mono text-slate-400 mt-1">confidence {Math.round((r.confidence || 0) * 100)}% · {r.notes}</div>
-                      {r.polygon?.length >= 3 && <button data-testid={`ai-add-${i}`} onClick={() => addAIRoom(r)} className="mt-2 text-xs font-bold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1">+ Add to plan</button>}
+                      <div className="text-[10px] font-mono text-slate-400 mt-1">confidence {Math.round((r.confidence || 0) * 100)}% · {r.notes}{st !== "pending" && <span className={`ml-1 font-bold ${st === "accepted" ? "text-green-700" : "text-slate-500"}`}>· {st}</span>}</div>
+                      <div className="flex gap-2 mt-2">
+                        {r.polygon?.length >= 3 && st !== "accepted" && <button data-testid={`ai-accept-${i}`} onClick={() => acceptAIRoom(r, i)} className="text-xs font-bold text-green-700 hover:text-green-800 inline-flex items-center gap-1"><Check className="w-3.5 h-3.5" />Accept</button>}
+                        {st !== "rejected" && <button data-testid={`ai-reject-${i}`} onClick={() => setRegionStatus(i, "rejected")} className="text-xs font-bold text-slate-500 hover:text-red-600">Reject</button>}
+                        {st === "rejected" && <button data-testid={`ai-restore-${i}`} onClick={() => setRegionStatus(i, "pending")} className="text-xs font-bold text-slate-500 hover:text-slate-800">Restore</button>}
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
+                  {(takeoff.ai_suggestions.symbols || []).length > 0 && (
+                    <div className="border-t border-slate-200 pt-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Detected Symbols / Fixtures</div>
+                      <div className="flex flex-wrap gap-1.5" data-testid="ai-symbols">
+                        {takeoff.ai_suggestions.symbols.map((s, i) => (
+                          <span key={i} className="text-[10px] font-mono bg-slate-100 border border-slate-200 rounded-sm px-2 py-0.5">{s.label}{s.type ? ` · ${s.type}` : ""}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(takeoff.ai_suggestions.text_annotations || []).length > 0 && (
+                    <div className="border-t border-slate-200 pt-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Read from Plan (OCR)</div>
+                      <ul className="space-y-0.5" data-testid="ai-ocr-text">
+                        {takeoff.ai_suggestions.text_annotations.map((t, i) => (
+                          <li key={i} className="text-[11px] font-mono text-slate-600 truncate">• {t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </TabsContent>
@@ -779,6 +832,26 @@ export default function TakeoffStudio() {
         <span>{scale ? `1px = ${scale.toFixed(4)} ${unit}` : "uncalibrated"} · zoom {Math.round(view.z * 100)}% · Space/middle-drag = pan</span>
       </div>
 
+      {/* Revision history dialog */}
+      <Dialog open={histOpen} onOpenChange={setHistOpen}>
+        <DialogContent className="rounded-sm max-w-md">
+          <DialogHeader><DialogTitle className="font-black tracking-tight">Revision History</DialogTitle></DialogHeader>
+          <button data-testid="save-snapshot-btn" onClick={saveSnapshot} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 rounded-sm text-sm inline-flex items-center justify-center gap-2"><History className="w-4 h-4" />Save snapshot of current state</button>
+          <div className="max-h-80 overflow-y-auto divide-y divide-slate-100" data-testid="revisions-list">
+            {revisions.length === 0 && <div className="text-sm text-slate-400 text-center py-6">No snapshots yet. Save one to track versions.</div>}
+            {revisions.map((r) => (
+              <div key={r.id} data-testid={`revision-${r.id}`} className="flex items-center justify-between py-2.5 gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold truncate">{r.label}</div>
+                  <div className="text-[11px] font-mono text-slate-500">{r.totals?.net_area ?? 0} sf · {r.totals?.tiles_needed ?? 0} tiles · ${(r.totals?.cost ?? 0).toLocaleString()} · {r.created_by}</div>
+                </div>
+                <button data-testid={`restore-${r.id}`} onClick={() => restoreRevision(r.id)} className="shrink-0 text-xs font-bold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5" />Restore</button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Calibration dialog */}
       <Dialog open={calibOpen} onOpenChange={setCalibOpen}>
         <DialogContent className="rounded-sm">
@@ -815,9 +888,7 @@ function pointInPoly(p, poly) {
   return inside;
 }
 
-function ShapeRender({ m, sw, z, scale, unit, selected, fillTile }) {
-  const val = realValue(m, scale);
-  const label = m.type === "count" ? `${m.count}` : m.type === "text" ? m.text : (val != null ? `${val.toFixed(1)} ${AREA_TYPES.includes(m.type) ? "sf" : unit}` : "");
+function ShapeRender({ m, sw, z, scale, unit, selected, fillTile, prefs }) {
   const fs = 13 / z;
   if (m.type === "count") {
     const [x, y] = m.points[0];
@@ -832,11 +903,33 @@ function ShapeRender({ m, sw, z, scale, unit, selected, fillTile }) {
   const ptsStr = m.points.map((p) => p.join(",")).join(" ");
   const fill = fillTile ? `url(#tilepat_${m.id})` : isArea ? (m.fillColor || m.color) : "none";
   const fo = fillTile ? 1 : (m.fillOpacity ?? 0.22);
+
+  // metric overlay lines (A / W / H / P) matching plan-style annotations
+  const lines = [];
+  if (m.label) lines.push({ t: m.label, bold: true });
+  if (scale) {
+    if (isArea) {
+      const area = shoelace(m.points) * scale * scale;
+      const b = bbox(m.points);
+      const perim = pathLength([...m.points, m.points[0]]) * scale;
+      if (prefs?.area !== false) lines.push({ t: `A = ${area.toFixed(1)} sf` });
+      if (prefs?.dims) { lines.push({ t: `W = ${fmtFtIn(b.w * scale)}` }); lines.push({ t: `H = ${fmtFtIn(b.h * scale)}` }); }
+      if (prefs?.perimeter) lines.push({ t: `P = ${perim.toFixed(1)} ${unit}` });
+      if (prefs?.walls && m.wall_height_ft > 0) lines.push({ t: `Wall ${(perim * m.wall_height_ft).toFixed(0)} sf` });
+    } else {
+      lines.push({ t: `${(pathLength(m.points) * scale).toFixed(1)} ${unit}${m.wall_height_ft > 0 ? ` · ${(pathLength(m.points) * scale * m.wall_height_ft).toFixed(0)} sf wall` : ""}` });
+    }
+  }
+  const lh = fs * 1.2;
+  const y0 = cy - ((lines.length - 1) * lh) / 2;
   return (
     <g>
       {isArea ? <polygon points={ptsStr} fill={fill} fillOpacity={fo} stroke={m.color} strokeWidth={sw} />
         : <polyline points={ptsStr} fill="none" stroke={m.color} strokeWidth={sw} />}
-      {label && <text x={cx} y={cy} textAnchor="middle" fontSize={fs} fill={m.color} fontFamily="JetBrains Mono" stroke="#fff" strokeWidth={0.6 / z} paintOrder="stroke" fontWeight="700">{label}</text>}
+      {lines.map((ln, i) => (
+        <text key={i} x={cx} y={y0 + i * lh} textAnchor="middle" fontSize={ln.bold ? fs * 1.05 : fs} fill={m.color}
+          fontFamily="JetBrains Mono" stroke="#fff" strokeWidth={(ln.bold ? 0.8 : 0.6) / z} paintOrder="stroke" fontWeight="700">{ln.t}</text>
+      ))}
     </g>
   );
 }

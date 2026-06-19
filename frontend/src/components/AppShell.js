@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FolderKanban, Grid3x3, Users, LogOut, Layers } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Grid3x3, Users, LogOut, Layers, Smartphone, ScrollText, CreditCard } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const NAV = [
@@ -8,6 +8,9 @@ const NAV = [
   { to: "/projects", label: "Projects", icon: FolderKanban, tid: "nav-projects" },
   { to: "/catalog", label: "Tile Catalog", icon: Grid3x3, tid: "nav-catalog" },
   { to: "/team", label: "Team", icon: Users, tid: "nav-team" },
+  { to: "/audit", label: "Activity Log", icon: ScrollText, tid: "nav-audit" },
+  { to: "/billing", label: "Billing", icon: CreditCard, tid: "nav-billing" },
+  { to: "/m", label: "Field App", icon: Smartphone, tid: "nav-mobile" },
 ];
 
 export default function AppShell({ children }) {
