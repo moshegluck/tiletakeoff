@@ -52,6 +52,7 @@ async def record_audit(user: dict, action: str, entity: str = "", detail: str = 
 @api.get("/audit")
 async def list_audit(user: dict = Depends(current_user)):
     require_role(user, "admin")
+    await require_feature(user, "audit")
     logs = await db.audit_logs.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return {"logs": logs}
 
@@ -60,9 +61,28 @@ async def list_audit(user: dict = Depends(current_user)):
 # Plans are defined server-side ONLY — never trust amounts from the client.
 PLANS = {
     "free": {"name": "Free", "price": 0.0, "blurb": "1 project · core takeoff tools"},
-    "pro": {"name": "Pro", "price": 29.0, "blurb": "Unlimited projects · AI takeoff · exports"},
+    "pro": {"name": "Pro", "price": 29.0, "blurb": "Unlimited projects · AI takeoff · exports · email"},
     "team": {"name": "Team", "price": 99.0, "blurb": "Everything in Pro · multi-seat · audit log · priority"},
 }
+
+# Server-side feature gates per plan. max_* = None means unlimited.
+PLAN_LIMITS = {
+    "free": {"max_projects": 1, "max_members": 1, "ai": False, "exports": False, "email": False, "audit": False},
+    "pro": {"max_projects": None, "max_members": 1, "ai": True, "exports": True, "email": True, "audit": False},
+    "team": {"max_projects": None, "max_members": 10, "ai": True, "exports": True, "email": True, "audit": True},
+}
+
+
+async def ws_plan(user: dict) -> str:
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0, "plan": 1})
+    return (ws or {}).get("plan", "free")
+
+
+async def require_feature(user: dict, feature: str):
+    plan = await ws_plan(user)
+    if not PLAN_LIMITS.get(plan, PLAN_LIMITS["free"]).get(feature):
+        raise HTTPException(status_code=402, detail=f"Your {plan.title()} plan doesn't include this feature. Upgrade to unlock it.")
+    return plan
 
 
 def _stripe(request: Request) -> StripeCheckout:
@@ -74,7 +94,11 @@ def _stripe(request: Request) -> StripeCheckout:
 @api.get("/billing/me")
 async def billing_me(user: dict = Depends(current_user)):
     ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
-    return {"plan": (ws or {}).get("plan", "free"), "plan_status": (ws or {}).get("plan_status"), "plans": PLANS}
+    plan = (ws or {}).get("plan", "free")
+    proj_count = await db.projects.count_documents({"workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}})
+    member_count = await db.users.count_documents({"workspace_id": user["workspace_id"]})
+    return {"plan": plan, "plan_status": (ws or {}).get("plan_status"), "plans": PLANS,
+            "limits": PLAN_LIMITS, "usage": {"projects": proj_count, "members": member_count}}
 
 
 @api.post("/billing/checkout")
@@ -197,6 +221,12 @@ async def get_workspace(user: dict = Depends(current_user)):
 @api.post("/workspace/members")
 async def invite_member(body: InviteRequest, user: dict = Depends(current_user)):
     require_role(user, "admin")
+    plan = await ws_plan(user)
+    max_m = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"]).get("max_members")
+    if max_m is not None:
+        count = await db.users.count_documents({"workspace_id": user["workspace_id"]})
+        if count >= max_m:
+            raise HTTPException(status_code=402, detail=f"The {plan.title()} plan allows {max_m} seat(s). Upgrade to Team for more.")
     email = body.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already in use")
@@ -232,6 +262,12 @@ async def list_projects(user: dict = Depends(current_user)):
 @api.post("/projects")
 async def create_project(body: ProjectIn, user: dict = Depends(current_user)):
     require_role(user, "admin", "estimator")
+    plan = await ws_plan(user)
+    max_p = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"]).get("max_projects")
+    if max_p is not None:
+        count = await db.projects.count_documents({"workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}})
+        if count >= max_p:
+            raise HTTPException(status_code=402, detail=f"The {plan.title()} plan is limited to {max_p} project(s). Upgrade to Pro for unlimited projects.")
     doc = {"id": new_id("proj_"), "workspace_id": user["workspace_id"], "created_by": user["id"],
            "created_at": now_iso(), **body.model_dump()}
     await db.projects.insert_one(doc)
@@ -506,6 +542,7 @@ async def restore_revision(takeoff_id: str, rev_id: str, user: dict = Depends(cu
 @api.post("/takeoffs/{takeoff_id}/ai-analyze")
 async def ai_analyze(takeoff_id: str, page: int = Query(1), user: dict = Depends(current_user)):
     require_role(user, "admin", "estimator")
+    await require_feature(user, "ai")
     tk = await db.takeoffs.find_one({"id": takeoff_id, "workspace_id": user["workspace_id"]}, {"_id": 0})
     if not tk:
         raise HTTPException(status_code=404, detail="Takeoff not found")
@@ -571,6 +608,7 @@ async def export_takeoff(takeoff_id: str, fmt: str, auth: str = Query(None),
                          authorization: str = Header(None)):
     token = auth or (authorization[7:] if authorization and authorization.startswith("Bearer ") else None)
     user = await authenticate_token(token)
+    await require_feature(user, "exports")
     project, tk, summary = await _gather_report(takeoff_id, user)
     if fmt == "csv":
         return Response(calc.build_csv(project, tk, summary), media_type="text/csv",
@@ -590,6 +628,7 @@ async def email_report(takeoff_id: str, request: Request, user: dict = Depends(c
     recipient = body.get("recipient_email")
     if not recipient:
         raise HTTPException(status_code=400, detail="recipient_email required")
+    await require_feature(user, "email")
     project, tk, summary = await _gather_report(takeoff_id, user)
     html = calc.summary_html(project, tk, summary)
     if not resend.api_key:

@@ -15,7 +15,7 @@ export default function AuditLog() {
         <h1 className="text-3xl font-black tracking-tight flex items-center gap-2"><ScrollText className="w-7 h-7" /> Activity Log</h1>
         <p className="text-sm text-slate-500 mt-1">Audit trail of key actions across your workspace.</p>
       </div>
-      {error && <div className="text-sm text-red-600">{error?.response?.status === 403 ? "Admins only." : "Could not load activity."}</div>}
+      {error && <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-sm p-4">{error?.response?.status === 403 ? "Admins only." : error?.response?.status === 402 ? "The Activity Log is a Team-plan feature. Upgrade on the Billing page to unlock it." : "Could not load activity."}</div>}
       <div className="bg-white border border-slate-200 rounded-sm divide-y divide-slate-100" data-testid="audit-list">
         {logs.length === 0 && !error && <div className="p-8 text-center text-slate-400 text-sm">No activity recorded yet.</div>}
         {logs.map((l) => (

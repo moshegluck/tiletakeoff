@@ -42,24 +42,47 @@ export default function Billing() {
 
   const current = data?.plan || "free";
   const plans = data?.plans || {};
+  const limits = data?.limits || {};
+  const usage = data?.usage || {};
+  const FEATURES = [
+    ["max_projects", (v) => `${v === null ? "Unlimited" : v} project${v === 1 ? "" : "s"}`],
+    ["ai", () => "AI-assisted takeoff"],
+    ["exports", () => "PDF / Excel / CSV exports"],
+    ["email", () => "Email reports to clients"],
+    ["max_members", (v) => `${v === null ? "Unlimited" : v} team seat${v === 1 ? "" : "s"}`],
+    ["audit", () => "Activity / audit log"],
+  ];
   return (
     <div className="p-8 max-w-4xl" data-testid="billing-page">
       <div className="mb-8">
         <div className="text-[11px] font-mono uppercase tracking-widest text-orange-600 mb-1">Subscription</div>
         <h1 className="text-3xl font-black tracking-tight flex items-center gap-2"><CreditCard className="w-7 h-7" /> Billing &amp; Plans</h1>
-        <p className="text-sm text-slate-500 mt-1">You're on the <b className="text-slate-900 capitalize" data-testid="current-plan">{current}</b> plan. {checking && <span className="text-orange-600 font-bold">Confirming payment…</span>}</p>
+        <p className="text-sm text-slate-500 mt-1">You're on the <b className="text-slate-900 capitalize" data-testid="current-plan">{current}</b> plan
+          {usage.projects != null && <> · {usage.projects} project{usage.projects === 1 ? "" : "s"}, {usage.members} seat{usage.members === 1 ? "" : "s"} in use</>}.
+          {checking && <span className="text-orange-600 font-bold"> Confirming payment…</span>}</p>
       </div>
       <div className="grid sm:grid-cols-3 gap-4">
         {ORDER.map((pid) => {
           const p = plans[pid]; if (!p) return null;
           const isCurrent = pid === current;
           const isUpgrade = ORDER.indexOf(pid) > ORDER.indexOf(current);
+          const lim = limits[pid] || {};
           return (
             <div key={pid} data-testid={`plan-${pid}`} className={`rounded-lg border p-5 flex flex-col ${pid === "pro" ? "border-orange-500 shadow-lg" : "border-slate-200"} bg-white`}>
               {pid === "pro" && <div className="text-[10px] font-mono uppercase tracking-widest text-orange-600 mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Most popular</div>}
               <div className="font-black text-lg">{p.name}</div>
               <div className="text-3xl font-black mt-1">${p.price}<span className="text-sm font-mono text-slate-400">/mo</span></div>
-              <p className="text-xs text-slate-500 mt-2 flex-1">{p.blurb}</p>
+              <ul className="mt-3 space-y-1.5 flex-1">
+                {FEATURES.map(([k, fmt]) => {
+                  const v = lim[k];
+                  const on = k === "max_projects" || k === "max_members" ? true : !!v;
+                  return (
+                    <li key={k} className={`text-xs flex items-center gap-1.5 ${on ? "text-slate-700" : "text-slate-300 line-through"}`}>
+                      <Check className={`w-3.5 h-3.5 shrink-0 ${on ? "text-green-600" : "text-slate-300"}`} />{fmt(v)}
+                    </li>
+                  );
+                })}
+              </ul>
               {isCurrent ? (
                 <div className="mt-4 text-center text-sm font-bold text-green-700 bg-green-50 rounded-sm py-2 flex items-center justify-center gap-1"><Check className="w-4 h-4" /> Current plan</div>
               ) : pid === "free" ? (

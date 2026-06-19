@@ -59,7 +59,14 @@ Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid 
 - **Mosaic pattern**: added to PATTERNS, SVG TilePattern (small chips), and Room3D texture. Calculated/sold by the sheet (`_mosaic_quantities`, 12×12 = 1 sqft sheet). Breakdown relabels Full→Sheets for mosaic.
 - Tests: /app/backend/tests/test_calc.py (8 passing). Frontend E2E verified (waste sanity, custom dims, mosaic, panel scroll all pass).
 
+## Plan feature-gating + live email (2026-06-19e)
+- **Stripe plans now enforce real limits** server-side (`PLAN_LIMITS`): Free = 1 project, no AI/exports/email/audit, 1 seat; Pro = unlimited projects + AI + exports + email; Team = + audit log + 10 seats. Gated routes return **HTTP 402** with an upgrade message; frontend axios interceptor shows an "View plans" toast. Verified: free blocks 2nd project/AI/export/email/audit, team allows all.
+- `/billing/me` returns `limits` + live `usage` (projects, members); Billing page shows per-plan feature checklist + current usage.
+- **Email is LIVE** with the user's Resend key — sends HTML + PDF attachment (test mode: deliverable only to the Resend account email until a domain is verified).
+- Test workspace ("TileTakeoff HQ") set to `team` so existing demo flows keep working.
+
 ## "Finish all" — Waves 1-7 (2026-06-19d)
+
 Delivered the full PRD gap list:
 - **Per-page PDF calibration** — each page stores its own scale (`drawings.calibrations.{n}`); `calc.py` resolves scale per measurement page. Status badge shows `p{n}` + not-calibrated per page.
 - **On-canvas A/W/H overlay** — `ShapeRender` renders room name + A=sf, W/H=feet-inches, P=ft, toggled by Layers "Show" prefs, matching plan annotations.
