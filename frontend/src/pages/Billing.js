@@ -39,6 +39,16 @@ export default function Billing() {
       window.location.href = r.url;
     } catch (e) { toast.error(apiErr(e)); setBusy(null); }
   };
+  const cancelSub = async () => {
+    if (!window.confirm("Cancel your subscription? You'll keep access until the end of the current period, then drop to Free.")) return;
+    try { await api.post("/billing/cancel"); toast.success("Subscription will cancel at period end"); mutate(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const reactivateSub = async () => {
+    try { await api.post("/billing/reactivate"); toast.success("Subscription reactivated"); mutate(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
   const current = data?.plan || "free";
   const plans = data?.plans || {};
@@ -61,6 +71,18 @@ export default function Billing() {
           {usage.projects != null && <> · {usage.projects} project{usage.projects === 1 ? "" : "s"}, {usage.members} seat{usage.members === 1 ? "" : "s"} in use</>}.
           {checking && <span className="text-orange-600 font-bold"> Confirming payment…</span>}</p>
       </div>
+      {current !== "free" && (
+        <div className="mb-6 bg-white border border-slate-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3" data-testid="manage-subscription">
+          <div className="text-sm">
+            {data?.cancel_at_period_end
+              ? <span className="text-amber-700 font-bold">Cancels on {fmtDate(data?.current_period_end)}</span>
+              : <span className="text-slate-700"><b className="text-green-700">Active</b> · renews {fmtDate(data?.current_period_end)}</span>}
+          </div>
+          {data?.cancel_at_period_end
+            ? <button data-testid="reactivate-btn" onClick={reactivateSub} className="text-sm font-bold bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-sm">Reactivate</button>
+            : <button data-testid="cancel-sub-btn" onClick={cancelSub} className="text-sm font-bold border border-slate-300 hover:border-red-500 hover:text-red-600 px-4 py-2 rounded-sm">Cancel subscription</button>}
+        </div>
+      )}
       <div className="grid sm:grid-cols-3 gap-4">
         {ORDER.map((pid) => {
           const p = plans[pid]; if (!p) return null;

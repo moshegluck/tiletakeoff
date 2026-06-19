@@ -3,7 +3,7 @@ import os
 import asyncio
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -74,8 +74,17 @@ PLAN_LIMITS = {
 
 
 async def ws_plan(user: dict) -> str:
-    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0, "plan": 1})
-    return (ws or {}).get("plan", "free")
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+    if not ws:
+        return "free"
+    plan = ws.get("plan", "free")
+    # lazy expiry: if a paid period lapsed (and not renewed), drop to free
+    if plan != "free":
+        pend = ws.get("current_period_end")
+        if pend and ws.get("cancel_at_period_end") and now_iso() > pend:
+            await db.workspaces.update_one({"id": ws["id"]}, {"$set": {"plan": "free", "plan_status": "canceled"}})
+            return "free"
+    return plan
 
 
 async def require_feature(user: dict, feature: str):
@@ -98,7 +107,9 @@ async def billing_me(user: dict = Depends(current_user)):
     proj_count = await db.projects.count_documents({"workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}})
     member_count = await db.users.count_documents({"workspace_id": user["workspace_id"]})
     return {"plan": plan, "plan_status": (ws or {}).get("plan_status"), "plans": PLANS,
-            "limits": PLAN_LIMITS, "usage": {"projects": proj_count, "members": member_count}}
+            "limits": PLAN_LIMITS, "usage": {"projects": proj_count, "members": member_count},
+            "current_period_end": (ws or {}).get("current_period_end"),
+            "cancel_at_period_end": (ws or {}).get("cancel_at_period_end", False)}
 
 
 @api.post("/billing/checkout")
@@ -127,13 +138,34 @@ async def billing_checkout(request: Request, user: dict = Depends(current_user))
 
 
 async def _apply_paid(session_id: str):
-    """Idempotently mark a transaction paid and upgrade the workspace plan."""
+    """Idempotently mark a transaction paid and start/renew a 30-day plan period."""
     txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
     if not txn or txn.get("payment_status") == "paid":
         return txn
     await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"payment_status": "paid", "status": "complete", "paid_at": now_iso()}})
-    await db.workspaces.update_one({"id": txn["workspace_id"]}, {"$set": {"plan": txn["plan_id"], "plan_status": "active"}})
+    period_end = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    await db.workspaces.update_one({"id": txn["workspace_id"]}, {"$set": {
+        "plan": txn["plan_id"], "plan_status": "active", "current_period_end": period_end,
+        "cancel_at_period_end": False, "subscription_started": now_iso()}})
     return txn
+
+
+@api.post("/billing/cancel")
+async def billing_cancel(user: dict = Depends(current_user)):
+    require_role(user, "admin")
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+    if not ws or ws.get("plan", "free") == "free":
+        raise HTTPException(status_code=400, detail="No active paid plan to cancel")
+    await db.workspaces.update_one({"id": user["workspace_id"]}, {"$set": {"cancel_at_period_end": True, "plan_status": "canceling"}})
+    await record_audit(user, "canceled subscription", "billing", ws.get("plan"))
+    return {"ok": True, "cancel_at_period_end": True, "current_period_end": ws.get("current_period_end")}
+
+
+@api.post("/billing/reactivate")
+async def billing_reactivate(user: dict = Depends(current_user)):
+    require_role(user, "admin")
+    await db.workspaces.update_one({"id": user["workspace_id"]}, {"$set": {"cancel_at_period_end": False, "plan_status": "active"}})
+    return {"ok": True}
 
 
 @api.get("/billing/status/{session_id}")
