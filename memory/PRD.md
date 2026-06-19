@@ -59,7 +59,23 @@ Known limitation: very small tiles (e.g. 3×6) on large areas render near-solid 
 - **Mosaic pattern**: added to PATTERNS, SVG TilePattern (small chips), and Room3D texture. Calculated/sold by the sheet (`_mosaic_quantities`, 12×12 = 1 sqft sheet). Breakdown relabels Full→Sheets for mosaic.
 - Tests: /app/backend/tests/test_calc.py (8 passing). Frontend E2E verified (waste sanity, custom dims, mosaic, panel scroll all pass).
 
+## "Finish all" — Waves 1-7 (2026-06-19d)
+Delivered the full PRD gap list:
+- **Per-page PDF calibration** — each page stores its own scale (`drawings.calibrations.{n}`); `calc.py` resolves scale per measurement page. Status badge shows `p{n}` + not-calibrated per page.
+- **On-canvas A/W/H overlay** — `ShapeRender` renders room name + A=sf, W/H=feet-inches, P=ft, toggled by Layers "Show" prefs, matching plan annotations.
+- **Email report (Resend)** — completed with PDF attachment; needs a real `RESEND_API_KEY` (currently empty → 503).
+- **AI approve/reject** — per-region Accept/Reject/Restore with persisted status; AI service now also returns **symbols/fixtures** + **OCR text_annotations** + recommended waste.
+- **Catalog upgrade** — CSV import captures SKU / manufacturer / distributor; shown on catalog cards.
+- **Revision history** — snapshot/list/restore takeoff versions (`takeoff_revisions`), History dialog in studio.
+- **Mobile companion (PWA)** — `/m` route + manifest.json; touch-first project→takeoff→summary→PDF flow.
+- **SaaS hardening** — `audit_logs` + `/audit` page (admin), and **Stripe billing** (`/billing`, plans free/pro/team, test-mode checkout + status polling + webhook, `payment_transactions`, workspace `plan`).
+- Canvas: scroll-zoom + middle-mouse pan hardened.
+- Tests: 11 calc pytests + testing-agent iteration_5 (12/12 new backend cases, new UI pages all pass).
+
+## Wave-prior history below
+
 ## Exports + AI page + waste override + CSV import + metrics + pan/zoom (2026-06-19c)
+
 - **Per-room metrics by preference (NEW)**: Layers tab has a "Show" bar (Area / W×L / Perimeter / Wall sf) persisted to `localStorage(tt_metric_prefs)`. Each room shows A=<sf>, W×L=<feet-inches>, Perim=<ft> — matches plan-style A/W/H annotations (e.g. "A=157 sf  W×L=11'-9\" × 13'-4\"  Perim=50.2 ft"). Helpers `bbox()` + `fmtFtIn()` in geometry.js.
 - **Per-room waste % override**: input in Tile tab (`room-waste-<id>`); `tile_quantities(..., waste_override)` replaces the auto allowance (accepts 15 or 0.15).
 - **Catalog CSV import**: `POST /api/tiles/import` (flexible headers, name/width/height/finish/pattern/price/etc.) + Import CSV / Template buttons on Catalog page.
