@@ -857,12 +857,12 @@ export default function TakeoffStudio() {
         <DialogContent className="rounded-sm">
           <DialogHeader><DialogTitle className="font-black tracking-tight">Set Drawing Scale</DialogTitle></DialogHeader>
           <p className="text-sm text-slate-500">Reference line: <b className="font-mono">{calibLine ? pathLength(calibLine).toFixed(0) : 0}px</b>. Trace along a labeled dimension for accuracy.</p>
-          <div className="flex items-end gap-2">
-            <select className={input + " w-28"} value={calibForm.unit} onChange={(e) => setCalibForm({ ...calibForm, unit: e.target.value })}><option value="ft">feet + in</option><option value="in">inches</option><option value="m">meters</option></select>
+          <div className="flex items-end gap-2 flex-wrap">
+            <select className={input} style={{ width: "8.5rem", flex: "0 0 auto" }} value={calibForm.unit} onChange={(e) => setCalibForm({ ...calibForm, unit: e.target.value })}><option value="ft">feet + in</option><option value="in">inches</option><option value="m">meters</option></select>
             {calibForm.unit === "ft" ? (<>
-              <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Feet</label><input data-testid="calib-length-input" type="number" className={input} value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
-              <div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Inches</label><input type="number" className={input} value={calibForm.inches} onChange={(e) => setCalibForm({ ...calibForm, inches: e.target.value })} /></div>
-            </>) : (<div className="flex-1"><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Length</label><input data-testid="calib-length-input" type="number" className={input} value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>)}
+              <div style={{ flex: "1 1 5rem", minWidth: "4.5rem" }}><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Feet</label><input data-testid="calib-length-input" type="number" className={input} value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>
+              <div style={{ flex: "1 1 5rem", minWidth: "4.5rem" }}><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Inches</label><input type="number" className={input} value={calibForm.inches} onChange={(e) => setCalibForm({ ...calibForm, inches: e.target.value })} /></div>
+            </>) : (<div style={{ flex: "1 1 8rem", minWidth: "6rem" }}><label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Length</label><input data-testid="calib-length-input" type="number" className={input} value={calibForm.feet} onChange={(e) => setCalibForm({ ...calibForm, feet: e.target.value })} /></div>)}
           </div>
           <DialogFooter><button data-testid="confirm-calib-btn" onClick={confirmCalibration} className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-4 py-2 rounded-sm">Apply Scale</button></DialogFooter>
         </DialogContent>
