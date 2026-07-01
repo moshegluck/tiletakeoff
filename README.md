@@ -80,8 +80,10 @@ media type, validates the model's JSON, and never leaks upstream error detail.
 When the Supabase env vars are also present on the server it **requires a
 signed-in session** and rate-limits per user, so the Anthropic key can't be
 spent by anonymous callers; without Supabase it runs open with a per-IP rate
-limit. (The in-memory rate limit is per warm instance — for multi-instance
-production hardening, back it with Vercel KV / Upstash.)
+limit. The rate limiter uses **Upstash Redis / Vercel KV** for durable,
+cross-instance limiting when `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`
+(or `KV_REST_API_URL` + `KV_REST_API_TOKEN`) are set, and falls back to an
+in-memory window (per warm instance) otherwise.
 
 ## Architecture
 

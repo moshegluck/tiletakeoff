@@ -82,11 +82,30 @@ const sb = AUTH_REQUIRED
   ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
 
-// Best-effort in-memory rate limiter (per warm instance). For multi-instance
-// production hardening, back this with Vercel KV / Upstash. Keyed by user id
-// when authenticated, otherwise by client IP.
+// Rate limiter. Uses Upstash Redis (durable across serverless instances) when
+// configured, else falls back to a best-effort in-memory window (per warm
+// instance). Enable the durable path by setting UPSTASH_REDIS_REST_URL +
+// UPSTASH_REDIS_REST_TOKEN (or KV_REST_API_URL + KV_REST_API_TOKEN). Keyed by
+// user id when authenticated, otherwise by client IP.
 const RATE = { windowMs: 5 * 60_000, max: 20, hits: new Map() };
-function rateLimited(key) {
+const KV_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
+const KV_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+let _redis; // undefined = not yet initialized, null = unavailable
+async function getRedis() {
+  if (!KV_URL || !KV_TOKEN) return null;
+  if (_redis === undefined) {
+    try {
+      const { Redis } = await import('@upstash/redis');
+      _redis = new Redis({ url: KV_URL, token: KV_TOKEN });
+    } catch (e) {
+      console.error('[detect-plan] Redis init failed, using in-memory limiter:', e?.message);
+      _redis = null;
+    }
+  }
+  return _redis;
+}
+
+function rateLimitedInMemory(key) {
   const now = Date.now();
   const arr = (RATE.hits.get(key) || []).filter((t) => now - t < RATE.windowMs);
   arr.push(now);
@@ -97,6 +116,24 @@ function rateLimited(key) {
     }
   }
   return arr.length > RATE.max;
+}
+
+async function rateLimited(key) {
+  const redis = await getRedis();
+  if (redis) {
+    try {
+      // fixed-window counter with a TTL matching the window
+      const bucket = `detect:${key}:${Math.floor(Date.now() / RATE.windowMs)}`;
+      const n = await redis.incr(bucket);
+      if (n === 1) await redis.expire(bucket, Math.ceil(RATE.windowMs / 1000));
+      return n > RATE.max;
+    } catch (e) {
+      // Redis hiccup — fall back rather than blocking the request path.
+      console.error('[detect-plan] Redis rate-limit error, falling back:', e?.message);
+      return rateLimitedInMemory(key);
+    }
+  }
+  return rateLimitedInMemory(key);
 }
 
 function clientIp(req) {
@@ -145,7 +182,7 @@ export default async function handler(req, res) {
     }
 
     // ---- rate limit ----
-    if (rateLimited(identity)) {
+    if (await rateLimited(identity)) {
       return res.status(429).json({ error: 'Too many detection requests. Please wait a minute and try again.' });
     }
 

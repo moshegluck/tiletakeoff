@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",
     "@supabase/supabase-js": "^2.110.0",
+    "@upstash/redis": "^1.38.0",
     "exceljs": "^4.4.0",
     "nanoid": "^5.1.16",
     "pdfjs-dist": "^5.4.149",
