@@ -110,3 +110,42 @@ export async function deleteProject(id) {
   const { error } = await supabase.from('projects').delete().eq('id', id);
   if (error) throw error;
 }
+
+// ---- tile library (shared across a user's projects; RLS-scoped per user) ----
+export async function listTiles() {
+  if (!cloudEnabled) return [];
+  const { data, error } = await supabase
+    .from('tile_library').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function addTile(tile) {
+  if (!cloudEnabled) throw new Error('Cloud not configured');
+  const user = await getUser();
+  if (!user) throw new Error('Not signed in');
+  const num = (v) => (Number.isFinite(+v) ? +v : null);
+  const row = {
+    owner: user.id,
+    name: (tile.name || 'Tile').slice(0, 120),
+    tw_in: num(tile.tw_in) ?? 12,
+    th_in: num(tile.th_in) ?? 12,
+    thickness_mm: num(tile.thickness_mm),
+    material: tile.material || null,
+    finish: tile.finish || null,
+    sku: tile.sku || null,
+    vendor: tile.vendor || null,
+    price: num(tile.price),
+    price_unit: tile.price_unit || 'sf',
+    sf_per_box: num(tile.sf_per_box),
+  };
+  const { data, error } = await supabase.from('tile_library').insert(row).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteTile(id) {
+  if (!cloudEnabled) return;
+  const { error } = await supabase.from('tile_library').delete().eq('id', id);
+  if (error) throw error;
+}

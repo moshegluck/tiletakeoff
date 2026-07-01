@@ -5,6 +5,7 @@ import {
   getUser, onAuthChange, signInWithPassword, signUp, signOut,
   listProjects, loadProject, createProject, saveProject, deleteProject,
 } from '../lib/cloud.js';
+import LibraryModal from './LibraryModal.jsx';
 
 // Renders the cloud account control + projects drawer. When cloud isn't
 // configured it renders nothing (app stays local-only).
@@ -12,6 +13,7 @@ export default function AccountBar() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
 
   // register cloud saver whenever auth state allows it
   useEffect(() => {
@@ -40,6 +42,9 @@ export default function AccountBar() {
     <>
       {user ? (
         <>
+          <button className="tbtn" onClick={() => setShowLibrary(true)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" /><rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" /></svg>Library
+          </button>
           <button className="tbtn" onClick={() => setShowProjects(true)}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H3z" /></svg>Projects
           </button>
@@ -54,6 +59,7 @@ export default function AccountBar() {
       )}
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
       {showProjects && <ProjectsDrawer onClose={() => setShowProjects(false)} />}
+      {showLibrary && <LibraryModal onClose={() => setShowLibrary(false)} />}
     </>
   );
 }

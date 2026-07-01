@@ -194,6 +194,32 @@ export const useStore = create((set, get) => ({
     set({ materials: mats, rooms, selection: { type: 'material', id: mat.id }, tab: 'materials', gridMaterialId: isFloor ? mat.id : get().gridMaterialId });
     persist(get);
   },
+  // Create a project material from a saved tile-library row. Mirrors
+  // addMaterial's floor defaults + auto-assign-to-unassigned-rooms behavior.
+  addMaterialFromTile: (tile) => {
+    const num = (v, d) => (Number.isFinite(+v) && +v > 0 ? +v : d);
+    const mat = {
+      id: nanoid(),
+      name: tile.name || 'Library Tile',
+      type: 'floor',
+      color: MAT_FLOOR,
+      tw: num(tile.tw_in, 12), th: num(tile.th_in, 12), grout: 0.125,
+      pattern: 'grid',
+      waste: 10,
+      price: Number.isFinite(+tile.price) ? +tile.price : 0,
+      priceUnit: tile.price_unit || 'sf',
+      sfPerBox: num(tile.sf_per_box, 15),
+      faceCoverage: 1,
+      costMode: 'waste', optimizeWholeJob: false, cutSafetyPct: 5,
+    };
+    const prevMats = get().materials;
+    const rooms = get().rooms.map((r) =>
+      r.assigned.some((id) => prevMats.find((m) => m.id === id)?.type === 'floor')
+        ? r : { ...r, assigned: [...r.assigned, mat.id] });
+    set({ materials: [...prevMats, mat], rooms, selection: { type: 'material', id: mat.id }, tab: 'materials', gridMaterialId: mat.id });
+    persist(get);
+    return mat.id;
+  },
   updateMaterial: (id, patch) => {
     // if pattern changes, suggest waste
     if (patch.pattern && WASTE_BY_PATTERN[patch.pattern] != null) {
