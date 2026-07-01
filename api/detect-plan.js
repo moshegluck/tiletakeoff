@@ -4,17 +4,25 @@
 // (vision) to return rooms as rectangles in feet. The ANTHROPIC_API_KEY
 // lives in an env var and never reaches the browser.
 //
+// AI upgrades:
+//   - Official Anthropic SDK (typed, retries, timeouts) instead of raw fetch.
+//   - Structured outputs (output_config.format + JSON schema) so the room
+//     list is GUARANTEED valid JSON in the expected shape — no markdown
+//     fence stripping, no "model returned non-JSON" failure path.
+//   - Adaptive thinking for better reasoning on dense/complex plans.
+//   - Default model claude-sonnet-5 (current, high-resolution vision — reads
+//     dimension strings and scale bars far better than prior tiers).
+//
 // Hardening (the key spends real money, so the route is guarded):
-//   - requires a valid Supabase session WHEN Supabase is configured
-//     (server has SUPABASE_URL + anon key); otherwise runs open but
-//     IP-rate-limited so a standalone deploy still works.
+//   - requires a valid Supabase session WHEN Supabase is configured;
+//     otherwise runs open but IP-rate-limited so a standalone deploy works.
 //   - best-effort per-identity rate limit.
 //   - bounded image size + media-type allow-list (DoS / cost guard).
-//   - validates & sanitizes the model's JSON before returning it
-//     (rejects NaN/Infinity/negative dims that would corrupt rooms).
+//   - validates & sanitizes the model's JSON before returning it.
 //   - never leaks upstream error bodies or stack traces to the client.
 // ============================================================
 
+import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
 export const config = { maxDuration: 60 };
@@ -29,9 +37,36 @@ Rules:
 - Return decimal feet (e.g. 12.5), not feet-inches strings.
 - Coordinates: top-left origin, +x right, +y down, in FEET from the plan's top-left.
 - If unsure of a label, use a generic name (e.g. "Room A").
+- confidence is 0.0–1.0 (how sure you are of the room and its dimensions).
 
-Respond with ONLY valid JSON, no markdown, in this exact shape:
-{"rooms":[{"name":"Kitchen","x":0,"y":0,"w":12.5,"h":10,"confidence":0.0-1.0}]}`;
+The response format is enforced by a JSON schema — return the rooms array only.`;
+
+// Structured-output schema. Structured outputs require additionalProperties:false
+// and all properties in `required`; numeric ranges (0–1 confidence) are enforced
+// downstream in cleanRoom() since the schema layer doesn't support min/max.
+const ROOM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['rooms'],
+  properties: {
+    rooms: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'x', 'y', 'w', 'h', 'confidence'],
+        properties: {
+          name: { type: 'string' },
+          x: { type: 'number' },
+          y: { type: 'number' },
+          w: { type: 'number' },
+          h: { type: 'number' },
+          confidence: { type: 'number' },
+        },
+      },
+    },
+  },
+};
 
 const ALLOWED_MEDIA = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 // ~8M base64 chars ≈ 6 MB decoded — generous for a plan page, bounds cost/DoS.
@@ -131,17 +166,16 @@ export default async function handler(req, res) {
       ? `The plan is rendered at approximately ${ppf} pixels per foot. Extract all rooms.`
       : `No scale provided. Use visible dimension strings or a scale bar to infer real feet. Extract all rooms.`;
 
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
+    // ---- Anthropic call: structured outputs + adaptive thinking ----
+    const anthropic = new Anthropic({ apiKey: key, timeout: 50_000, maxRetries: 1 });
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
         model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-        max_tokens: 4096,
+        max_tokens: 8192,
+        thinking: { type: 'adaptive' },
         system: SYSTEM,
+        output_config: { format: { type: 'json_schema', schema: ROOM_SCHEMA } },
         messages: [{
           role: 'user',
           content: [
@@ -149,26 +183,26 @@ export default async function handler(req, res) {
             { type: 'text', text: userText },
           ],
         }],
-      }),
-    });
-
-    if (!r.ok) {
-      // Log the upstream detail server-side only; return a generic, status-shaped message.
-      let detail = '';
-      try { detail = await r.text(); } catch { /* ignore */ }
-      console.error(`[detect-plan] Anthropic API ${r.status}:`, detail.slice(0, 500));
-      const msg = r.status === 429 ? 'AI service is busy. Please try again shortly.'
-        : (r.status === 401 || r.status === 403) ? 'AI detection is misconfigured on this server.'
+      });
+    } catch (err) {
+      const status = err?.status;
+      console.error(`[detect-plan] Anthropic SDK error ${status || ''}:`, err?.message);
+      const msgOut = status === 429 ? 'AI service is busy. Please try again shortly.'
+        : (status === 401 || status === 403) ? 'AI detection is misconfigured on this server.'
+        : status === 413 ? 'Image too large for the AI service.'
         : 'AI detection failed. Please try again.';
-      return res.status(502).json({ error: msg });
+      return res.status(502).json({ error: msgOut });
     }
 
-    const data = await r.json();
-    const text = (data.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
-    const clean = text.replace(/```json|```/g, '').trim();
+    if (msg.stop_reason === 'refusal') {
+      return res.status(200).json({ rooms: [], warning: 'The AI declined to analyze this image.' });
+    }
 
+    // Structured outputs guarantee valid schema-shaped JSON in the text block(s),
+    // but parse defensively anyway (thinking blocks are filtered out).
+    const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
     let parsed;
-    try { parsed = JSON.parse(clean); }
+    try { parsed = JSON.parse(text); }
     catch { return res.status(200).json({ rooms: [], warning: 'Model returned non-JSON' }); }
 
     const rooms = Array.isArray(parsed?.rooms)

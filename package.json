@@ -14,12 +14,13 @@
     "lint": "eslint src --ext js,jsx"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.109.0",
     "@supabase/supabase-js": "^2.110.0",
+    "exceljs": "^4.4.0",
     "nanoid": "^5.1.16",
     "pdfjs-dist": "^5.4.149",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "exceljs": "^4.4.0",
     "three": "^0.185.0",
     "zustand": "^5.0.8"
   },

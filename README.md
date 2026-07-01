@@ -14,7 +14,7 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Tile library** — square, rectangle/subway, plank, mosaic, and metric sizes; grout-joint presets; pattern-based waste suggestions.
 - **Estimate engine** — per material choose Waste% or Cut-reuse costing; full tiles + broken-for-cuts + safety margin → order qty (sf/tile/box), plus labor $/sf and tax.
 - **3D viewer** — extrudes rooms to walls and tiles the floors; orbit / zoom / pan.
-- **AI detection (hybrid)** — upload a floor-plan image, Claude proposes rooms as editable rectangles, you review/correct before committing.
+- **AI detection (hybrid)** — upload a floor-plan image, Claude (via the official Anthropic SDK, using **structured outputs** for guaranteed-valid room data and high-resolution vision) proposes rooms as editable rectangles, you review/correct before committing.
 - **Cloud (optional)** — Supabase auth + per-user projects with Row Level Security; auto-saves your work. Runs local-only (localStorage) if Supabase env vars are absent.
 - **Export** — CSV, multi-sheet Excel (.xlsx), and re-importable JSON.
 
