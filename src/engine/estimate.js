@@ -53,6 +53,11 @@ export function estimateMaterial(material, rooms) {
 
   // cut-engine accounting (only meaningful for floor tile in a real layout)
   let cutInfo = null, tiles = wasteTiles;
+  // Unrounded square-footage basis for cut mode. Box pricing must derive boxes
+  // from this raw value — NOT from the already-rounded `tiles` — otherwise the
+  // safety margin gets rounded up to a whole tile and then rounded up again to a
+  // whole box, over-ordering by up to one box.
+  let cutsGrossSf = grossSf;
   const useCuts = material.costMode === 'cuts' && material.type !== 'wall';
   if (useCuts && rooms.some((r) => r.assigned?.includes(material.id))) {
     const assigned = rooms.filter((r) => r.assigned?.includes(material.id));
@@ -60,14 +65,16 @@ export function estimateMaterial(material, rooms) {
     cutInfo = analyzeCuts(assigned, material, { mode });
     // add a safety margin on the *broken* tiles only (breakage on site)
     const safety = 1 + (material.cutSafetyPct ?? 5) / 100;
-    tiles = Math.ceil(cutInfo.totalTiles * safety);
+    const rawTiles = cutInfo.totalTiles * safety;
+    tiles = Math.ceil(rawTiles);           // whole tiles to buy / show
+    cutsGrossSf = rawTiles * tileSf;        // unrounded sf for box math
   }
 
   let qty, unit, unitCost;
   if (material.priceUnit === 'tile') { qty = tiles; unit = 'tile'; unitCost = material.price; }
   else if (material.priceUnit === 'box') {
     const sfPerBox = material.sfPerBox ?? 1;
-    const sfNeeded = useCuts ? tiles * tileSf : grossSf;
+    const sfNeeded = useCuts ? cutsGrossSf : grossSf;
     qty = Math.ceil(sfNeeded / sfPerBox); unit = 'box'; unitCost = material.price;
   } else {
     qty = useCuts ? tiles * tileSf : grossSf; unit = 'sf'; unitCost = material.price;

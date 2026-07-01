@@ -7,8 +7,11 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": false,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0,
+    "types": []
   },
   "//": "Scoped to the pure engine layer where typedefs add the most safety. Run `npx tsc -p jsconfig.json` (with typescript installed) to type-check. Components are intentionally excluded for now — turning checkJs on untyped JSX props at once would bury real findings in noise.",
-  "include": ["src/engine/**/*.js"]
+  "include": ["src/engine/**/*.js"],
+  "exclude": ["node_modules", "dist"]
 }

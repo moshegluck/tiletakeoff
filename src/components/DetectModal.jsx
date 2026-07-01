@@ -21,7 +21,8 @@ export default function DetectModal({ onClose }) {
       setRooms(r.map((x) => ({ ...x, keep: true })));
       if (!r.length) setErr('No rooms detected. Try a clearer image or set pixels-per-foot.');
     } catch (e) {
-      setErr(e.message + '  — is ANTHROPIC_API_KEY set on the server?');
+      // The server returns user-friendly messages (sign-in / too large / busy / config).
+      setErr(e.message || 'Detection failed. Please try again.');
     } finally { setBusy(false); }
   }
 
@@ -30,15 +31,19 @@ export default function DetectModal({ onClose }) {
       // adopt a default scale so the rooms render; user can recalibrate
       s.setScale(1 / (ppf ? +ppf : 20));
     }
+    // Guard against NaN/empty dims (the user can blank a dimension input).
+    const dim = (v) => (Number.isFinite(+v) && +v > 0 ? +v : 1);
+    const coord = (v) => (Number.isFinite(+v) ? +v : 0);
     let added = 0;
     rooms.filter((r) => r.keep).forEach((r) => {
-      s.addRoom(rectPoly(r.x || 0, r.y || 0, Math.max(1, r.w), Math.max(1, r.h)), r.name);
+      s.addRoom(rectPoly(coord(r.x), coord(r.y), dim(r.w), dim(r.h)), r.name);
       added++;
     });
     // store the plan image as underlay
     if (file) {
       const rd = new FileReader();
       rd.onload = () => s.setPlanImage(rd.result);
+      rd.onerror = () => window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not read the plan image for the underlay.' } }));
       rd.readAsDataURL(file);
     }
     onClose();
