@@ -70,9 +70,18 @@ AI detection is disabled.
 2. In Vercel: **New Project → import the repo**. Framework preset = Vite (auto-detected).
 3. Add environment variable:
    - `ANTHROPIC_API_KEY` = your key
-   - (optional) `ANTHROPIC_MODEL` = `claude-sonnet-4-6`
+   - (optional) `ANTHROPIC_MODEL` = `claude-sonnet-5` (the default; any
+     vision-capable Claude model works)
 4. Deploy. The static site builds to `dist/`; `api/detect-plan.js` becomes a
    serverless function automatically.
+
+The `/api/detect-plan` route is hardened: it caps image size, allow-lists the
+media type, validates the model's JSON, and never leaks upstream error detail.
+When the Supabase env vars are also present on the server it **requires a
+signed-in session** and rate-limits per user, so the Anthropic key can't be
+spent by anonymous callers; without Supabase it runs open with a per-IP rate
+limit. (The in-memory rate limit is per warm instance — for multi-instance
+production hardening, back it with Vercel KV / Upstash.)
 
 ## Architecture
 
