@@ -48,20 +48,24 @@ let cloudTimer = null;
 let cloudSaver = null; // injected: (state) => Promise, set by App when signed in
 export function setCloudSaver(fn) { cloudSaver = fn; }
 
+// The localStorage snapshot: durable takeoff data only. planImage (multi-MB PDF
+// rasters) and runtime-only fields (pdfDoc, selection, tool, view3d…) are
+// excluded so we never exceed the storage quota or try to serialize a live
+// pdf.js document proxy.
+function localSnapshot(s) {
+  return {
+    id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
+    archScale: s.archScale, rooms: s.rooms, materials: s.materials, markups: s.markups,
+    taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
+    planImage: null, planWidth: 0, planHeight: 0,
+    createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
+  };
+}
+
 function persist(get) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    const s = get();
-    // planImage intentionally excluded — PDF rasters are multi-MB and
-    // silently corrupt the localStorage snapshot when quota is exceeded.
-    const snap = JSON.stringify({
-      id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
-      archScale: s.archScale, rooms: s.rooms, materials: s.materials, markups: s.markups,
-      taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
-      planImage: null, planWidth: 0, planHeight: 0,
-      createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
-    });
-    try { localStorage.setItem(KEY, snap); } catch (_) {}
+    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); } catch (_) {}
   }, 350);
   // cloud save on a slower debounce to limit writes
   if (cloudSaver) {
@@ -124,8 +128,10 @@ export const useStore = create((set, get) => ({
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, gridMaterialId: null, tool: 'select',
     });
-    // local mirror only; don't trigger a cloud write of what we just read
-    try { localStorage.setItem(KEY, JSON.stringify({ ...get(), updatedAt: Date.now() })); } catch (_) {}
+    // local mirror only; don't trigger a cloud write of what we just read.
+    // Use the trimmed snapshot so we don't serialize planImage / the live
+    // pdfDoc proxy into localStorage.
+    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); } catch (_) {}
   },
 
   // ---- rooms ----

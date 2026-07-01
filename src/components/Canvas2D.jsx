@@ -42,7 +42,6 @@ export default function Canvas2D() {
       planImg.current = img;
       const iw = img.naturalWidth  || img.width;
       const ih = img.naturalHeight || img.height;
-      console.log('[TT] planImg loaded', iw, 'x', ih, s.planImage.slice(0, 40));
 
       // Sync naturalWidth into store so tt:fit handler has correct dims
       if (iw && ih && (iw !== s.planWidth || ih !== s.planHeight)) {
@@ -72,10 +71,14 @@ export default function Canvas2D() {
       setTimeout(fitToImage, 150);
       setTimeout(fitToImage, 500);
     };
-    img.onerror = (e) => {
-      console.error('[TT] planImg failed to load', e, s.planImage.slice(0, 80));
+    img.onerror = () => {
+      planImg.current = null;
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not display the plan image.' } }));
     };
     img.src = s.planImage;
+    // planWidth/planHeight are read only for the current-vs-loaded comparison;
+    // adding them would re-run the loader (which writes them back) and loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.planImage, schedule]);
 
   // ---------- render ----------
@@ -212,8 +215,7 @@ export default function Canvas2D() {
     }
   }
 
-  function onUp(e) {
-    const sp = evPt(e), mp = toModel(sp.x, sp.y);
+  function onUp() {
     if (ruler.current) {
       const px = Math.hypot(ruler.current.p2.x - ruler.current.p1.x, ruler.current.p2.y - ruler.current.p1.y);
       if (px > 8) promptScale(px);
@@ -330,7 +332,7 @@ export default function Canvas2D() {
     });
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, []);
+  }, [schedule]);
 
   // redraw on any state change
   useEffect(() => { schedule(); });
@@ -361,7 +363,6 @@ export default function Canvas2D() {
     const fit = () => {
       const cv = cvRef.current; if (!cv) return;
       const wrap = wrapRef.current; if (!wrap) return;
-      const DPR = window.devicePixelRatio || 1;
       // Use wrapper DOM size; fall back to window dimensions minus toolbar/nav
       const rect = wrap.getBoundingClientRect();
       const W = (rect.width  > 10 ? rect.width  : window.innerWidth  - 56) || 400;

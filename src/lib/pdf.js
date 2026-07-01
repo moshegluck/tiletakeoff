@@ -20,7 +20,6 @@ async function getLib() {
 
   if (!_workerSetup) {
     lib.GlobalWorkerOptions.workerSrc = workerUrl;
-    console.log('[TT] pdf.js worker (same-origin bundled asset)');
     _workerSetup = true;
   }
 
@@ -58,8 +57,6 @@ export async function renderPage(doc, pageNum, targetWidth = 1400) {
   const W = Math.ceil(viewport.width);
   const H = Math.ceil(viewport.height);
 
-  console.log(`[TT] renderPage p=${pageNum} scale=${scale.toFixed(2)} ${W}x${H}`);
-
   const canvas = document.createElement('canvas');
   canvas.width  = W;
   canvas.height = H;
@@ -71,10 +68,11 @@ export async function renderPage(doc, pageNum, targetWidth = 1400) {
   ctx.fillRect(0, 0, W, H);
 
   await page.render({ canvasContext: ctx, viewport }).promise;
-  console.log('[TT] pdf.js render complete');
 
   const dataUrl = await canvasToUrl(canvas);
-  console.log('[TT] image URL type:', dataUrl.slice(0, 10), 'len:', dataUrl.length);
+
+  // Free the offscreen canvas backing store now that we have the URL.
+  canvas.width = canvas.height = 0;
 
   return { dataUrl, width: W, height: H, renderScale: scale };
 }

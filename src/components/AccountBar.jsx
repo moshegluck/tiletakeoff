@@ -9,7 +9,6 @@ import {
 // Renders the cloud account control + projects drawer. When cloud isn't
 // configured it renders nothing (app stays local-only).
 export default function AccountBar() {
-  const s = useStore();
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
