@@ -127,3 +127,10 @@ Delivered the full PRD gap list:
 - Wire RESEND_API_KEY when user provides it to enable live email sharing.
 - Add PDF rasterization to unlock AI + markup on PDF plans.
 - Catalog import pipeline.
+
+## Changelog — 2026-07-02
+- Fixed P0 UI clipping: right-panel container now `min-h-0` so tab contents scroll internally; Scale calibration dialog inputs (unit select + FEET/INCHES) render fully (verified via screenshots).
+- NEW: Manual "Add by dimensions" — Layers tab button + dialog (Area/Room/Wall, ft) creates a properly-scaled rectangle centered in view; flows into tile/cost calc & exports. Requires scale set.
+- NEW: Numeric resize in Style panel (DimEditor) for area/wall shapes — edit Width/Length (or Length/Height for walls) in ft, applies on blur/Enter, rescales from top-left.
+- NEW: Rectangle edge-resize handles (blue, ew/ns-resize) in select mode alongside corner vertex handles; polygons keep green add-vertex midpoints. Alt+click vertex still deletes.
+- Files touched: /app/frontend/src/pages/TakeoffStudio.js only.

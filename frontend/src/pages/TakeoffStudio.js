@@ -59,6 +59,8 @@ export default function TakeoffStudio() {
   const [calibForm, setCalibForm] = useState({ feet: "", inches: "", unit: "ft" });
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
+  const [dimOpen, setDimOpen] = useState(false);
+  const [dimForm, setDimForm] = useState({ kind: "area", w: "", l: "" });
   const [histOpen, setHistOpen] = useState(false);
   const [revisions, setRevisions] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -229,8 +231,11 @@ export default function TakeoffStudio() {
       setView((v) => ({ ...v, tx: pr.tx + dx, ty: pr.ty + dy })); return;
     }
     if (editRef.current) {
-      const { mid, idx } = editRef.current; const p = snap(toWorld(e), false);
-      setItems((prev) => prev.map((x) => x.id === mid ? { ...x, points: x.points.map((pt, k) => k === idx ? p : pt) } : x)); return;
+      const er = editRef.current; const p = snap(toWorld(e), false);
+      if (er.edge !== undefined) {
+        setItems((prev) => prev.map((x) => x.id === er.mid ? { ...x, points: x.points.map((pt, k) => (k === er.pi || k === er.pj) ? (er.axis === "x" ? [p[0], pt[1]] : [pt[0], p[1]]) : pt) } : x)); return;
+      }
+      setItems((prev) => prev.map((x) => x.id === er.mid ? { ...x, points: x.points.map((pt, k) => k === er.idx ? p : pt) } : x)); return;
     }
     if (moveRef.current) {
       const cur = toWorld(e); let dx = cur[0] - moveRef.current.start[0], dy = cur[1] - moveRef.current.start[1];
@@ -302,6 +307,15 @@ export default function TakeoffStudio() {
     setItems(items.map((x) => x.id === mid ? { ...x, points: np } : x));
     editRef.current = { mid, idx: idx + 1 };
   };
+  const onEdgeDown = (e, mid, i) => {
+    e.stopPropagation();
+    const m = items.find((x) => x.id === mid);
+    const a = m.points[i], b = m.points[(i + 1) % m.points.length];
+    const axis = Math.abs(a[0] - b[0]) < Math.abs(a[1] - b[1]) ? "x" : "y";
+    editRef.current = { mid, edge: i, pi: i, pj: (i + 1) % m.points.length, axis };
+  };
+  const isRect = (m) => AREA_TYPES.includes(m.type) && (m.points || []).length === 4 &&
+    m.points.every((p, i) => { const n = m.points[(i + 1) % 4]; return Math.abs(p[0] - n[0]) < 1.5 || Math.abs(p[1] - n[1]) < 1.5; });
 
   const addShape = (type, points, extra = {}) => {
     const labelBase = { area: extra.is_deduction ? "Cutout" : (tool === "wall" ? "Wall" : tool === "room" ? "Room" : "Area"), linear: "Line", perimeter: "Perimeter", count: "Count", text: "Note" }[tool] || type;
@@ -316,6 +330,38 @@ export default function TakeoffStudio() {
     setSelId(m.id);
     if (realType === "area" && !extra.is_deduction) setTab("tile"); else setTab("style");
     toast.success(`${labelBase} added`);
+  };
+
+  const resizeSelected = (mid, newWft, newLft) => {
+    if (!scale || !(newWft > 0) || !(newLft > 0)) return;
+    const m = items.find((x) => x.id === mid); if (!m) return;
+    const xs = m.points.map((p) => p[0]), ys = m.points.map((p) => p[1]);
+    const minX = Math.min(...xs), minY = Math.min(...ys);
+    const w = Math.max(...xs) - minX, h = Math.max(...ys) - minY;
+    const sx = w > 0 ? (newWft / scale) / w : 1, sy = h > 0 ? (newLft / scale) / h : 1;
+    commit(items.map((x) => x.id === mid ? { ...x, points: x.points.map(([px, py]) => [minX + (px - minX) * sx, minY + (py - minY) * sy]) } : x));
+  };
+  const addByDimensions = () => {
+    if (!scale) { toast.error("Set the drawing scale first"); return; }
+    const wFt = parseFloat(dimForm.w), lFt = parseFloat(dimForm.l);
+    if (!(wFt > 0) || !(lFt > 0)) { toast.error("Enter valid dimensions"); return; }
+    const wpx = wFt / scale, lpx = lFt / scale;
+    const el = containerRef.current;
+    const cxs = (el?.clientWidth || 600) / 2, cys = (el?.clientHeight || 400) / 2;
+    const cx = (cxs - view.tx) / view.z, cy = (cys - view.ty) / view.z;
+    const x0 = cx - wpx / 2, y0 = cy - lpx / 2;
+    const pts = [[x0, y0], [x0 + wpx, y0], [x0 + wpx, y0 + lpx], [x0, y0 + lpx]];
+    const isWall = dimForm.kind === "wall";
+    const realType = isWall ? "wall" : "area";
+    const labelBase = isWall ? "Wall" : dimForm.kind === "room" ? "Room" : "Area";
+    const m = { id: `m_${Date.now()}_${Math.floor(Math.random() * 999)}`, type: realType, points: pts,
+      label: `${labelBase} ${items.filter((x) => x.type === realType).length + 1}`,
+      color: isWall ? "#7C3AED" : "#EA580C", fillOpacity: 0.22, lineWidth: 2, visible: true, locked: false,
+      is_deduction: false, tile_id: null, pattern: null, page: pdfPage };
+    commit([...items, m]); setSelId(m.id); setTool("select"); setDimOpen(false);
+    setDimForm({ kind: "area", w: "", l: "" });
+    setTab(isWall ? "style" : "tile");
+    toast.success(`${labelBase} ${wFt}×${lFt} ft added`);
   };
 
   const finishPoly = () => {
@@ -528,7 +574,11 @@ export default function TakeoffStudio() {
                 <g data-testid="control-points">
                   {AREA_TYPES.includes(sel.type) && sel.points.map((p, i) => {
                     const n = sel.points[(i + 1) % sel.points.length]; const mx = (p[0] + n[0]) / 2, my = (p[1] + n[1]) / 2;
-                    return <circle key={`mid${i}`} cx={mx} cy={my} r={4.5 / view.z} fill="#16A34A" stroke="#fff" strokeWidth={1.2 / view.z} style={{ cursor: "copy" }} onPointerDown={(e) => onMidDown(e, sel.id, i, [mx, my])} />;
+                    const vertical = Math.abs(p[0] - n[0]) < Math.abs(p[1] - n[1]);
+                    return isRect(sel)
+                      ? <rect key={`edge${i}`} data-testid={`edge-${i}`} x={mx - 5 / view.z} y={my - 5 / view.z} width={10 / view.z} height={10 / view.z} rx={2 / view.z}
+                          fill="#2563EB" stroke="#fff" strokeWidth={1.4 / view.z} style={{ cursor: vertical ? "ew-resize" : "ns-resize" }} onPointerDown={(e) => onEdgeDown(e, sel.id, i)} />
+                      : <circle key={`mid${i}`} cx={mx} cy={my} r={4.5 / view.z} fill="#16A34A" stroke="#fff" strokeWidth={1.2 / view.z} style={{ cursor: "copy" }} onPointerDown={(e) => onMidDown(e, sel.id, i, [mx, my])} />;
                   })}
                   {sel.points.map((p, i) => (
                     <rect key={`v${i}`} data-testid={`vertex-${i}`} x={p[0] - 5.5 / view.z} y={p[1] - 5.5 / view.z} width={11 / view.z} height={11 / view.z}
@@ -566,7 +616,7 @@ export default function TakeoffStudio() {
         </div>
 
         {/* Right panel */}
-        <div className="w-96 bg-white border-l border-slate-200 flex flex-col z-20">
+        <div className="w-96 bg-white border-l border-slate-200 flex flex-col min-h-0 z-20">
           <div className="grid grid-cols-3 gap-px bg-slate-200 border-b border-slate-200 shrink-0">
             {[["NET AREA", summary && scale ? summary.totals.net_area : "—", "sf"], ["TILES", summary?.totals.tiles_needed ?? 0, "ea"], ["COST", `$${(summary?.totals.cost ?? 0).toLocaleString()}`, ""]].map(([k, v, u]) => (
               <div key={k} className="bg-white p-3 text-center"><div className="text-[9px] font-mono uppercase tracking-widest text-slate-500">{k}</div>
@@ -583,6 +633,9 @@ export default function TakeoffStudio() {
 
             {/* LAYERS */}
             <TabsContent value="layers" className="flex-1 min-h-0 overflow-y-auto m-0 p-0">
+              <div className="px-3 pt-3">
+                <button data-testid="add-by-dim-btn" onClick={() => setDimOpen(true)} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 rounded-sm inline-flex items-center justify-center gap-2 text-sm"><Hash className="w-4 h-4" />Add by dimensions</button>
+              </div>
               <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center gap-x-3 gap-y-1 sticky top-0 z-10" data-testid="metric-prefs">
                 <span className="text-[9px] font-mono uppercase tracking-widest text-slate-400">Show</span>
                 {[["area", "Area"], ["dims", "W×L"], ["perimeter", "Perimeter"], ["walls", "Wall sf"]].map(([k, l]) => (
@@ -621,6 +674,9 @@ export default function TakeoffStudio() {
                 <>
                   <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Label</label>
                     <input className={input} value={sel.label || ""} onChange={(e) => updateItem(sel.id, { label: e.target.value })} data-testid="style-label" /></div>
+                  {AREA_TYPES.includes(sel.type) && scale && (
+                    <DimEditor sel={sel} scale={scale} onResize={(w, l) => resizeSelected(sel.id, w, l)} />
+                  )}
                   {sel.type === "text" && <div><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Note text</label>
                     <input className={input} value={sel.text || ""} onChange={(e) => updateItem(sel.id, { text: e.target.value })} /></div>}
                   <div className="grid grid-cols-2 gap-3">
@@ -868,6 +924,36 @@ export default function TakeoffStudio() {
         </DialogContent>
       </Dialog>
 
+      {/* Add by dimensions dialog */}
+      <Dialog open={dimOpen} onOpenChange={setDimOpen}>
+        <DialogContent className="rounded-sm">
+          <DialogHeader><DialogTitle className="font-black tracking-tight">Add by Dimensions</DialogTitle></DialogHeader>
+          {!scale && <p className="text-sm text-red-600 font-mono">Set the drawing scale first (Set Scale tool).</p>}
+          <p className="text-sm text-slate-500">Creates a properly-scaled rectangle at the center of the view. Drag its handles or edit values afterward to fine-tune.</p>
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Type</label>
+              <select data-testid="dim-kind-select" className={input} value={dimForm.kind} onChange={(e) => setDimForm({ ...dimForm, kind: e.target.value })}>
+                <option value="area">Area</option>
+                <option value="room">Room</option>
+                <option value="wall">Wall (elevation)</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">{dimForm.kind === "wall" ? "Length (ft)" : "Width (ft)"}</label>
+                <input data-testid="dim-w-input" type="number" min="0" step="0.1" className={input} value={dimForm.w} onChange={(e) => setDimForm({ ...dimForm, w: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">{dimForm.kind === "wall" ? "Height (ft)" : "Length (ft)"}</label>
+                <input data-testid="dim-l-input" type="number" min="0" step="0.1" className={input} value={dimForm.l} onChange={(e) => setDimForm({ ...dimForm, l: e.target.value })} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter><button data-testid="dim-add-btn" onClick={addByDimensions} disabled={!scale} className="bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-sm">Add to plan</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
         <DialogContent className="rounded-sm">
           <DialogHeader><DialogTitle className="font-black tracking-tight">Email Estimate Report</DialogTitle></DialogHeader>
@@ -964,6 +1050,36 @@ function Plan3D({ items, tilesMap, defaultTile, scale, type, withTiles }) {
       {withTiles && !defaultTile && !areas.some((m) => tilesMap[m.tile_id]) && (
         <div className="absolute bottom-3 text-[11px] font-mono text-slate-700 bg-white/70 px-2 py-1 rounded-sm">Assign tiles in the Tile tab to see the finish</div>
       )}
+    </div>
+  );
+}
+
+function DimEditor({ sel, scale, onResize }) {
+  const xs = sel.points.map((p) => p[0]), ys = sel.points.map((p) => p[1]);
+  const wFt = (Math.max(...xs) - Math.min(...xs)) * scale;
+  const lFt = (Math.max(...ys) - Math.min(...ys)) * scale;
+  const isWall = sel.type === "wall";
+  const [w, setW] = React.useState(wFt.toFixed(2));
+  const [l, setL] = React.useState(lFt.toFixed(2));
+  React.useEffect(() => { setW(wFt.toFixed(2)); setL(lFt.toFixed(2)); }, [sel.id, wFt, lFt]);
+  const apply = () => { const nw = parseFloat(w), nl = parseFloat(l); if (nw > 0 && nl > 0) onResize(nw, nl); };
+  const inp = "w-full bg-slate-50 border border-slate-300 rounded-sm px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-orange-600 focus:ring-1 focus:ring-orange-600";
+  return (
+    <div className="border border-orange-200 bg-orange-50/40 rounded-sm p-2.5 space-y-1.5" data-testid="dim-editor">
+      <label className="text-[11px] font-bold uppercase tracking-wider text-orange-700">Dimensions (resize)</label>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-[9px] font-mono uppercase tracking-wider text-slate-400">{isWall ? "Length (ft)" : "Width (ft)"}</label>
+          <input data-testid="dim-edit-w" type="number" min="0" step="0.1" className={inp} value={w}
+            onChange={(e) => setW(e.target.value)} onBlur={apply} onKeyDown={(e) => e.key === "Enter" && apply()} />
+        </div>
+        <div>
+          <label className="text-[9px] font-mono uppercase tracking-wider text-slate-400">{isWall ? "Height (ft)" : "Length (ft)"}</label>
+          <input data-testid="dim-edit-l" type="number" min="0" step="0.1" className={inp} value={l}
+            onChange={(e) => setL(e.target.value)} onBlur={apply} onKeyDown={(e) => e.key === "Enter" && apply()} />
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-400 leading-snug">Enter real-world size and press Enter. Resizes from the top-left corner.</p>
     </div>
   );
 }
