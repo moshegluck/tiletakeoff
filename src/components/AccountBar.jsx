@@ -22,6 +22,13 @@ export default function AccountBar() {
     return onAuthChange(setUser);
   }, []);
 
+  // the landing page's "Sign in" button opens the auth modal via this event
+  useEffect(() => {
+    const open = () => setShowAuth(true);
+    window.addEventListener('tt:signin', open);
+    return () => window.removeEventListener('tt:signin', open);
+  }, []);
+
   useEffect(() => {
     if (!cloudEnabled || !user) { setCloudSaver(null); return; }
     setCloudSaver(async (state) => {

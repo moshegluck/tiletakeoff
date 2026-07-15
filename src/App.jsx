@@ -7,6 +7,7 @@ import AccountBar from './components/AccountBar.jsx';
 import { UNIT_SYSTEMS } from './engine/units.js';
 import { exportCSV } from './lib/export.js';
 import { polygonArea } from './engine/geometry.js';
+import Landing from './components/Landing.jsx';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
 
@@ -27,6 +28,9 @@ export default function App() {
   const [detect, setDetect] = useState(false);
   const [toast, setToast] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [landing, setLanding] = useState(() => {
+    try { return localStorage.getItem('tt.entered') !== '1'; } catch (_) { return true; }
+  });
 
   async function loadPdfPage(page) {
     const doc = useStore.getState().pdfDoc;
@@ -81,12 +85,21 @@ export default function App() {
     return () => { window.removeEventListener('tt:toast', onToast); window.removeEventListener('keydown', onKey); };
   }, [s]);
 
+  if (landing) {
+    const enter = (signin) => {
+      try { localStorage.setItem('tt.entered', '1'); } catch (_) {}
+      setLanding(false);
+      if (signin) setTimeout(() => window.dispatchEvent(new Event('tt:signin')), 60);
+    };
+    return <Landing onStart={() => enter(false)} onSignIn={() => enter(true)} />;
+  }
+
   const totalSf = s.rooms.reduce((a, r) => a + (s.scale ? polygonArea(r.points) : 0), 0);
 
   return (
     <div className="app">
       <header className="top">
-        <div className="brand">
+        <div className="brand" onClick={() => setLanding(true)} style={{ cursor: 'pointer' }} title="Back to home">
           <svg viewBox="0 0 32 32"><rect x="2" y="2" width="13" height="13" rx="2" fill="#0f2f47" /><rect x="17" y="2" width="13" height="13" rx="2" fill="#c8521f" /><rect x="2" y="17" width="13" height="13" rx="2" fill="#c8521f" /><rect x="17" y="17" width="13" height="13" rx="2" fill="#0f2f47" /></svg>
           <b>Tile<span>Takeoff</span></b>
         </div>
