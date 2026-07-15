@@ -66,7 +66,7 @@ function grid(region, tw, th, origin, angleDeg = 0, rowOffset = 0) {
   return tiles;
 }
 
-function herringbone(region, tw, th, origin) {
+function herringbone(region, tw, th, _origin) {
   // classic herringbone: planks alternate 0/90°, interlocking
   const tiles = [];
   const long = Math.max(tw, th), short = Math.min(tw, th);
@@ -86,7 +86,7 @@ function herringbone(region, tw, th, origin) {
   return tiles;
 }
 
-function basketweave(region, tw, th, origin) {
+function basketweave(region, tw, th, _origin) {
   const tiles = [];
   const unit = tw * 2; // 2 tiles per weave block (assumes square-ish)
   const cols = Math.ceil((region.maxx - region.minx) / unit) + 2;

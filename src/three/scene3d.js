@@ -30,9 +30,26 @@ export function createScene(canvas, project) {
   const group = new THREE.Group();
   scene.add(group);
 
+  // Free GPU memory for everything currently in the group. three's
+  // Group.clear() only detaches children from the scene graph — it does NOT
+  // release their geometries/materials/textures, so rebuilding on every edit
+  // (update → build) leaked VRAM without this. Called before each rebuild and
+  // on teardown.
+  function disposeGroup() {
+    group.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
+      for (const m of mats) {
+        if (m.map) m.map.dispose();
+        m.dispose();
+      }
+    });
+    group.clear();
+  }
+
   // ---- build geometry from project ----
   function build(proj) {
-    group.clear();
+    disposeGroup();
     let cx = 0, cz = 0, n = 0, span = 10;
 
     for (const room of proj.rooms) {
@@ -125,7 +142,14 @@ export function createScene(canvas, project) {
   return {
     resize,
     update: (proj) => build(proj),
-    dispose: () => { cancelAnimationFrame(raf); controls.dispose(); renderer.dispose(); },
+    dispose: () => {
+      cancelAnimationFrame(raf);
+      controls.dispose();
+      disposeGroup();
+      grid.geometry.dispose();
+      grid.material.dispose();
+      renderer.dispose();
+    },
   };
 }
 

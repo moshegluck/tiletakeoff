@@ -17,7 +17,7 @@ export default defineConfig({
             return 'react-vendor';
           }
           if (id.includes('node_modules/three/'))    return 'three';
-          if (id.includes('node_modules/xlsx/'))     return 'xlsx';
+          if (id.includes('node_modules/exceljs/'))  return 'exceljs';
           if (id.includes('node_modules/@supabase/')) return 'supabase';
           if (id.includes('node_modules/pdfjs-dist/')) return 'pdfjs';
         },

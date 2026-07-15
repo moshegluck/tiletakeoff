@@ -14,7 +14,7 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Tile library** — square, rectangle/subway, plank, mosaic, and metric sizes; grout-joint presets; pattern-based waste suggestions.
 - **Estimate engine** — per material choose Waste% or Cut-reuse costing; full tiles + broken-for-cuts + safety margin → order qty (sf/tile/box), plus labor $/sf and tax.
 - **3D viewer** — extrudes rooms to walls and tiles the floors; orbit / zoom / pan.
-- **AI detection (hybrid)** — upload a floor-plan image, Claude proposes rooms as editable rectangles, you review/correct before committing.
+- **AI detection (hybrid)** — upload a floor-plan image, Claude (via the official Anthropic SDK, using **structured outputs** for guaranteed-valid room data and high-resolution vision) proposes rooms as editable rectangles, you review/correct before committing.
 - **Cloud (optional)** — Supabase auth + per-user projects with Row Level Security; auto-saves your work. Runs local-only (localStorage) if Supabase env vars are absent.
 - **Export** — CSV, multi-sheet Excel (.xlsx), and re-importable JSON.
 
@@ -70,9 +70,20 @@ AI detection is disabled.
 2. In Vercel: **New Project → import the repo**. Framework preset = Vite (auto-detected).
 3. Add environment variable:
    - `ANTHROPIC_API_KEY` = your key
-   - (optional) `ANTHROPIC_MODEL` = `claude-sonnet-4-6`
+   - (optional) `ANTHROPIC_MODEL` = `claude-sonnet-5` (the default; any
+     vision-capable Claude model works)
 4. Deploy. The static site builds to `dist/`; `api/detect-plan.js` becomes a
    serverless function automatically.
+
+The `/api/detect-plan` route is hardened: it caps image size, allow-lists the
+media type, validates the model's JSON, and never leaks upstream error detail.
+When the Supabase env vars are also present on the server it **requires a
+signed-in session** and rate-limits per user, so the Anthropic key can't be
+spent by anonymous callers; without Supabase it runs open with a per-IP rate
+limit. The rate limiter uses **Upstash Redis / Vercel KV** for durable,
+cross-instance limiting when `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`
+(or `KV_REST_API_URL` + `KV_REST_API_TOKEN`) are set, and falls back to an
+in-memory window (per warm instance) otherwise.
 
 ## Architecture
 

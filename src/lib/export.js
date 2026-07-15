@@ -20,7 +20,11 @@ const safe = (s) => String(s ?? '').replace(/\s+/g, '_');
 export function exportJSON(state) {
   const snap = {
     schema: 'tiletakeoff/v1', name: state.name, unitSystem: state.unitSystem,
-    scale: state.scale, rooms: state.rooms, materials: state.materials,
+    scale: state.scale, archScale: state.archScale,
+    rooms: state.rooms, materials: state.materials,
+    // markups are durable takeoff data — include them so the measurement log
+    // survives an export/re-import round-trip.
+    markups: state.markups,
     taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
     exportedAt: new Date().toISOString(),
   };
@@ -43,11 +47,18 @@ export function importJSON(file) {
 }
 
 // ---- CSV: estimate + rooms -----------------------------------
+// Format one cell. Text cells that begin with a spreadsheet formula trigger
+// (= + - @, or a leading tab/CR) are prefixed with an apostrophe so Excel/
+// Sheets render them as literal text instead of evaluating them (CSV formula
+// injection). Numbers are left untouched so negatives keep their sign.
+function csvCell(c) {
+  if (c == null) return '';
+  let s = String(c);
+  if (typeof c === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
 function toCSV(rows) {
-  return rows.map((r) => r.map((c) => {
-    const s = String(c ?? '');
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  }).join(',')).join('\n');
+  return rows.map((r) => r.map(csvCell).join(',')).join('\n');
 }
 
 export function exportCSV(state) {
@@ -81,12 +92,17 @@ export function exportCSV(state) {
 }
 
 // ---- XLSX: multi-sheet workbook (lazy import) ----------------
+// Uses ExcelJS (maintained, published on npm). It writes every cell value as a
+// typed string/number — a value like "=cmd|..." is stored as text, not a
+// formula — so the workbook is not a formula-injection vector.
 export async function exportXLSX(state) {
-  const XLSX = await import('xlsx');
+  const mod = await import('exceljs');
+  const ExcelJS = mod.default ?? mod;
   const e = estimateProject(state);
-  const wb = XLSX.utils.book_new();
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'TileTakeoff';
 
-  const est = [
+  wb.addWorksheet('Estimate').addRows([
     ['Material', 'Type', 'Tile (in)', 'Pattern', 'Net SF', 'Waste %', 'Gross SF', 'Tiles', 'Order Qty', 'Unit', 'Unit Cost', 'Line Cost'],
     ...e.lines.map((l) => [
       l.material.name, l.material.type, `${l.material.tw}x${l.material.th}`, l.material.pattern,
@@ -99,26 +115,27 @@ export async function exportXLSX(state) {
     ['', '', '', '', '', '', '', '', '', '', 'Subtotal', round(e.subtotal, 2)],
     ['', '', '', '', '', '', '', '', '', '', `Tax ${state.taxRate}%`, round(e.tax, 2)],
     ['', '', '', '', '', '', '', '', '', '', 'TOTAL', round(e.total, 2)],
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(est), 'Estimate');
+  ]);
 
-  const rooms = [
+  wb.addWorksheet('Rooms').addRows([
     ['Name', 'Area SF', 'Perimeter LF', 'Wall Height', 'Pattern', 'Materials'],
     ...state.rooms.map((r) => [
       r.name, round(polygonArea(r.points), 2), round(polygonPerimeter(r.points), 2),
       r.wallHeight ?? 8, r.layout?.pattern ?? 'grid',
       r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
     ]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rooms), 'Rooms');
+  ]);
 
-  const mats = [
+  wb.addWorksheet('Materials').addRows([
     ['Name', 'Type', 'W in', 'H in', 'Grout in', 'Pattern', 'Waste %', 'Price', 'Unit', 'SF/Box'],
     ...state.materials.map((m) => [
       m.name, m.type, m.tw, m.th, m.grout, m.pattern, m.waste, m.price, m.priceUnit, m.sfPerBox,
     ]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mats), 'Materials');
+  ]);
 
-  XLSX.writeFile(wb, `${safe(state.name)}.xlsx`);
+  const buf = await wb.xlsx.writeBuffer();
+  downloadBlob(
+    new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+    '', `${safe(state.name)}.xlsx`,
+  );
 }

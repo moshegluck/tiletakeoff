@@ -57,6 +57,18 @@ describe('estimate: cut-mode quantities', () => {
     // 151 real tiles × 1.05 = 158.55 → ceil 159
     expect(cuts.tiles).toBe(159);
   });
+  it('box pricing in cut mode derives boxes from the unrounded sf basis', () => {
+    const r = room(12.25, 12.25);
+    const sfPerBox = 14;
+    const e = estimateMaterial(floor({ costMode: 'cuts', priceUnit: 'box', price: 40, sfPerBox, cutSafetyPct: 5 }), [r]);
+    const tileSf = 1; // 12×12 tile, 0 grout
+    const rawSf = e.cutInfo.totalTiles * 1.05 * tileSf;
+    // boxes come from the fractional sf, not the ceil'd tile count (no double ceil)
+    expect(e.qty).toBe(Math.ceil(rawSf / sfPerBox));
+    // and never more than the old tile-then-box double-ceil would have ordered
+    expect(e.qty).toBeLessThanOrEqual(Math.ceil((e.tiles * tileSf) / sfPerBox));
+    expect(e.unit).toBe('box');
+  });
 });
 
 describe('estimate: defensive', () => {
