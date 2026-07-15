@@ -4,7 +4,7 @@ import Canvas2D from './components/Canvas2D.jsx';
 import { Panels } from './components/Panels.jsx';
 import DetectModal from './components/DetectModal.jsx';
 import AccountBar from './components/AccountBar.jsx';
-import { UNIT_SYSTEMS, ARCH_SCALES, archFeetPerPaperInch } from './engine/units.js';
+import { UNIT_SYSTEMS, ARCH_SCALES, SCALE_GROUPS, archFeetPerPaperInch } from './engine/units.js';
 import { exportCSV } from './lib/export.js';
 import { onAuthEvent } from './lib/cloud.js';
 import { polygonArea } from './engine/geometry.js';
@@ -255,14 +255,14 @@ function ScaleControl() {
   };
   return (
     <select className="hud-sel" value={s.archScale || ''} onChange={onChange}
-      title={hasPresets ? 'Choose a drawing scale, or draw the ruler' : 'Load a PDF for scale presets, or draw the ruler'}>
+      title={hasPresets ? 'Choose a drawing scale, or calibrate with the ruler' : 'Load a PDF for scale presets, or calibrate with the ruler'}>
       <option value="">{current}</option>
-      <option value="__ruler">Draw ruler line…</option>
-      {hasPresets && (
-        <optgroup label="Architectural scale">
-          {ARCH_SCALES.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+      <option value="__ruler">Custom — draw a line…</option>
+      {hasPresets && SCALE_GROUPS.map(([g, label]) => (
+        <optgroup key={g} label={label}>
+          {ARCH_SCALES.filter((a) => a.group === g).map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
         </optgroup>
-      )}
+      ))}
     </select>
   );
 }

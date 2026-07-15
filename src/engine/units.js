@@ -14,22 +14,45 @@ export const UNIT_SYSTEMS = {
   metric_mm:      { id: 'metric_mm',      label: 'Millimeters (3810 mm)',  kind: 'metric' },
 };
 
-// Architectural drawing scales: ratio = real feet per paper inch.
-// e.g. 1/4" = 1'-0"  -> 1 paper inch represents 4 real feet.
+// Drawing scales, Bluebeam-style. `feetPerPaperInch` = real feet represented by
+// one inch of paper (e.g. 1/4" = 1'-0" → 4). Metric entries use
+// `metersPerPaperMm`. `group` drives the dropdown's optgroups.
+export const SCALE_GROUPS = [
+  ['arch', 'Architectural'],
+  ['eng', 'Engineering'],
+  ['metric', 'Metric'],
+];
+
 export const ARCH_SCALES = [
-  { id: '1/16', label: '1/16" = 1\'-0"', feetPerPaperInch: 16 },
-  { id: '3/32', label: '3/32" = 1\'-0"', feetPerPaperInch: 32 / 3 },
-  { id: '1/8',  label: '1/8" = 1\'-0"',  feetPerPaperInch: 8 },
-  { id: '3/16', label: '3/16" = 1\'-0"', feetPerPaperInch: 16 / 3 },
-  { id: '1/4',  label: '1/4" = 1\'-0"',  feetPerPaperInch: 4 },
-  { id: '3/8',  label: '3/8" = 1\'-0"',  feetPerPaperInch: 8 / 3 },
-  { id: '1/2',  label: '1/2" = 1\'-0"',  feetPerPaperInch: 2 },
-  { id: '3/4',  label: '3/4" = 1\'-0"',  feetPerPaperInch: 4 / 3 },
-  { id: '1',    label: '1" = 1\'-0"',    feetPerPaperInch: 1 },
-  // Metric architectural scales (real meters per paper mm)
-  { id: '1:50',  label: '1:50 (metric)',  metersPerPaperMm: 0.05 },
-  { id: '1:100', label: '1:100 (metric)', metersPerPaperMm: 0.1 },
-  { id: '1:200', label: '1:200 (metric)', metersPerPaperMm: 0.2 },
+  // Architectural (paper fraction = 1 foot)
+  { id: '1/32', label: '1/32" = 1\'-0"', group: 'arch', feetPerPaperInch: 32 },
+  { id: '1/16', label: '1/16" = 1\'-0"', group: 'arch', feetPerPaperInch: 16 },
+  { id: '3/32', label: '3/32" = 1\'-0"', group: 'arch', feetPerPaperInch: 32 / 3 },
+  { id: '1/8',  label: '1/8" = 1\'-0"',  group: 'arch', feetPerPaperInch: 8 },
+  { id: '3/16', label: '3/16" = 1\'-0"', group: 'arch', feetPerPaperInch: 16 / 3 },
+  { id: '1/4',  label: '1/4" = 1\'-0"',  group: 'arch', feetPerPaperInch: 4 },
+  { id: '3/8',  label: '3/8" = 1\'-0"',  group: 'arch', feetPerPaperInch: 8 / 3 },
+  { id: '1/2',  label: '1/2" = 1\'-0"',  group: 'arch', feetPerPaperInch: 2 },
+  { id: '3/4',  label: '3/4" = 1\'-0"',  group: 'arch', feetPerPaperInch: 4 / 3 },
+  { id: '1',    label: '1" = 1\'-0"',    group: 'arch', feetPerPaperInch: 1 },
+  { id: '1-1/2', label: '1 1/2" = 1\'-0"', group: 'arch', feetPerPaperInch: 2 / 3 },
+  { id: '3',    label: '3" = 1\'-0"',    group: 'arch', feetPerPaperInch: 1 / 3 },
+  // Engineering (1 inch = N feet)
+  { id: 'e10',  label: '1" = 10\'',  group: 'eng', feetPerPaperInch: 10 },
+  { id: 'e20',  label: '1" = 20\'',  group: 'eng', feetPerPaperInch: 20 },
+  { id: 'e30',  label: '1" = 30\'',  group: 'eng', feetPerPaperInch: 30 },
+  { id: 'e40',  label: '1" = 40\'',  group: 'eng', feetPerPaperInch: 40 },
+  { id: 'e50',  label: '1" = 50\'',  group: 'eng', feetPerPaperInch: 50 },
+  { id: 'e60',  label: '1" = 60\'',  group: 'eng', feetPerPaperInch: 60 },
+  { id: 'e80',  label: '1" = 80\'',  group: 'eng', feetPerPaperInch: 80 },
+  { id: 'e100', label: '1" = 100\'', group: 'eng', feetPerPaperInch: 100 },
+  { id: 'e200', label: '1" = 200\'', group: 'eng', feetPerPaperInch: 200 },
+  // Metric (real meters per paper mm)
+  { id: '1:20',  label: '1:20',  group: 'metric', metersPerPaperMm: 0.02 },
+  { id: '1:50',  label: '1:50',  group: 'metric', metersPerPaperMm: 0.05 },
+  { id: '1:100', label: '1:100', group: 'metric', metersPerPaperMm: 0.1 },
+  { id: '1:200', label: '1:200', group: 'metric', metersPerPaperMm: 0.2 },
+  { id: '1:500', label: '1:500', group: 'metric', metersPerPaperMm: 0.5 },
 ];
 
 // Real feet represented by one inch of paper, for either an imperial
