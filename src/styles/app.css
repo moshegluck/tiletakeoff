@@ -121,13 +121,34 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.ok{background:var(--ok)}
 
-/* ── DETECT MODAL ── */
-.modal-overlay{position:fixed;inset:0;background:rgba(16,23,31,.55);z-index:50;display:grid;place-items:center;padding:20px}
-.modal{background:#fff;border-radius:12px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)}
-.modal-head{padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
-.modal-head h2{flex:1;margin:0;font-size:17px}
-.modal-body{padding:20px 24px}
-.modal-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+/* ── MODALS (Sign in, AI Detect, Projects, Tile Library) ── */
+/* markup is: .modal-bg > .modal > (h3, .body, .foot) */
+.modal-bg{position:fixed;inset:0;background:rgba(16,23,31,.55);z-index:50;display:grid;place-items:center;padding:20px}
+.modal{background:#fff;border-radius:12px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 70px rgba(16,23,31,.35);animation:modalIn .16s ease-out}
+@keyframes modalIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+.modal>h3{margin:0;padding:18px 22px 14px;font-size:17px;font-weight:700;border-bottom:1px solid var(--line)}
+.modal .body{padding:16px 22px 18px}
+.modal .body>:first-child{margin-top:0}
+.modal .foot{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+
+/* hint / helper text (also used across the right panel) */
+.note{font-size:12px;color:var(--ink-2);line-height:1.5;margin-top:8px}
+
+/* list rows inside modals (projects, tile library, detected rooms) */
+.det-row{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r-sm);margin-top:8px}
+.det-row input:not([type=checkbox]){border:1px solid var(--line);border-radius:var(--r-sm);padding:5px 7px;font:500 12.5px var(--sans);color:var(--ink);min-width:0}
+.det-row input[type=number]{width:66px}
+.det-row input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px #f7ddd1}
+
+/* file-drop zone (AI detect) */
+.drop{display:block;border:1.5px dashed var(--line);border-radius:var(--r);background:#fbfcfd;color:var(--ink-2);padding:22px 18px;text-align:center;font-size:13px;line-height:1.5;cursor:pointer;transition:.12s}
+.drop:hover{border-color:var(--accent);color:var(--accent);background:#fffaf7}
+.drop b{color:var(--ink)}
+
+/* confidence / savings badge */
+.conf{font:600 10.5px var(--mono);padding:2px 7px;border-radius:20px;background:var(--line-2);color:var(--ink-2);white-space:nowrap}
+.conf.hi{background:#e3f5ea;color:var(--ok)}
+.conf.lo{background:#fff3e0;color:var(--warn)}
 
 /* ─────────────────────────────────────────
    MOBILE  ≤ 768px
