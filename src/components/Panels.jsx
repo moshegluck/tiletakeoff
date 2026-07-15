@@ -8,7 +8,7 @@ import { TILE_CATALOG, GROUT_JOINTS } from '../data/tileCatalog.js';
 import { exportCSV, exportXLSX, exportJSON } from '../lib/export.js';
 import { buildProjectCutSheets, openCutSheet } from '../engine/cutSheet.js';
 import { formatLength as fmtLen } from '../engine/units.js';
-import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES } from '../engine/markups.js';
+import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
 
 const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -253,7 +253,7 @@ function MarkupsPanel() {
       {s.markups.length === 0 && s.scale && (
         <div className="empty">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 17L17 3M14 3h4v4" /></svg>
-          <b>No markups yet</b>Use the measure tools (length, area, box, count) in the toolbar to take off quantities directly on the plan.
+          <b>No markups yet</b>Use the measure tools (length, area, box, ellipse, count) plus arrow &amp; text annotations in the toolbar to take off quantities directly on the plan.
         </div>
       )}
 
@@ -282,10 +282,12 @@ function MarkupsPanel() {
 function MarkupCard({ mk }) {
   const s = useStore();
   const open = s.selection.type === 'markup' && s.selection.id === mk.id;
+  const measured = isMeasured(mk.type);
   const val = markupValue(mk);
   const unit = markupUnit(mk);
   const dims = markupDims(mk);
-  const valStr = mk.type === 'length' ? fmtLen(val, s.unitSystem)
+  const valStr = !measured ? ''
+    : mk.type === 'length' ? fmtLen(val, s.unitSystem)
     : mk.type === 'count' ? `${val} ea` : formatArea(val, s.unitSystem);
   return (
     <div className={'card' + (open ? ' sel' : '')}>
@@ -301,13 +303,21 @@ function MarkupCard({ mk }) {
       {open && (
         <div className="card-body">
           <div className="est-row" style={{ padding: '5px 0' }}><span>Type</span><b>{MARKUP_TYPES[mk.type]?.label}</b></div>
-          <div className="est-row" style={{ padding: '5px 0' }}><span>Measured</span><b>{valStr}</b></div>
+          {mk.type === 'text' && (
+            <div className="field"><label>Text</label>
+              <input className="inp" value={mk.name} onChange={(e) => s.updateMarkup(mk.id, { name: e.target.value })} /></div>
+          )}
+          {measured && <div className="est-row" style={{ padding: '5px 0' }}><span>Measured</span><b>{valStr}</b></div>}
           {dims && <div className="est-row" style={{ padding: '5px 0' }}><span>Dimensions</span><b>{fmtLen(dims.w, s.unitSystem)} × {fmtLen(dims.h, s.unitSystem)}</b></div>}
-          <div className="field"><label>Unit cost (${unit === 'ea' ? 'each' : `per ${unit}`})</label>
-            <div className="units"><span>$</span><input className="inp mono" type="number" step="0.01" value={mk.unitCost || 0}
-              onChange={(e) => s.updateMarkup(mk.id, { unitCost: Math.max(0, +e.target.value || 0) })} /></div>
-          </div>
-          {mk.unitCost > 0 && <div className="est-row hi" style={{ padding: '6px 8px', borderRadius: 5 }}><span>Line cost</span><b>{money(markupCost(mk))}</b></div>}
+          {measured && (
+            <>
+              <div className="field"><label>Unit cost (${unit === 'ea' ? 'each' : `per ${unit}`})</label>
+                <div className="units"><span>$</span><input className="inp mono" type="number" step="0.01" value={mk.unitCost || 0}
+                  onChange={(e) => s.updateMarkup(mk.id, { unitCost: Math.max(0, +e.target.value || 0) })} /></div>
+              </div>
+              {mk.unitCost > 0 && <div className="est-row hi" style={{ padding: '6px 8px', borderRadius: 5 }}><span>Line cost</span><b>{money(markupCost(mk))}</b></div>}
+            </>
+          )}
           <div className="field"><label>Note</label>
             <input className="inp" value={mk.note || ''} placeholder="optional" onChange={(e) => s.updateMarkup(mk.id, { note: e.target.value })} /></div>
         </div>

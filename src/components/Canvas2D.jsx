@@ -5,6 +5,25 @@ import { snap } from '../engine/units.js';
 import { axisLock, inPoly, makeTransforms } from './canvasUtils.js';
 import { renderScene } from './canvasRender.js';
 
+// Cursor per active tool. Drawing tools get a crosshair; select/pan get a hand.
+const TOOL_CURSOR = {
+  select: 'default', pan: 'grab', ruler: 'crosshair', room: 'crosshair',
+  polygon: 'crosshair', grid: 'default', mk_length: 'crosshair',
+  mk_area: 'crosshair', mk_rect: 'crosshair', mk_count: 'crosshair',
+};
+
+// Collapse points that land within ~1/4" of their predecessor. Double-click and
+// right-click finishing both leave a near-duplicate trailing point; this cleans
+// that up before a markup or room is committed.
+function dedupePts(points) {
+  const out = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.02) out.push(p);
+  }
+  return out;
+}
+
 // feet<->model-px helpers depend on calibrated scale (feet per model px)
 export default function Canvas2D() {
   const cvRef = useRef(null);
@@ -16,8 +35,10 @@ export default function Canvas2D() {
   const ruler = useRef(null);
   const pan = useRef(null);
   const drag = useRef(null);
+  const marquee = useRef(null); // rubber-band multi-select rect (screen coords)
   const planImg = useRef(null);
   const raf = useRef(0);
+  const space = useRef(false);  // spacebar held → drag pans the page
 
   const scale = s.scale;        // feet per model-px
   const { ft2px, px2ft, toScreen, toModel } = makeTransforms(s.view, scale);
@@ -106,6 +127,7 @@ export default function Canvas2D() {
       draft: draft.current,
       mkDraft: mkDraft.current,
       ruler: ruler.current,
+      marquee: marquee.current,
     });
   }
 
@@ -120,6 +142,19 @@ export default function Canvas2D() {
     const sp = evPt(e), mp = toModel(sp.x, sp.y);
     const mfx = px2ft(mp.x), mfy = px2ft(mp.y);
     down.current = { sp, mp };
+
+    // --- universal navigation, works under any tool ---
+    // middle mouse button or held spacebar → grab-pan the page
+    if (e.button === 1 || space.current) {
+      pan.current = { x: s.view.x, y: s.view.y, sp };
+      if (cvRef.current) cvRef.current.style.cursor = 'grabbing';
+      return;
+    }
+    // right mouse button → finish/close an in-progress measurement or polygon
+    if (e.button === 2) {
+      if (mkDraft.current || draft.current?.kind === 'poly') finishDraft();
+      return;
+    }
 
     if (s.tool === 'ruler') { ruler.current = { p1: mp, p2: mp }; return; }
     if (s.tool === 'room') {
@@ -154,27 +189,55 @@ export default function Canvas2D() {
       const type = s.tool === 'mk_length' ? 'length' : 'area';
       if (!mkDraft.current) mkDraft.current = { type, points: [{ x: mfx, y: mfy }] };
       else {
-        const first = mkDraft.current.points[0];
-        const fs = toScreen(ft2px(first.x), ft2px(first.y));
-        const closeEnough = Math.hypot(sp.x - fs.x, sp.y - fs.y) < 10;
+        const arr = mkDraft.current.points;
+        // area closes back on its first point; a length ends on its last point
+        const anchor = type === 'area' ? arr[0] : arr[arr.length - 1];
+        const as = toScreen(ft2px(anchor.x), ft2px(anchor.y));
+        const closeEnough = Math.hypot(sp.x - as.x, sp.y - as.y) < 10;
         const minPts = type === 'area' ? 3 : 2;
-        if (closeEnough && mkDraft.current.points.length >= minPts) {
-          commitMkDraft();
-        } else mkDraft.current.points.push({ x: mfx, y: mfy });
+        if (closeEnough && arr.length >= minPts) { finishDraft(); }
+        else arr.push({ x: mfx, y: mfy });
       }
       schedule(); return;
     }
-    if (s.tool === 'mk_rect') {
-      mkDraft.current = { type: 'rect', ox: mfx, oy: mfy, points: [{ x: mfx, y: mfy }, { x: mfx, y: mfy }] };
+    if (s.tool === 'mk_rect' || s.tool === 'mk_ellipse') {
+      const type = s.tool === 'mk_ellipse' ? 'ellipse' : 'rect';
+      mkDraft.current = { type, ox: mfx, oy: mfy, points: [{ x: mfx, y: mfy }, { x: mfx, y: mfy }] };
+      return;
+    }
+    if (s.tool === 'mk_arrow') {
+      mkDraft.current = { type: 'arrow', points: [{ x: mfx, y: mfy }, { x: mfx, y: mfy }] };
+      return;
+    }
+    if (s.tool === 'mk_text') {
+      s.addMarkup({ type: 'text', points: [{ x: mfx, y: mfy }], name: 'Text', color: '#10171f' });
+      s.setTool('select'); s.setTab('markups');
       return;
     }
     if (s.tool === 'select') {
       const hit = hitTest(sp);
+      const cur = useStore.getState().selRooms;
       if (hit) {
-        s.select('room', hit.room.id); s.setTab('rooms');
-        if (hit.vertex != null) drag.current = { room: hit.room, mode: 'vertex', idx: hit.vertex, mp };
-        else drag.current = { room: hit.room, mode: 'move', start: hit.room.points.map((p) => ({ ...p })), mp };
-      } else { s.select(null, null); pan.current = { x: s.view.x, y: s.view.y, sp }; }
+        // shift-click toggles membership without starting a drag
+        if (e.shiftKey) { s.toggleRoomSel(hit.room.id); s.setTab('rooms'); schedule(); return; }
+        // vertex editing only when this room is the sole selection
+        if (hit.vertex != null && cur.length <= 1) {
+          s.select('room', hit.room.id); s.setTab('rooms');
+          drag.current = { room: hit.room, mode: 'vertex', idx: hit.vertex, mp };
+          schedule(); return;
+        }
+        // drag-move: keep the group if the hit room is already in it, else select just it
+        let ids = cur.includes(hit.room.id) ? cur : [hit.room.id];
+        if (!cur.includes(hit.room.id)) s.select('room', hit.room.id);
+        s.setTab('rooms');
+        const byId = new Map(s.rooms.map((r) => [r.id, r]));
+        const starts = {};
+        ids.forEach((id) => { const r = byId.get(id); if (r) starts[id] = r.points.map((p) => ({ ...p })); });
+        drag.current = { mode: 'move', ids, starts, mp };
+      } else {
+        if (!e.shiftKey) s.clearRoomSel();
+        marquee.current = { sp0: sp, sp1: sp, add: e.shiftKey };
+      }
       schedule(); return;
     }
     if (s.tool === 'pan') { pan.current = { x: s.view.x, y: s.view.y, sp }; }
@@ -185,6 +248,7 @@ export default function Canvas2D() {
     const mfx = px2ft(mp.x), mfy = px2ft(mp.y);
 
     if (pan.current) { s.setView({ ...s.view, x: pan.current.x + (sp.x - pan.current.sp.x), y: pan.current.y + (sp.y - pan.current.sp.y) }); schedule(); return; }
+    if (marquee.current) { marquee.current.sp1 = sp; schedule(); return; }
     if (ruler.current && down.current) { ruler.current.p2 = e.shiftKey ? axisLock(ruler.current.p1, mp) : mp; schedule(); return; }
     if (draft.current?.kind === 'rect' && down.current) {
       let x = draft.current.ox, y = draft.current.oy, w = mfx - x, h = mfy - y;
@@ -195,18 +259,28 @@ export default function Canvas2D() {
     }
     if (draft.current?.kind === 'poly') { draft.current.hover = { x: mfx, y: mfy }; schedule(); return; }
     // markup drafts
-    if (mkDraft.current?.type === 'rect' && down.current) {
+    if (mkDraft.current && (mkDraft.current.type === 'rect' || mkDraft.current.type === 'ellipse') && down.current) {
       mkDraft.current.points = [{ x: mkDraft.current.ox, y: mkDraft.current.oy }, { x: mfx, y: mfy }];
+      schedule(); return;
+    }
+    if (mkDraft.current?.type === 'arrow' && down.current) {
+      const a = mkDraft.current.points[0];
+      mkDraft.current.points = [a, e.shiftKey ? axisLock(a, { x: mfx, y: mfy }) : { x: mfx, y: mfy }];
       schedule(); return;
     }
     if (mkDraft.current && (mkDraft.current.type === 'length' || mkDraft.current.type === 'area')) {
       mkDraft.current.hover = { x: mfx, y: mfy }; schedule(); return;
     }
     if (drag.current) {
-      const d = drag.current; const dfx = px2ft(mp.x - d.mp.x), dfy = px2ft(mp.y - d.mp.y);
+      const d = drag.current;
       if (d.mode === 'move') {
-        const pts = d.start.map((p) => ({ x: scale ? snap(p.x + dfx, .25) : p.x + dfx, y: scale ? snap(p.y + dfy, .25) : p.y + dfy }));
-        s.updateRoom(d.room.id, { points: pts });
+        // move every selected room by the same model delta
+        const dfx = px2ft(mp.x - d.mp.x), dfy = px2ft(mp.y - d.mp.y);
+        d.ids.forEach((id) => {
+          const start = d.starts[id]; if (!start) return;
+          const pts = start.map((p) => ({ x: scale ? snap(p.x + dfx, .25) : p.x + dfx, y: scale ? snap(p.y + dfy, .25) : p.y + dfy }));
+          s.updateRoom(id, { points: pts });
+        });
       } else {
         const pts = d.room.points.map((p, i) => i === d.idx ? { x: scale ? snap(mfx, .25) : mfx, y: scale ? snap(mfy, .25) : mfy } : p);
         s.updateRoom(d.room.id, { points: pts });
@@ -216,6 +290,28 @@ export default function Canvas2D() {
   }
 
   function onUp() {
+    if (marquee.current) {
+      const m = marquee.current; marquee.current = null;
+      const moved = Math.hypot(m.sp1.x - m.sp0.x, m.sp1.y - m.sp0.y);
+      if (moved >= 3) {
+        const x0 = Math.min(m.sp0.x, m.sp1.x), y0 = Math.min(m.sp0.y, m.sp1.y);
+        const x1 = Math.max(m.sp0.x, m.sp1.x), y1 = Math.max(m.sp0.y, m.sp1.y);
+        // a room is picked if its screen bbox overlaps the marquee rect
+        const hitIds = [];
+        for (const r of s.rooms) {
+          let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+          for (const p of r.points) {
+            const q = toScreen(ft2px(p.x), ft2px(p.y));
+            rx0 = Math.min(rx0, q.x); ry0 = Math.min(ry0, q.y);
+            rx1 = Math.max(rx1, q.x); ry1 = Math.max(ry1, q.y);
+          }
+          if (rx0 <= x1 && rx1 >= x0 && ry0 <= y1 && ry1 >= y0) hitIds.push(r.id);
+        }
+        const base = m.add ? useStore.getState().selRooms : [];
+        s.selectRooms(Array.from(new Set([...base, ...hitIds])));
+      }
+      down.current = null; schedule(); return;
+    }
     if (ruler.current) {
       const px = Math.hypot(ruler.current.p2.x - ruler.current.p1.x, ruler.current.p2.y - ruler.current.p1.y);
       if (px > 8) promptScale(px);
@@ -226,24 +322,94 @@ export default function Canvas2D() {
       if (b.w > 0.3 && b.h > 0.3) s.addRoom(draft.current.points);
       draft.current = null; down.current = null; schedule(); return;
     }
-    if (mkDraft.current?.type === 'rect') {
+    if (mkDraft.current && (mkDraft.current.type === 'rect' || mkDraft.current.type === 'ellipse')) {
+      const type = mkDraft.current.type;
       const [a, b] = mkDraft.current.points;
       if (Math.abs(b.x - a.x) > 0.2 && Math.abs(b.y - a.y) > 0.2) {
-        s.addMarkup({ type: 'rect', points: [a, b], name: 'Area', color: '#7a3fa0' });
+        s.addMarkup({
+          type, points: [a, b],
+          name: type === 'ellipse' ? 'Ellipse' : 'Area',
+          color: type === 'ellipse' ? '#b25e00' : '#7a3fa0',
+        });
       }
+      mkDraft.current = null; down.current = null; schedule(); return;
+    }
+    if (mkDraft.current?.type === 'arrow') {
+      const [a, b] = mkDraft.current.points;
+      if (Math.hypot(b.x - a.x, b.y - a.y) > 0.1) s.addMarkup({ type: 'arrow', points: [a, b], name: 'Arrow', color: '#c8521f' });
       mkDraft.current = null; down.current = null; schedule(); return;
     }
     if (drag.current) { drag.current = null; }
     pan.current = null; down.current = null;
+    if (cvRef.current) cvRef.current.style.cursor = space.current ? 'grab' : (TOOL_CURSOR[s.tool] || 'default');
   }
 
   function commitMkDraft() {
     const d = mkDraft.current; if (!d) return;
+    const pts = dedupePts(d.points);
+    const minPts = d.type === 'area' ? 3 : 2;
+    if (pts.length < minPts) { mkDraft.current = null; return; }
     const name = d.type === 'length' ? 'Length' : 'Area';
     const color = d.type === 'length' ? '#1d7a4d' : '#7a3fa0';
-    s.addMarkup({ type: d.type, points: d.points, name, color });
+    s.addMarkup({ type: d.type, points: pts, name, color });
     mkDraft.current = null;
     s.setTool('select');
+  }
+
+  // Finish whatever draft is open: a measurement markup or a traced polygon room.
+  function finishDraft() {
+    if (mkDraft.current) { commitMkDraft(); schedule(); return; }
+    if (draft.current?.kind === 'poly') {
+      const pts = dedupePts(draft.current.points);
+      if (pts.length >= 3) { s.addRoom(pts); s.setTool('select'); }
+      draft.current = null; schedule();
+    }
+    mkActive.current = null; // stop an active count run
+  }
+
+  // Discard the in-progress draft without committing (Esc / pointer cancel).
+  function cancelDraft() {
+    mkDraft.current = null; draft.current = null; ruler.current = null; mkActive.current = null;
+    schedule();
+  }
+
+  // Remove the last placed point (Backspace / Ctrl-Z) across every point tool.
+  function undoPoint() {
+    if (mkDraft.current) {
+      mkDraft.current.points.pop();
+      if (!mkDraft.current.points.length) mkDraft.current = null;
+    } else if (draft.current?.kind === 'poly') {
+      draft.current.points.pop();
+      if (!draft.current.points.length) draft.current = null;
+    } else if (mkActive.current) {
+      const m = s.markups.find((x) => x.id === mkActive.current);
+      if (m) {
+        const np = m.points.slice(0, -1);
+        if (np.length) s.updateMarkup(m.id, { points: np });
+        else { s.deleteMarkup(m.id); mkActive.current = null; }
+      }
+    }
+    schedule();
+  }
+
+  // Double-click finishes a length / area / polygon (the two rapid clicks land a
+  // near-duplicate point that commit dedupes away).
+  function onDbl() {
+    if (mkDraft.current || draft.current?.kind === 'poly') finishDraft();
+  }
+
+  // Draft-scoped keyboard, captured before App's global handler so Backspace
+  // undoes a point instead of deleting the selected room. Only swallows keys
+  // while a draft is actually open.
+  function onKeyCapture(e) {
+    if (/input|select|textarea/i.test(e.target.tagName)) return;
+    if (!mkDraft.current && draft.current?.kind !== 'poly' && !mkActive.current) return;
+    const k = e.key;
+    if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); finishDraft(); }
+    else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelDraft(); }
+    else if (k === 'Backspace' || ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'Z'))) {
+      e.preventDefault(); e.stopPropagation(); undoPoint();
+    }
   }
 
   function promptScale(px) {
@@ -285,6 +451,7 @@ export default function Canvas2D() {
       const unit = overlay.querySelector('#scaleUnit').value;
       const ft = unit === 'in' ? raw / 12 : unit === 'm' ? raw * 3.28084 : raw;
       s.setScale(ft / px);
+      s.setArchScale(null);
       s.setTool('room');
       cleanup();
     };
@@ -352,11 +519,43 @@ export default function Canvas2D() {
     return () => cv.removeEventListener('wheel', handler);
   }, []);
 
-  // clear in-progress markup state when switching tools
+  // clear in-progress markup state when switching tools, and reflect the tool
+  // in the cursor
   useEffect(() => {
     if (s.tool !== 'mk_count') mkActive.current = null;
     if (!s.tool.startsWith('mk_')) mkDraft.current = null;
+    if (s.tool !== 'polygon') draft.current = null;
+    if (cvRef.current) cvRef.current.style.cursor = space.current ? 'grab' : (TOOL_CURSOR[s.tool] || 'default');
   }, [s.tool]);
+
+  // Spacebar held → temporary hand tool (grab-pan), the standard CAD/design idiom.
+  useEffect(() => {
+    const isField = (t) => /input|select|textarea/i.test(t?.tagName || '');
+    const kd = (e) => {
+      if (e.code === 'Space' && !space.current && !isField(e.target)) {
+        space.current = true; e.preventDefault();
+        if (cvRef.current && !pan.current) cvRef.current.style.cursor = 'grab';
+      }
+    };
+    const ku = (e) => {
+      if (e.code === 'Space') {
+        space.current = false;
+        if (cvRef.current && !pan.current) cvRef.current.style.cursor = TOOL_CURSOR[useStore.getState().tool] || 'default';
+      }
+    };
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); };
+  }, []);
+
+  // Draft keys (Enter/Esc/Backspace/Ctrl-Z) captured before App's global keydown.
+  const keyRef = useRef(null);
+  keyRef.current = onKeyCapture;
+  useEffect(() => {
+    const h = (e) => keyRef.current && keyRef.current(e);
+    window.addEventListener('keydown', h, true);
+    return () => window.removeEventListener('keydown', h, true);
+  }, []);
 
   // expose fit via custom event
   useEffect(() => {
@@ -417,7 +616,10 @@ export default function Canvas2D() {
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerCancel={() => { pan.current = null; draft.current = null; ruler.current = null; drag.current = null; }}
+        onDoubleClick={onDbl}
+        onContextMenu={(e) => e.preventDefault()}
+        onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+        onPointerCancel={() => { pan.current = null; draft.current = null; ruler.current = null; drag.current = null; mkDraft.current = null; marquee.current = null; }}
       />
     </div>
   );

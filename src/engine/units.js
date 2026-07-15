@@ -32,6 +32,17 @@ export const ARCH_SCALES = [
   { id: '1:200', label: '1:200 (metric)', metersPerPaperMm: 0.2 },
 ];
 
+// Real feet represented by one inch of paper, for either an imperial
+// (feetPerPaperInch) or a metric (metersPerPaperMm) architectural scale.
+// Used to turn a picked scale + the plan's pixels-per-paper-inch (DPI) into
+// the app's canonical `scale` (feet per model-px).
+export function archFeetPerPaperInch(a) {
+  if (!a) return null;
+  if (a.feetPerPaperInch != null) return a.feetPerPaperInch;
+  if (a.metersPerPaperMm != null) return a.metersPerPaperMm * 25.4 * 3.280839895;
+  return null;
+}
+
 const FT_PER = {
   ft: 1,
   in: 1 / 12,
