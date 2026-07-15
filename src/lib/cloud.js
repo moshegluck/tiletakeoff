@@ -37,9 +37,30 @@ export async function signUp(email, password) {
 export async function signOut() {
   if (cloudEnabled) await supabase.auth.signOut();
 }
+// Email the account a password-reset link. The link returns to this origin with
+// a recovery token; supabase-js then fires a PASSWORD_RECOVERY auth event.
+export async function resetPasswordForEmail(email) {
+  if (!cloudEnabled) throw new Error('Cloud not configured');
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin,
+  });
+  if (error) throw error;
+}
+// Set a new password for the current (recovery or signed-in) session.
+export async function updatePassword(password) {
+  if (!cloudEnabled) throw new Error('Cloud not configured');
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+}
 export function onAuthChange(cb) {
   if (!cloudEnabled) return () => {};
   const { data } = supabase.auth.onAuthStateChange((_e, session) => cb(session?.user ?? null));
+  return () => data.subscription.unsubscribe();
+}
+// Like onAuthChange but also passes the event name (needed for PASSWORD_RECOVERY).
+export function onAuthEvent(cb) {
+  if (!cloudEnabled) return () => {};
+  const { data } = supabase.auth.onAuthStateChange((event, session) => cb(event, session?.user ?? null));
   return () => data.subscription.unsubscribe();
 }
 

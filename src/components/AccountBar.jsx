@@ -3,6 +3,7 @@ import { useStore, setCloudSaver } from '../state/store.js';
 import { cloudEnabled } from '../lib/supabase.js';
 import {
   getUser, onAuthChange, signInWithPassword, signUp, signOut,
+  resetPasswordForEmail, updatePassword,
   listProjects, loadProject, createProject, saveProject, deleteProject,
 } from '../lib/cloud.js';
 import LibraryModal from './LibraryModal.jsx';
@@ -12,6 +13,7 @@ import LibraryModal from './LibraryModal.jsx';
 export default function AccountBar() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState('in');
   const [showProjects, setShowProjects] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
 
@@ -22,11 +24,14 @@ export default function AccountBar() {
     return onAuthChange(setUser);
   }, []);
 
-  // the landing page's "Sign in" button opens the auth modal via this event
+  // the landing page's "Sign in" opens the modal; App re-broadcasts a Supabase
+  // password-recovery link as tt:recovery so we can open the set-new-password form
   useEffect(() => {
-    const open = () => setShowAuth(true);
-    window.addEventListener('tt:signin', open);
-    return () => window.removeEventListener('tt:signin', open);
+    const openSignIn = () => { setAuthMode('in'); setShowAuth(true); };
+    const openRecovery = () => { setAuthMode('recovery'); setShowAuth(true); };
+    window.addEventListener('tt:signin', openSignIn);
+    window.addEventListener('tt:recovery', openRecovery);
+    return () => { window.removeEventListener('tt:signin', openSignIn); window.removeEventListener('tt:recovery', openRecovery); };
   }, []);
 
   useEffect(() => {
@@ -60,54 +65,82 @@ export default function AccountBar() {
           </button>
         </>
       ) : (
-        <button className="tbtn" onClick={() => setShowAuth(true)}>
+        <button className="tbtn" onClick={() => { setAuthMode('in'); setShowAuth(true); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" /></svg>Sign in
         </button>
       )}
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      {showAuth && <AuthModal initialMode={authMode} onClose={() => setShowAuth(false)} />}
       {showProjects && <ProjectsDrawer onClose={() => setShowProjects(false)} />}
       {showLibrary && <LibraryModal onClose={() => setShowLibrary(false)} />}
     </>
   );
 }
 
-function AuthModal({ onClose }) {
-  const [mode, setMode] = useState('in');
+const AUTH_TITLE = { in: 'Sign in', up: 'Create account', reset: 'Reset password', recovery: 'Set a new password' };
+const AUTH_CTA = { in: 'Sign in', up: 'Sign up', reset: 'Send reset link', recovery: 'Update password' };
+const link = { color: 'var(--accent)', cursor: 'pointer' };
+
+function AuthModal({ onClose, initialMode = 'in' }) {
+  const [mode, setMode] = useState(initialMode);
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
   const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const needsEmail = mode !== 'recovery';
+  const needsPw = mode !== 'reset';
+  const canSubmit = (!needsEmail || !!email) && (!needsPw || !!pw);
+  const to = (m) => () => { setMode(m); setErr(''); setMsg(''); };
+
   async function go() {
-    setBusy(true); setErr('');
+    if (!canSubmit) return;
+    setBusy(true); setErr(''); setMsg('');
     try {
-      if (mode === 'in') await signInWithPassword(email, pw);
-      else { await signUp(email, pw); }
-      onClose();
+      if (mode === 'in') { await signInWithPassword(email, pw); onClose(); }
+      else if (mode === 'up') { await signUp(email, pw); onClose(); }
+      else if (mode === 'reset') { await resetPasswordForEmail(email); setMsg('If that email has an account, a reset link is on its way. Check your inbox (and spam).'); }
+      else if (mode === 'recovery') { await updatePassword(pw); setMsg('Password updated — you’re signed in.'); setTimeout(onClose, 1200); }
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
 
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-        <h3>{mode === 'in' ? 'Sign in' : 'Create account'}</h3>
+        <h3>{AUTH_TITLE[mode]}</h3>
         <div className="body">
-          <div className="field"><label>Email</label>
-            <input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div className="field"><label>Password</label>
-            <input className="inp" type="password" value={pw} onChange={(e) => setPw(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
+          {mode === 'reset' && <div className="note">Enter your account email and we’ll send a password-reset link.</div>}
+          {mode === 'recovery' && <div className="note">Choose a new password for your account.</div>}
+          {needsEmail && (
+            <div className="field"><label>Email</label>
+              <input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
+          )}
+          {needsPw && (
+            <div className="field"><label>{mode === 'recovery' ? 'New password' : 'Password'}</label>
+              <input className="inp" type="password" value={pw} onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
+          )}
           {err && <div className="note" style={{ color: 'var(--bad)' }}>{err}</div>}
-          <div className="note">
-            {mode === 'in' ? "No account? " : 'Have an account? '}
-            <a style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => setMode(mode === 'in' ? 'up' : 'in')}>
-              {mode === 'in' ? 'Create one' : 'Sign in'}</a>
-          </div>
+          {msg && <div className="note" style={{ color: 'var(--ok)' }}>{msg}</div>}
+
+          {mode === 'in' && (
+            <>
+              <div className="note"><a style={link} onClick={to('reset')}>Forgot password?</a></div>
+              <div className="note">No account? <a style={link} onClick={to('up')}>Create one</a></div>
+            </>
+          )}
+          {mode === 'up' && (
+            <div className="note">Have an account? <a style={link} onClick={to('in')}>Sign in</a></div>
+          )}
+          {mode === 'reset' && (
+            <div className="note"><a style={link} onClick={to('in')}>← Back to sign in</a></div>
+          )}
         </div>
         <div className="foot">
           <button className="tbtn" onClick={onClose}>Cancel</button>
-          <button className="tbtn primary" disabled={busy || !email || !pw} onClick={go}>
-            {busy ? '…' : mode === 'in' ? 'Sign in' : 'Sign up'}</button>
+          <button className="tbtn primary" disabled={busy || !canSubmit} onClick={go}>
+            {busy ? '…' : AUTH_CTA[mode]}</button>
         </div>
       </div>
     </div>

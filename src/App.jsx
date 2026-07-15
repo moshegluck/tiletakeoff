@@ -6,6 +6,7 @@ import DetectModal from './components/DetectModal.jsx';
 import AccountBar from './components/AccountBar.jsx';
 import { UNIT_SYSTEMS, ARCH_SCALES, archFeetPerPaperInch } from './engine/units.js';
 import { exportCSV } from './lib/export.js';
+import { onAuthEvent } from './lib/cloud.js';
 import { polygonArea } from './engine/geometry.js';
 import Landing from './components/Landing.jsx';
 
@@ -91,6 +92,19 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('tt:toast', onToast); window.removeEventListener('keydown', onKey); };
   }, [s]);
+
+  // A Supabase password-reset link returns here and fires PASSWORD_RECOVERY.
+  // Leave the landing page (so AccountBar is mounted) and ask it to show the
+  // set-new-password form.
+  useEffect(() => {
+    return onAuthEvent((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        try { localStorage.setItem('tt.entered', '1'); } catch (_) {}
+        setLanding(false);
+        setTimeout(() => window.dispatchEvent(new Event('tt:recovery')), 80);
+      }
+    });
+  }, []);
 
   if (landing) {
     const enter = (signin) => {
