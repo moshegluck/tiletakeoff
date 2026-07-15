@@ -20,6 +20,7 @@ function blankProject() {
     unitSystem: 'imperial_ft_in',
     scale: null,           // feet per screen-px at zoom 1 (calibrated)
     archScale: null,       // optional architectural scale id
+    showGrid: true,        // foot grid overlay visibility
     rooms: [],
     materials: [],
     markups: [],            // measurement markups (length/area/count/rect)
@@ -29,6 +30,7 @@ function blankProject() {
     planImage: null,       // dataURL of uploaded floor plan (optional)
     planWidth: 0,          // pixel width of loaded plan image
     planHeight: 0,         // pixel height of loaded plan image
+    planDpi: 0,            // px per paper-inch of the plan (72 * pdf renderScale); 0 = unknown
     cloudId: null,         // supabase project id when saved to cloud
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -55,7 +57,7 @@ export function setCloudSaver(fn) { cloudSaver = fn; }
 function localSnapshot(s) {
   return {
     id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
-    archScale: s.archScale, rooms: s.rooms, materials: s.materials, markups: s.markups,
+    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups,
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
     createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
@@ -81,6 +83,7 @@ export const useStore = create((set, get) => ({
   tool: 'select',
   tab: 'rooms',
   selection: { type: null, id: null },
+  selRooms: [],          // multi-selected room ids (Bluebeam-style marquee/shift)
   gridMaterialId: null,
   view3d: false,
   pdfDoc: null,        // loaded pdf.js doc (runtime only)
@@ -92,6 +95,9 @@ export const useStore = create((set, get) => ({
   setUnitSystem: (u) => { set({ unitSystem: u }); persist(get); },
   setScale: (s) => { set({ scale: s }); persist(get); },
   setArchScale: (id) => { set({ archScale: id }); persist(get); },
+  setShowGrid: (v) => { set({ showGrid: v }); persist(get); },
+  toggleGrid: () => { set({ showGrid: !get().showGrid }); persist(get); },
+  setPlanDpi: (dpi) => set({ planDpi: dpi || 0 }),
   setTax: (t) => { set({ taxRate: t }); persist(get); },
   setLabor: (r) => { set({ laborRatePerSf: r }); persist(get); },
   setView: (v) => { set({ view: v }); persist(get); },
@@ -109,11 +115,36 @@ export const useStore = create((set, get) => ({
   clearPdf: () => set({ pdfDoc: null, pdfPages: 0, pdfPage: 1 }),
   setTool: (tool) => set({ tool }),
   setTab: (tab) => set({ tab }),
-  select: (type, id) => set({ selection: { type, id } }),
+  // Selecting a single room mirrors it into selRooms so the two stay in sync;
+  // selecting anything else clears the multi-selection.
+  select: (type, id) => set({ selection: { type, id }, selRooms: type === 'room' && id ? [id] : [] }),
+  // ---- multi-select (rooms) ----
+  selectRooms: (ids) => set({
+    selRooms: ids,
+    selection: { type: ids.length ? 'room' : null, id: ids.length ? ids[ids.length - 1] : null },
+    tab: ids.length ? 'rooms' : get().tab,
+  }),
+  toggleRoomSel: (id) => {
+    const cur = get().selRooms;
+    const has = cur.includes(id);
+    const next = has ? cur.filter((x) => x !== id) : [...cur, id];
+    set({ selRooms: next, selection: { type: next.length ? 'room' : null, id: next.length ? next[next.length - 1] : null } });
+  },
+  clearRoomSel: () => set({ selRooms: [], selection: { type: null, id: null } }),
+  deleteRooms: (ids) => {
+    const kill = new Set(ids);
+    const sel = get().selection;
+    set({
+      rooms: get().rooms.filter((r) => !kill.has(r.id)),
+      selRooms: get().selRooms.filter((x) => !kill.has(x)),
+      selection: kill.has(sel.id) ? { type: null, id: null } : sel,
+    });
+    persist(get);
+  },
   setGridMaterial: (id) => set({ gridMaterialId: id }),
   toggle3d: (v) => set({ view3d: v ?? !get().view3d }),
 
-  newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, gridMaterialId: null, tool: 'select' }); persist(get); },
+  newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, selRooms: [], gridMaterialId: null, tool: 'select' }); persist(get); },
   loadSnapshot: (snap) => { set({ ...blankProject(), ...snap }); persist(get); },
   setCloudId: (cloudId) => { set({ cloudId }); persist(get); },
   // load a project row fetched from Supabase into the working store
@@ -122,11 +153,11 @@ export const useStore = create((set, get) => ({
     set({
       ...blankProject(),
       id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system,
-      scale: doc.scale ?? null, archScale: doc.archScale ?? null,
+      scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
       rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [],
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
-      selection: { type: null, id: null }, gridMaterialId: null, tool: 'select',
+      selection: { type: null, id: null }, selRooms: [], gridMaterialId: null, tool: 'select',
     });
     // local mirror only; don't trigger a cloud write of what we just read.
     // Use the trimmed snapshot so we don't serialize planImage / the live
@@ -168,7 +199,11 @@ export const useStore = create((set, get) => ({
   },
   deleteRoom: (id) => {
     const sel = get().selection;
-    set({ rooms: get().rooms.filter((r) => r.id !== id), selection: sel.id === id ? { type: null, id: null } : sel });
+    set({
+      rooms: get().rooms.filter((r) => r.id !== id),
+      selRooms: get().selRooms.filter((x) => x !== id),
+      selection: sel.id === id ? { type: null, id: null } : sel,
+    });
     persist(get);
   },
 

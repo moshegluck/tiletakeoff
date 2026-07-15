@@ -13,11 +13,17 @@
 import { polygonArea } from './geometry.js';
 
 export const MARKUP_TYPES = {
-  length: { id: 'length', label: 'Length', unit: 'lf', icon: 'M3 12h18' },
-  area:   { id: 'area',   label: 'Area',   unit: 'sf', icon: 'M4 4h16v16H4z' },
-  rect:   { id: 'rect',   label: 'Rectangle area', unit: 'sf', icon: 'M4 6h16v12H4z' },
-  count:  { id: 'count',  label: 'Count',  unit: 'ea', icon: 'M12 5v14M5 12h14' },
+  length:  { id: 'length',  label: 'Length',         unit: 'lf', icon: 'M3 12h18' },
+  area:    { id: 'area',    label: 'Area',           unit: 'sf', icon: 'M4 4h16v16H4z' },
+  rect:    { id: 'rect',    label: 'Rectangle area', unit: 'sf', icon: 'M4 6h16v12H4z' },
+  ellipse: { id: 'ellipse', label: 'Ellipse area',   unit: 'sf', icon: 'M12 6a9 6 0 100 12 9 6 0 100-12z' },
+  count:   { id: 'count',   label: 'Count',          unit: 'ea', icon: 'M12 5v14M5 12h14' },
+  arrow:   { id: 'arrow',   label: 'Arrow',          unit: '',   icon: 'M5 19L19 5M19 5h-7M19 5v7' },
+  text:    { id: 'text',    label: 'Text note',      unit: '',   icon: 'M5 5h14M12 5v14' },
 };
+
+// types that carry a measured quantity (vs. pure annotations like arrow/text)
+export const isMeasured = (type) => !!(MARKUP_TYPES[type]?.unit);
 
 // measured value in the markup's native unit
 /**
@@ -34,13 +40,18 @@ export function markupValue(mk) {
       const [a, b] = mk.points;
       return Math.abs(b.x - a.x) * Math.abs(b.y - a.y);
     }
+    case 'ellipse': {
+      if (!mk.points || mk.points.length < 2) return 0;
+      const [a, b] = mk.points;
+      return Math.PI * (Math.abs(b.x - a.x) / 2) * (Math.abs(b.y - a.y) / 2);
+    }
     case 'count':  return mk.points?.length || 0;
-    default: return 0;
+    default: return 0; // arrow / text carry no measurement
   }
 }
 
 export function markupDims(mk) {
-  if (mk.type === 'rect' && mk.points?.length >= 2) {
+  if ((mk.type === 'rect' || mk.type === 'ellipse') && mk.points?.length >= 2) {
     const [a, b] = mk.points;
     return { w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
   }
@@ -69,6 +80,7 @@ export function summarizeMarkups(markups) {
   const byType = {};
   let totalCost = 0;
   for (const mk of markups) {
+    if (!isMeasured(mk.type)) continue; // arrow/text are annotations, not quantities
     const t = mk.type;
     if (!byType[t]) byType[t] = { type: t, unit: markupUnit(mk), value: 0, cost: 0, count: 0 };
     byType[t].value += markupValue(mk);

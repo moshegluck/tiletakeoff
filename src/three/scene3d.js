@@ -48,8 +48,37 @@ export function createScene(canvas, project) {
   }
 
   // ---- build geometry from project ----
+  // Rooms take priority; with none, drape the plan on the floor so 3D is useful
+  // before any takeoff exists; with neither, just frame the ground grid.
   function build(proj) {
     disposeGroup();
+    if (proj.rooms && proj.rooms.length) { buildRooms(proj); return; }
+    if (proj.planImage && proj.planWidth && proj.planHeight) { buildPlanPlane(proj); return; }
+    camera.position.set(24, 20, 24);
+    controls.target.set(0, 0, 0);
+  }
+
+  // Lay the uploaded plan flat as a textured floor, sized to real feet when a
+  // scale is known (else normalized to ~40 ft wide), and frame it.
+  function buildPlanPlane(proj) {
+    const sc = proj.scale;
+    let wFt, hFt;
+    if (sc && proj.planWidth && proj.planHeight) { wFt = proj.planWidth * sc; hFt = proj.planHeight * sc; }
+    else { wFt = 40; hFt = 40 * (proj.planHeight / proj.planWidth); }
+    const tex = new THREE.TextureLoader().load(proj.planImage);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const geo = new THREE.PlaneGeometry(wFt, hFt);
+    geo.rotateX(-Math.PI / 2);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
+    mesh.position.set(wFt / 2, 0, -hFt / 2);
+    group.add(mesh);
+    const span = Math.max(wFt, hFt);
+    const dist = Math.max(20, span * 0.9 + 10);
+    camera.position.set(wFt / 2 + dist * 0.25, dist * 0.9, -hFt / 2 + dist * 0.6);
+    controls.target.set(wFt / 2, 0, -hFt / 2);
+  }
+
+  function buildRooms(proj) {
     let cx = 0, cz = 0, n = 0, span = 10;
 
     for (const room of proj.rooms) {

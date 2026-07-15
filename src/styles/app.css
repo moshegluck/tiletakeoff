@@ -54,6 +54,10 @@ main{display:grid;grid-template-columns:56px 1fr 348px;min-height:0;position:rel
 .chip{background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:20px;font:600 11.5px var(--mono);color:var(--ink-2);padding:5px 11px}
 .chip.scale{color:var(--accent);border-color:#eecbb9}
 .chip.warn{color:var(--warn);border-color:#e8d2a8;background:#fffaf0}
+/* interactive HUD controls (the .hud wrapper is pointer-events:none) */
+.hud-sel{pointer-events:auto;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:20px;font:600 11.5px var(--mono);color:var(--accent);padding:4px 8px;max-width:180px;cursor:pointer}
+.chip.toggle{pointer-events:auto;cursor:pointer;background:rgba(255,255,255,.94)}
+.chip.toggle.on{color:var(--blueprint);border-color:#a9c6da;background:#eef5fa}
 .zoomwrap{position:absolute;right:8px;bottom:8px;z-index:10;display:flex;flex-direction:column;gap:5px}
 .zbtn{width:34px;height:34px;border-radius:var(--r-sm);border:1px solid var(--line);background:#fff;color:var(--ink-2);font-size:18px;display:grid;place-items:center;line-height:1}
 .zbtn:hover{background:#fafbfc}.zbtn small{font-size:10px}
@@ -63,6 +67,14 @@ main{display:grid;grid-template-columns:56px 1fr 348px;min-height:0;position:rel
 /* PDF nav */
 .pdfnav{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:12;display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:4px 8px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
 .pdfpg{font:600 12px var(--mono);color:var(--ink-2);white-space:nowrap}
+
+/* multi-select action bar */
+.selbar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:14;display:flex;align-items:center;gap:10px;background:var(--blueprint);color:#fff;border-radius:22px;padding:6px 8px 6px 16px;box-shadow:0 4px 16px rgba(16,23,31,.28);font-size:12.5px}
+.selbar b{color:var(--accent-2)}
+.selbar button{border:none;border-radius:16px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(255,255,255,.16);color:#fff}
+.selbar button:hover{background:rgba(255,255,255,.28)}
+.selbar button:first-of-type{background:var(--accent);color:#fff}
+.selbar button:first-of-type:hover{background:var(--accent-2)}
 
 /* ── RIGHT PANEL ── */
 aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}

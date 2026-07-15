@@ -71,7 +71,7 @@
 
 /**
  * Measurement markup type + the markup record.
- * @typedef {'length'|'area'|'rect'|'count'} MarkupType
+ * @typedef {'length'|'area'|'rect'|'ellipse'|'count'|'arrow'|'text'} MarkupType
  * @typedef {Object} Markup
  * @property {string} id
  * @property {MarkupType} type
