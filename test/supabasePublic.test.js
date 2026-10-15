@@ -28,3 +28,25 @@ describe('resolveSupabase', () => {
     expect((await resolveSupabase({ url: 'not a url', anonKey: 'k' }, ok)).source).toBe('fallback');
   });
 });
+
+import { tokenIssuerOrigin, projectForToken } from '../src/lib/supabasePublic.js';
+const jwt = (claims) => ['e30', Buffer.from(JSON.stringify(claims)).toString('base64url'), 'sig'].join('.');
+
+describe('session routing by token issuer', () => {
+  const live = jwt({ iss: `${SUPABASE_PROJECT.url}/auth/v1`, sub: 'u1' });
+  const dead = { url: 'https://deadproject.supabase.co', anonKey: 'old' };
+  it('reads the issuer origin', () => {
+    expect(tokenIssuerOrigin(live)).toBe(SUPABASE_PROJECT.url);
+    expect(tokenIssuerOrigin('garbage')).toBeNull();
+  });
+  it('routes a live-project token to the live project even when env names a dead one', () => {
+    expect(projectForToken(live, dead)).toEqual({ url: SUPABASE_PROJECT.url, anonKey: SUPABASE_PROJECT.anonKey });
+  });
+  it('routes a configured-project token to the configured project', () => {
+    expect(projectForToken(jwt({ iss: 'https://deadproject.supabase.co/auth/v1' }), dead)).toEqual(dead);
+  });
+  it('refuses tokens from anyone else', () => {
+    expect(projectForToken(jwt({ iss: 'https://evil.example/auth/v1' }), dead)).toBeNull();
+    expect(projectForToken('not.a.jwt', dead)).toBeNull();
+  });
+});

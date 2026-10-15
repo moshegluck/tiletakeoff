@@ -47,3 +47,35 @@ export async function resolveSupabase(env, lookup) {
     return { url, anonKey, source: 'env' };
   }
 }
+
+// Origin of the Supabase project that issued a session token, read from the
+// JWT's (unverified) `iss` claim, e.g. "https://<ref>.supabase.co".
+export function tokenIssuerOrigin(token) {
+  try {
+    const part = String(token).split('.')[1];
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
+    const claims = JSON.parse(atob(b64));
+    return new URL(claims.iss).origin;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * The project that should verify a session token: whichever of OUR projects
+ * (the configured one, or the app's live one) issued it. Anything else is
+ * refused before any network call. The chosen project's own Auth server then
+ * verifies the token, so reading `iss` unverified here is only routing.
+ * @param {string} token
+ * @param {{ url?: string, anonKey?: string }} configured  env project (may be stale)
+ * @returns {{ url: string, anonKey: string } | null}
+ */
+export function projectForToken(token, configured) {
+  const iss = tokenIssuerOrigin(token);
+  if (!iss) return null;
+  const candidates = [configured, SUPABASE_PROJECT].filter((p) => p?.url && p?.anonKey);
+  for (const p of candidates) {
+    try { if (new URL(p.url).origin === iss) return { url: p.url, anonKey: p.anonKey }; } catch (_) { /* skip malformed */ }
+  }
+  return null;
+}

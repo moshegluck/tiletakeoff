@@ -23,10 +23,9 @@
 //   - never leaks upstream error bodies or stack traces to the client.
 // ============================================================
 
-import dns from 'node:dns/promises';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
-import { resolveSupabase } from '../src/lib/supabasePublic.js';
+import { projectForToken } from '../src/lib/supabasePublic.js';
 
 // Claude reads a dense plan carefully; give it room (Fluid compute allows 300 s).
 export const config = { maxDuration: 300 };
@@ -96,19 +95,18 @@ const MAX_EDGE = 2576;
 const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const SB_ANON = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const AUTH_REQUIRED = Boolean(SB_URL && SB_ANON);
-// Verify sessions against the same project the browser build signs in to:
-// if the configured project no longer exists, that's the app's live project
-// (see src/lib/supabasePublic.js). Resolved once per warm instance.
-let _sb;
-function getSupabase() {
-  if (!_sb) {
-    _sb = resolveSupabase({ url: SB_URL, anonKey: SB_ANON }, (host) => dns.lookup(host)).then((c) => {
-      if (c.source === 'fallback') console.warn(`[detect-plan] ${c.reason}; verifying sessions against ${c.url}`);
-      return createClient(c.url, c.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    });
-    _sb.catch(() => { _sb = undefined; }); // retry on the next request
+// Verify each session with the project that issued it: the token names its
+// issuer, and only our projects (the configured one, or the app's live one in
+// src/lib/supabasePublic.js) are accepted. A stale env var naming a deleted
+// project then can't lock everyone out, and nothing depends on a DNS check.
+const sbClients = new Map();
+function supabaseFor(project) {
+  let c = sbClients.get(project.url);
+  if (!c) {
+    c = createClient(project.url, project.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    sbClients.set(project.url, c);
   }
-  return _sb;
+  return c;
 }
 
 // Rate limiter. Uses Upstash Redis (durable across serverless instances) when
@@ -232,9 +230,11 @@ export default async function handler(req, res) {
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       if (!token) return res.status(401).json({ error: 'Sign in to use AI detection.' });
-      const sb = await getSupabase();
-      const { data, error } = await sb.auth.getUser(token);
+      const project = projectForToken(token, { url: SB_URL, anonKey: SB_ANON });
+      if (!project) return res.status(401).json({ error: 'Your session has expired — sign in again.' });
+      const { data, error } = await supabaseFor(project).auth.getUser(token);
       if (error || !data?.user) {
+        if (error) console.error('[detect-plan] session check failed:', error.message);
         return res.status(401).json({ error: 'Your session has expired — sign in again.' });
       }
       identity = `u:${data.user.id}`;
