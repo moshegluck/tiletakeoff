@@ -7,6 +7,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { roomRegions, zonesOf } from '../engine/zones.js';
 
 export function createScene(canvas, project) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -86,7 +87,9 @@ export function createScene(canvas, project) {
       const mat = proj.materials.find((m) => m.id === matId);
       const pts = room.points;
       const shape = new THREE.Shape();
-      pts.forEach((p, i) => (i === 0 ? shape.moveTo(p.x, -p.y) : shape.lineTo(p.x, -p.y)));
+      // shape space (x, y) → world (x, 0, -y) after the rotateX below, the
+      // same mapping the walls and camera use (plan +y → world -z)
+      pts.forEach((p, i) => (i === 0 ? shape.moveTo(p.x, p.y) : shape.lineTo(p.x, p.y)));
       shape.closePath();
 
       // floor
@@ -97,6 +100,32 @@ export function createScene(canvas, project) {
       const floor = new THREE.Mesh(floorGeo, floorMat);
       floor.position.y = 0;
       group.add(floor);
+
+      // floor design zones: border bands and inlays laid just above the field
+      if (zonesOf(room).length) {
+        const reg = roomRegions(room);
+        const toShape = (poly) => {
+          const sh = new THREE.Shape();
+          poly.forEach((p, i) => (i === 0 ? sh.moveTo(p.x, p.y) : sh.lineTo(p.x, p.y)));
+          sh.closePath();
+          return sh;
+        };
+        const addZone = (shape, zone, lift) => {
+          const zm = proj.materials.find((m) => m.id === zone.materialId);
+          const geo = new THREE.ShapeGeometry(shape);
+          geo.rotateX(-Math.PI / 2);
+          const zmat = new THREE.MeshStandardMaterial({ map: makeTileTexture(zm, zone.color, shade(zone.color, 0.55)), roughness: 0.8, metalness: 0.02 });
+          const mesh = new THREE.Mesh(geo, zmat);
+          mesh.position.y = lift;
+          group.add(mesh);
+        };
+        for (const b of reg.bands) {
+          const sh = toShape(b.outer);
+          sh.holes.push(new THREE.Path(b.holes[0].map((p) => new THREE.Vector2(p.x, p.y))));
+          addZone(sh, b.zone, 0.01);
+        }
+        for (const z of reg.inlays) addZone(toShape(z.outer), z.zone, 0.015);
+      }
 
       // walls (extrude perimeter)
       const h = room.wallHeight ?? 8;
@@ -127,10 +156,10 @@ export function createScene(canvas, project) {
   }
 
   // procedural tile texture (grid lines on tile color)
-  function makeTileTexture(mat, fallback) {
+  function makeTileTexture(mat, fallback, baseColor) {
     const c = document.createElement('canvas'); c.width = c.height = 256;
     const g = c.getContext('2d');
-    const base = mat ? '#e7ddc7' : shade(fallback, 0.7);
+    const base = baseColor || (mat ? '#e7ddc7' : shade(fallback, 0.7));
     g.fillStyle = base; g.fillRect(0, 0, 256, 256);
     const tilesPer = mat ? Math.max(1, Math.round(12 / (mat.tw / 12) / 4)) : 4;
     g.strokeStyle = 'rgba(0,0,0,.14)'; g.lineWidth = 3;

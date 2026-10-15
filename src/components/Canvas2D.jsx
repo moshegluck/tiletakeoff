@@ -1,7 +1,8 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../state/store.js';
-import { rectPoly, bounds } from '../engine/geometry.js';
+import { rectPoly, bounds, centroid, pointInPolygon } from '../engine/geometry.js';
 import { snap } from '../engine/units.js';
+import { zonesOf } from '../engine/zones.js';
 import { axisLock, inPoly, makeTransforms } from './canvasUtils.js';
 import { renderScene } from './canvasRender.js';
 
@@ -10,7 +11,12 @@ const TOOL_CURSOR = {
   select: 'default', pan: 'grab', ruler: 'crosshair', room: 'crosshair',
   polygon: 'crosshair', grid: 'default', mk_length: 'crosshair',
   mk_area: 'crosshair', mk_rect: 'crosshair', mk_count: 'crosshair',
+  zone_poly: 'crosshair', zone_rect: 'crosshair',
 };
+
+// Point-by-point drafts: a traced room or a traced floor design (inlay).
+const isPolyDraft = (d) => d?.kind === 'poly' || d?.kind === 'zpoly';
+const INCH = 1 / 12;
 
 // Collapse points that land within ~1/4" of their predecessor. Double-click and
 // right-click finishing both leave a near-duplicate trailing point; this cleans
@@ -39,6 +45,7 @@ export default function Canvas2D() {
   const planImg = useRef(null);
   const raf = useRef(0);
   const space = useRef(false);  // spacebar held → drag pans the page
+  const hoverSnap = useRef(null); // design tools: snap target under the cursor
 
   const scale = s.scale;        // feet per model-px
   const { ft2px, px2ft, toScreen, toModel } = makeTransforms(s.view, scale);
@@ -128,10 +135,63 @@ export default function Canvas2D() {
       mkDraft: mkDraft.current,
       ruler: ruler.current,
       marquee: marquee.current,
+      hoverSnap: hoverSnap.current,
     });
   }
 
   drawRef.current = draw;
+
+  // ---------- floor design (zones) ----------
+  // Design areas are traced on the plan's floor lines, not on walls, so they
+  // snap to what is already drawn: room/inlay corners first, then the nearest
+  // wall or inlay edge, else the nearest inch. Shift locks the segment from
+  // the previous point to horizontal/vertical.
+  function snapDesign(sp, mf, prev, shift, skipZoneId = null) {
+    const scr = (q) => toScreen(ft2px(q.x), ft2px(q.y));
+    const polys = [];
+    for (const r of s.rooms) {
+      polys.push(r.points);
+      for (const z of zonesOf(r)) if (z.kind === 'inlay' && z.points?.length && z.id !== skipZoneId) polys.push(z.points);
+    }
+    let best = null, bestD = 10; // screen px
+    for (const poly of polys) for (const v of poly) {
+      const q = scr(v), d = Math.hypot(q.x - sp.x, q.y - sp.y);
+      if (d < bestD) { bestD = d; best = { x: v.x, y: v.y }; }
+    }
+    if (!best && !shift) {
+      for (const poly of polys) for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+        if (!L2) continue;
+        const t = Math.max(0, Math.min(1, ((mf.x - a.x) * dx + (mf.y - a.y) * dy) / L2));
+        const pr = { x: a.x + dx * t, y: a.y + dy * t };
+        const q = scr(pr), d = Math.hypot(q.x - sp.x, q.y - sp.y);
+        if (d < bestD) { bestD = d; best = pr; }
+      }
+    }
+    if (best) return { p: best, snapped: true };
+    let p = scale ? { x: snap(mf.x, INCH), y: snap(mf.y, INCH) } : mf;
+    if (shift && prev) p = axisLock(prev, p);
+    return { p, snapped: false };
+  }
+
+  // Attach a finished design shape to the room it sits in (the selected room
+  // wins when rooms overlap). Its tile layout starts at the shape's corner.
+  function commitZone(points) {
+    const pts = dedupePts(points);
+    if (pts.length < 3) return;
+    const st = useStore.getState();
+    const c = centroid(pts);
+    const inside = (r) => pointInPolygon(c.x, c.y, r.points);
+    const sel = st.selection.type === 'room' ? st.rooms.find((r) => r.id === st.selection.id) : null;
+    const host = (sel && inside(sel) ? sel : null) || [...st.rooms].reverse().find(inside);
+    if (!host) {
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Draw floor designs inside a room — trace the walls first.' } }));
+      return;
+    }
+    st.addZone(host.id, { kind: 'inlay', points: pts, layout: { pattern: 'grid', angleDeg: 0, anchor: 'corner' } });
+    st.setTool('select');
+  }
 
   // ---------- interaction ----------
   function evPt(e) { const r = cvRef.current.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -152,7 +212,7 @@ export default function Canvas2D() {
     }
     // right mouse button → finish/close an in-progress measurement or polygon
     if (e.button === 2) {
-      if (mkDraft.current || draft.current?.kind === 'poly') finishDraft();
+      if (mkDraft.current || isPolyDraft(draft.current)) finishDraft();
       return;
     }
 
@@ -160,6 +220,24 @@ export default function Canvas2D() {
     if (s.tool === 'room') {
       draft.current = { kind: 'rect', ox: mfx, oy: mfy, points: rectPoly(mfx, mfy, 0, 0) };
       return;
+    }
+    if (s.tool === 'zone_rect') {
+      const { p, snapped } = snapDesign(sp, { x: mfx, y: mfy }, null, false);
+      draft.current = { kind: 'zrect', ox: p.x, oy: p.y, points: rectPoly(p.x, p.y, 0, 0), snap: snapped ? p : null };
+      return;
+    }
+    if (s.tool === 'zone_poly') {
+      const d = draft.current?.kind === 'zpoly' ? draft.current : null;
+      const prev = d ? d.points[d.points.length - 1] : null;
+      const { p } = snapDesign(sp, { x: mfx, y: mfy }, prev, e.shiftKey);
+      if (!d) draft.current = { kind: 'zpoly', points: [p] };
+      else {
+        const fs = toScreen(ft2px(d.points[0].x), ft2px(d.points[0].y));
+        if (Math.hypot(sp.x - fs.x, sp.y - fs.y) < 10 && d.points.length >= 3) {
+          draft.current = null; commitZone(d.points);
+        } else d.points.push(p);
+      }
+      schedule(); return;
     }
     if (s.tool === 'polygon') {
       if (!draft.current) draft.current = { kind: 'poly', points: [{ x: mfx, y: mfy }] };
@@ -220,6 +298,15 @@ export default function Canvas2D() {
       if (hit) {
         // shift-click toggles membership without starting a drag
         if (e.shiftKey) { s.toggleRoomSel(hit.room.id); s.setTab('rooms'); schedule(); return; }
+        // an inlay: select it; drag a corner to reshape, drag inside to move
+        if (hit.zone) {
+          s.selectZone(hit.room.id, hit.zone.id);
+          drag.current = hit.vertex != null
+            ? { mode: 'zvertex', roomId: hit.room.id, zoneId: hit.zone.id, idx: hit.vertex }
+            : { mode: 'zmove', roomId: hit.room.id, zoneId: hit.zone.id, mp, start: hit.zone.points.map((p) => ({ ...p })) };
+          schedule(); return;
+        }
+        if (useStore.getState().selZone) s.clearZoneSel();
         // vertex editing only when this room is the sole selection
         if (hit.vertex != null && cur.length <= 1) {
           s.select('room', hit.room.id); s.setTab('rooms');
@@ -231,9 +318,13 @@ export default function Canvas2D() {
         if (!cur.includes(hit.room.id)) s.select('room', hit.room.id);
         s.setTab('rooms');
         const byId = new Map(s.rooms.map((r) => [r.id, r]));
-        const starts = {};
-        ids.forEach((id) => { const r = byId.get(id); if (r) starts[id] = r.points.map((p) => ({ ...p })); });
-        drag.current = { mode: 'move', ids, starts, mp };
+        const starts = {}, zstarts = {};
+        ids.forEach((id) => {
+          const r = byId.get(id); if (!r) return;
+          starts[id] = r.points.map((p) => ({ ...p }));
+          if (r.zones?.length) zstarts[id] = r.zones;
+        });
+        drag.current = { mode: 'move', ids, starts, zstarts, mp };
       } else {
         if (!e.shiftKey) s.clearRoomSel();
         marquee.current = { sp0: sp, sp1: sp, add: e.shiftKey };
@@ -257,6 +348,25 @@ export default function Canvas2D() {
       draft.current.points = rectPoly(x0, y0, Math.abs(w), Math.abs(h));
       schedule(); return;
     }
+    if (draft.current?.kind === 'zrect' && down.current) {
+      const { p, snapped } = snapDesign(sp, { x: mfx, y: mfy }, null, false);
+      const d = draft.current;
+      d.points = rectPoly(Math.min(d.ox, p.x), Math.min(d.oy, p.y), Math.abs(p.x - d.ox), Math.abs(p.y - d.oy));
+      d.snap = snapped ? p : null;
+      schedule(); return;
+    }
+    if (draft.current?.kind === 'zpoly') {
+      const pts = draft.current.points;
+      const { p, snapped } = snapDesign(sp, { x: mfx, y: mfy }, pts[pts.length - 1], e.shiftKey);
+      draft.current.hover = p; draft.current.snap = snapped ? p : null;
+      schedule(); return;
+    }
+    if ((s.tool === 'zone_poly' || s.tool === 'zone_rect') && !draft.current) {
+      const { p, snapped } = snapDesign(sp, { x: mfx, y: mfy }, null, false);
+      const next = snapped ? p : null;
+      if (next || hoverSnap.current) { hoverSnap.current = next; schedule(); }
+      return;
+    }
     if (draft.current?.kind === 'poly') { draft.current.hover = { x: mfx, y: mfy }; schedule(); return; }
     // markup drafts
     if (mkDraft.current && (mkDraft.current.type === 'rect' || mkDraft.current.type === 'ellipse') && down.current) {
@@ -273,13 +383,37 @@ export default function Canvas2D() {
     }
     if (drag.current) {
       const d = drag.current;
+      if (d.mode === 'zvertex' || d.mode === 'zmove') {
+        const room = useStore.getState().rooms.find((r) => r.id === d.roomId);
+        const z = room && zonesOf(room).find((q) => q.id === d.zoneId);
+        if (z && d.mode === 'zvertex') {
+          const { p } = snapDesign(sp, { x: mfx, y: mfy }, null, false, d.zoneId);
+          s.updateZone(d.roomId, d.zoneId, { points: z.points.map((q, i) => (i === d.idx ? p : q)) });
+        } else if (z) {
+          // move by a whole-inch delta so the shape stays intact (its tiles
+          // are anchored to the shape, so they move with it)
+          let dx = px2ft(mp.x - d.mp.x), dy = px2ft(mp.y - d.mp.y);
+          if (scale) { dx = snap(dx, INCH); dy = snap(dy, INCH); }
+          s.updateZone(d.roomId, d.zoneId, { points: d.start.map((q) => ({ x: q.x + dx, y: q.y + dy })) });
+        }
+        schedule(); return;
+      }
       if (d.mode === 'move') {
         // move every selected room by the same model delta
         const dfx = px2ft(mp.x - d.mp.x), dfy = px2ft(mp.y - d.mp.y);
         d.ids.forEach((id) => {
           const start = d.starts[id]; if (!start) return;
           const pts = start.map((p) => ({ x: scale ? snap(p.x + dfx, .25) : p.x + dfx, y: scale ? snap(p.y + dfy, .25) : p.y + dfy }));
-          s.updateRoom(id, { points: pts });
+          const patch = { points: pts };
+          // inlays ride along with their room (borders follow automatically)
+          const zs = d.zstarts[id];
+          if (zs) {
+            const ex = pts[0].x - start[0].x, ey = pts[0].y - start[0].y;
+            patch.zones = zs.map((z) => (z.kind !== 'inlay' ? z : {
+              ...z, points: (z.points || []).map((q) => ({ x: q.x + ex, y: q.y + ey })),
+            }));
+          }
+          s.updateRoom(id, patch);
         });
       } else {
         const pts = d.room.points.map((p, i) => i === d.idx ? { x: scale ? snap(mfx, .25) : mfx, y: scale ? snap(mfy, .25) : mfy } : p);
@@ -321,6 +455,12 @@ export default function Canvas2D() {
       const b = bounds(draft.current.points);
       if (b.w > 0.3 && b.h > 0.3) s.addRoom(draft.current.points);
       draft.current = null; down.current = null; schedule(); return;
+    }
+    if (draft.current?.kind === 'zrect') {
+      const pts = draft.current.points, b = bounds(pts);
+      draft.current = null; down.current = null;
+      if (b.w > 0.1 && b.h > 0.1) commitZone(pts);
+      schedule(); return;
     }
     if (mkDraft.current && (mkDraft.current.type === 'rect' || mkDraft.current.type === 'ellipse')) {
       const type = mkDraft.current.type;
@@ -364,6 +504,10 @@ export default function Canvas2D() {
       if (pts.length >= 3) { s.addRoom(pts); s.setTool('select'); }
       draft.current = null; schedule();
     }
+    if (draft.current?.kind === 'zpoly') {
+      const pts = draft.current.points;
+      draft.current = null; commitZone(pts); schedule();
+    }
     mkActive.current = null; // stop an active count run
   }
 
@@ -378,7 +522,7 @@ export default function Canvas2D() {
     if (mkDraft.current) {
       mkDraft.current.points.pop();
       if (!mkDraft.current.points.length) mkDraft.current = null;
-    } else if (draft.current?.kind === 'poly') {
+    } else if (isPolyDraft(draft.current)) {
       draft.current.points.pop();
       if (!draft.current.points.length) draft.current = null;
     } else if (mkActive.current) {
@@ -395,7 +539,7 @@ export default function Canvas2D() {
   // Double-click finishes a length / area / polygon (the two rapid clicks land a
   // near-duplicate point that commit dedupes away).
   function onDbl() {
-    if (mkDraft.current || draft.current?.kind === 'poly') finishDraft();
+    if (mkDraft.current || isPolyDraft(draft.current)) finishDraft();
   }
 
   // Draft-scoped keyboard, captured before App's global handler so Backspace
@@ -403,7 +547,7 @@ export default function Canvas2D() {
   // while a draft is actually open.
   function onKeyCapture(e) {
     if (/input|select|textarea/i.test(e.target.tagName)) return;
-    if (!mkDraft.current && draft.current?.kind !== 'poly' && !mkActive.current) return;
+    if (!mkDraft.current && !isPolyDraft(draft.current) && !mkActive.current) return;
     const k = e.key;
     if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); finishDraft(); }
     else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelDraft(); }
@@ -462,16 +606,32 @@ export default function Canvas2D() {
   }
 
   function hitTest(sp) {
+    const scr = (p) => toScreen(ft2px(p.x), ft2px(p.y));
     for (let i = s.rooms.length - 1; i >= 0; i--) {
       const r = s.rooms[i];
-      if (s.selection.id === r.id && s.tool === 'select') {
+      const zs = zonesOf(r);
+      const roomSel = s.selection.id === r.id && s.tool === 'select';
+      if (roomSel && s.selZone) {
+        // corners of the selected inlay
+        const z = zs.find((q) => q.id === s.selZone && q.kind === 'inlay');
+        if (z) for (let v = 0; v < z.points.length; v++) {
+          const vs = scr(z.points[v]);
+          if (Math.hypot(sp.x - vs.x, sp.y - vs.y) < 9) return { room: r, zone: z, vertex: v };
+        }
+      } else if (roomSel) {
         for (let v = 0; v < r.points.length; v++) {
-          const vs = toScreen(ft2px(r.points[v].x), ft2px(r.points[v].y));
+          const vs = scr(r.points[v]);
           if (Math.hypot(sp.x - vs.x, sp.y - vs.y) < 9) return { room: r, vertex: v };
         }
       }
+      // inlays sit on top of their room's floor
+      for (let k = zs.length - 1; k >= 0; k--) {
+        const z = zs[k];
+        if (z.kind !== 'inlay' || !z.points?.length) continue;
+        if (inPoly(sp.x, sp.y, z.points.map(scr))) return { room: r, zone: z, vertex: null };
+      }
       // point-in-poly on screen
-      const path = r.points.map((p) => toScreen(ft2px(p.x), ft2px(p.y)));
+      const path = r.points.map(scr);
       if (inPoly(sp.x, sp.y, path)) return { room: r, vertex: null };
     }
     return null;
@@ -524,7 +684,10 @@ export default function Canvas2D() {
   useEffect(() => {
     if (s.tool !== 'mk_count') mkActive.current = null;
     if (!s.tool.startsWith('mk_')) mkDraft.current = null;
-    if (s.tool !== 'polygon') draft.current = null;
+    const keep = (s.tool === 'polygon' && draft.current?.kind === 'poly') ||
+      (s.tool === 'zone_poly' && draft.current?.kind === 'zpoly');
+    if (!keep) draft.current = null;
+    hoverSnap.current = null;
     if (cvRef.current) cvRef.current.style.cursor = space.current ? 'grab' : (TOOL_CURSOR[s.tool] || 'default');
   }, [s.tool]);
 

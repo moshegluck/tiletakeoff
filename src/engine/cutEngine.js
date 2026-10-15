@@ -33,10 +33,16 @@
 //   bounding rectangle, which is the right call for ORDERING (you still
 //   cut from a full tile) and slightly conservative on reuse. Flagged in
 //   the report so nobody over-trusts it.
+//
+// FLOOR DESIGN ZONES (engine/zones.js):
+//   A room's field is analyzed as a region with holes (border bands and
+//   inlays carved out), each inlay is its own surface with its own layout,
+//   and border bands are counted as wall runs of strips (bandPieces) rather
+//   than a grid, because that is how a border is installed.
 // ============================================================
 
-import { bounds, classifyTile, clipPolygon, polygonArea, rectPoly } from './geometry.js';
 import { generateLayout } from './layouts.js';
+import { roomRegions, classifyTileRegion, fragmentInRegion, bandPieces } from './zones.js';
 
 const EPS = 1e-6;
 
@@ -66,15 +72,6 @@ function offcutsFrom(tw, th, w, h) {
   return pieces;
 }
 
-// Compute the installed-fragment AABB (in tile-local feet) for a cut tile.
-function fragmentSize(tile, poly) {
-  const tx = tile.cx - tile.w / 2, ty = tile.cy - tile.h / 2;
-  const clipped = clipPolygon(rectPoly(tx, ty, tile.w, tile.h), poly);
-  if (clipped.length < 3) return null;
-  const b = bounds(clipped);
-  return { w: Math.min(tile.w, b.w), h: Math.min(tile.h, b.h), area: polygonArea(clipped) };
-}
-
 /**
  * Analyze cut redistribution for ONE material across its assigned rooms.
  * @param {import('./types.js').Room[]} rooms  rooms assigned to this material
@@ -92,33 +89,62 @@ export function analyzeCuts(rooms, material, opts = {}) {
   const fullTileArea = twFt * thFt;
   const minUsableArea = fullTileArea * minUsableFrac;
 
-  // Defensive: only consider rooms actually assigned to THIS material. Callers
-  // are expected to pre-filter, but relying on that made the result wrong if
-  // they didn't. If a room carries no `assigned` array at all we include it
-  // (back-compat with direct single-material calls in tests/tools).
-  const mine = rooms.filter((r) => !r.assigned || r.assigned.includes(material.id));
-
   // guard: a tile size of zero would divide-by-zero in the layout; bail clean.
   if (!(twFt > 0) || !(thFt > 0)) {
     return emptyResult(material, mode, grainLocked);
   }
 
-  // 1. gather full + cut tiles across all rooms for this material
+  // 1. gather surfaces for this material, then full + cut tiles on each.
+  // Field: rooms assigned to THIS material. Callers are expected to
+  // pre-filter, but relying on that made the result wrong if they didn't. If
+  // a room carries no `assigned` array at all we include it (back-compat with
+  // direct single-material calls in tests/tools). Zones: any room whose
+  // border/inlay picked this material.
+  const surfaces = [];  // grid-laid regions
+  const summary = [];   // per-surface rollup for the cut sheet
+  const border = { lf: 0, strips: 0, tiles: 0 };
+  for (const room of rooms) {
+    const onField = !room.assigned || room.assigned.includes(material.id);
+    const onZone = (room.zones || []).some((z) => z.materialId === material.id);
+    if (!onField && !onZone) continue;
+    const reg = roomRegions(room);
+    if (onField) {
+      const pattern = room.layout?.pattern || material.pattern || 'grid';
+      // the layout always spans the whole room so pattern lines stay
+      // continuous across a field that a border splits into ring + center
+      for (const region of reg.field) surfaces.push({ name: room.name, region, layoutPoly: room.points, layout: room.layout, pattern });
+      summary.push({ name: room.name, kind: 'field', areaSf: reg.fieldArea, pattern, cuts: 0 });
+    }
+    for (const z of reg.inlays) {
+      if (z.zone.materialId !== material.id) continue;
+      const name = `${room.name} · ${z.zone.name}`;
+      const pattern = z.layout?.pattern || material.pattern || 'grid';
+      surfaces.push({ name, region: { outer: z.outer, holes: [] }, layoutPoly: z.outer, layout: z.layout, pattern });
+      summary.push({ name, kind: 'inlay', areaSf: z.area, pattern, cuts: 0 });
+    }
+    for (const b of reg.bands) {
+      if (b.zone.materialId !== material.id) continue;
+      const bp = bandPieces(b, material);
+      border.lf += bp.lf; border.strips += bp.strips; border.tiles += bp.tiles;
+      summary.push({ name: `${room.name} · ${b.zone.name}`, kind: 'border', areaSf: b.area, pattern: 'border run', cuts: bp.strips, lf: bp.lf });
+    }
+  }
+
   let fullCount = 0;
   const needs = []; // each: {w,h,area,room}
-  for (const room of mine) {
-    const tiles = generateLayout(room.points, {
-      pattern: room.layout?.pattern || material.pattern || 'grid',
+  for (const sf of surfaces) {
+    const tiles = generateLayout(sf.layoutPoly, {
+      pattern: sf.pattern,
       tileW: twFt, tileH: thFt,
-      angleDeg: room.layout?.angleDeg || 0,
-      origin: room.layout?.origin || { x: 0, y: 0 },
+      angleDeg: sf.layout?.angleDeg || 0,
+      origin: sf.layout?.origin || { x: 0, y: 0 },
     });
     for (const t of tiles) {
-      const cls = classifyTile(t.cx - t.w / 2, t.cy - t.h / 2, t.w, t.h, room.points);
+      const cls = classifyTileRegion(t.cx - t.w / 2, t.cy - t.h / 2, t.w, t.h, sf.region);
       if (cls === 'full') fullCount++;
       else if (cls === 'cut') {
-        const frag = fragmentSize(t, room.points);
-        if (frag && frag.area > EPS) needs.push({ ...frag, room: room.name });
+        const frag = fragmentInRegion(t, sf.region);
+        if (frag && frag.area > EPS) needs.push({ ...frag, room: sf.name });
       }
     }
   }
@@ -131,12 +157,16 @@ export function analyzeCuts(rooms, material, opts = {}) {
   const naiveCutTiles = cutTilesNeeded; // naive: 1 full tile per cut
   const tilesSavedByReuse = naiveCutTiles - newTilesForCuts;
 
-  const totalTiles = fullCount + newTilesForCuts;
-  const naiveTotal = fullCount + naiveCutTiles;
+  // border strips are cut per run; reuse doesn't apply, so they add equally
+  // to the real and the naive totals
+  const totalTiles = fullCount + newTilesForCuts + border.tiles;
+  const naiveTotal = fullCount + naiveCutTiles + border.tiles;
+
+  for (const row of summary) if (row.kind !== 'border') row.cuts = needs.filter((n) => n.room === row.name).length;
 
   return {
     material: material.name,
-    pattern: mine[0]?.layout?.pattern || material.pattern || 'grid',
+    pattern: surfaces[0]?.pattern || material.pattern || 'grid',
     grainLocked,
     fullTiles: fullCount,
     cutPieces: cutTilesNeeded,
@@ -149,9 +179,11 @@ export function analyzeCuts(rooms, material, opts = {}) {
     pctSaved: naiveTotal ? (tilesSavedByReuse / naiveTotal) * 100 : 0,
     mode,
     assignments: result.assignments, // for the cut sheet
-    note: isAngled(mine, material)
+    note: surfaces.some((sf) => ANGLED.has(sf.pattern))
       ? 'Angled/herringbone fragments modeled as bounding rectangles (conservative on reuse).'
       : null,
+    border,
+    surfaces: summary,
   };
 }
 
@@ -162,6 +194,7 @@ function emptyResult(material, mode, grainLocked) {
     fullTiles: 0, cutPieces: 0, newTilesBrokenForCuts: 0, reusedOffcuts: 0,
     tilesSavedByReuse: 0, scrapPieces: 0, totalTiles: 0, naiveTotal: 0,
     pctSaved: 0, mode, assignments: [], note: null,
+    border: { lf: 0, strips: 0, tiles: 0 }, surfaces: [],
   };
 }
 
@@ -238,12 +271,7 @@ function isPlank(m) {
   const ratio = Math.max(m.tw, m.th) / Math.min(m.tw, m.th);
   return ratio >= 2.5; // planks / wood-look: grain matters
 }
-function isAngled(rooms, m) {
-  return rooms.some((r) => {
-    const p = r.layout?.pattern || m.pattern;
-    return p === 'herringbone' || p === 'diagonal' || p === 'basketweave';
-  });
-}
+const ANGLED = new Set(['herringbone', 'diagonal', 'basketweave']);
 
 /**
  * Compare naive waste vs redistribution for a whole project.
@@ -257,7 +285,8 @@ function isAngled(rooms, m) {
 export function analyzeProject(state, opts = {}) {
   const rows = [];
   for (const m of state.materials) {
-    const rooms = state.rooms.filter((r) => r.assigned?.includes(m.id));
+    const rooms = state.rooms.filter((r) => r.assigned?.includes(m.id) ||
+      (r.zones || []).some((z) => z.materialId === m.id));
     if (!rooms.length) continue;
     const practical = analyzeCuts(rooms, m, { ...opts, mode: 'practical' });
     const optimized = analyzeCuts(rooms, m, { ...opts, mode: 'optimize' });

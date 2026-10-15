@@ -10,7 +10,6 @@
 // ============================================================
 
 import { analyzeCuts } from './cutEngine.js';
-import { polygonArea } from './geometry.js';
 
 // group cut pieces by rounded size so installers can batch-cut
 function groupBySize(assignments, fmt) {
@@ -49,16 +48,14 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export function buildCutSheet(rooms, material, fmt, mode = 'practical') {
   const info = analyzeCuts(rooms, material, { mode });
 
-  // per-room rollup
-  const perRoom = rooms.map((r) => {
-    const roomCuts = info.assignments.filter((a) => a.room === r.name);
-    return {
-      name: r.name,
-      areaSf: polygonArea(r.points),
-      cuts: roomCuts.length,
-      pattern: r.layout?.pattern || material.pattern || 'grid',
-    };
-  });
+  // per-surface rollup: each room's field, plus any inlays / border bands
+  // laid in this material (a border's "cuts" are its strips, one per run piece)
+  const perRoom = info.surfaces.map((sf) => ({
+    name: sf.name,
+    areaSf: sf.areaSf,
+    cuts: sf.cuts,
+    pattern: sf.kind === 'border' ? `border · ${fmt(sf.lf)} run` : sf.pattern,
+  }));
 
   const cutList = groupBySize(info.assignments, fmt);
 
@@ -81,6 +78,7 @@ export function buildCutSheet(rooms, material, fmt, mode = 'practical') {
     fullTiles: info.fullTiles,
     cutPieces: info.cutPieces,
     tilesBroken: info.newTilesBrokenForCuts,
+    borderTiles: info.border.tiles,
     reused: info.reusedOffcuts,
     saved: info.tilesSavedByReuse,
     totalTiles: info.totalTiles,
@@ -95,7 +93,8 @@ export function buildProjectCutSheets(state, fmt) {
   const sheets = [];
   for (const m of state.materials) {
     if (m.type === 'wall') continue;
-    const rooms = state.rooms.filter((r) => r.assigned?.includes(m.id));
+    const rooms = state.rooms.filter((r) => r.assigned?.includes(m.id) ||
+      (r.zones || []).some((z) => z.materialId === m.id));
     if (!rooms.length) continue;
     const mode = m.optimizeWholeJob ? 'optimize' : 'practical';
     sheets.push(buildCutSheet(rooms, m, fmt, mode));
@@ -129,12 +128,13 @@ export function cutSheetHTML(state, sheets) {
       <div class="stat"><div class="n">${sh.fullTiles}</div><div class="l">Full tiles</div></div>
       <div class="stat"><div class="n">${sh.cutPieces}</div><div class="l">Cut pieces</div></div>
       <div class="stat"><div class="n">${sh.tilesBroken}</div><div class="l">Tiles to cut</div></div>
+      ${sh.borderTiles ? `<div class="stat"><div class="n">${sh.borderTiles}</div><div class="l">Border tiles</div></div>` : ''}
       <div class="stat save"><div class="n">${sh.saved}</div><div class="l">Saved by reuse</div></div>
       <div class="stat"><div class="n">${sh.totalTiles}</div><div class="l">Total order</div></div>
     </div>
     ${sh.note ? `<div class="note">⚠ ${esc(sh.note)}</div>` : ''}
 
-    <table><thead><tr><th>Room</th><th>Area</th><th>Pattern</th><th>Cut pieces</th></tr></thead><tbody>
+    <table><thead><tr><th>Room / zone</th><th>Area</th><th>Pattern</th><th>Cut pieces</th></tr></thead><tbody>
       ${sh.perRoom.map((r) => `<tr><td>${esc(r.name)}</td><td class="mono">${r.areaSf.toFixed(1)} sf</td><td>${esc(r.pattern)}</td><td class="mono">${r.cuts}</td></tr>`).join('')}
     </tbody></table>
 

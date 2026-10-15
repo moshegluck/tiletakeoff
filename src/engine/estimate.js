@@ -11,28 +11,46 @@
 
 import { polygonArea, polygonPerimeter } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
+import { roomRegions } from './zones.js';
 
 /**
- * Net area assigned to a material across rooms.
+ * Net area a material covers across rooms. A floor material assigned to a
+ * room covers that room's FIELD (room minus its border bands and inlays);
+ * a floor material picked on a design zone covers that zone.
  * @param {import('./types.js').Material} material
  * @param {import('./types.js').Room[]} rooms
- * @returns {{ netSf: number, usedRooms: {name:string,sf:number}[] }}
+ * @returns {{ netSf: number, usedRooms: {name:string,sf:number,lf?:number}[] }}
  */
 export function materialArea(material, rooms) {
   let netSf = 0;
   const usedRooms = [];
   for (const r of rooms) {
-    if (!r.assigned?.includes(material.id)) continue;
-    const sf = polygonArea(r.points);
     if (material.type === 'wall') {
+      if (!r.assigned?.includes(material.id)) continue;
       // wall coverage proxy: perimeter * wall height (default 8 ft)
       const per = polygonPerimeter(r.points);
       const h = r.wallHeight ?? 8;
       netSf += per * h;
       usedRooms.push({ name: r.name, sf: per * h });
-    } else {
-      netSf += sf;
-      usedRooms.push({ name: r.name, sf });
+      continue;
+    }
+    const onField = r.assigned?.includes(material.id);
+    const onZone = (r.zones || []).some((z) => z.materialId === material.id);
+    if (!onField && !onZone) continue;
+    const reg = roomRegions(r);
+    if (onField) {
+      netSf += reg.fieldArea;
+      usedRooms.push({ name: r.name, sf: reg.fieldArea });
+    }
+    for (const b of reg.bands) {
+      if (b.zone.materialId !== material.id) continue;
+      netSf += b.area;
+      usedRooms.push({ name: `${r.name} · ${b.zone.name}`, sf: b.area, lf: b.lf });
+    }
+    for (const z of reg.inlays) {
+      if (z.zone.materialId !== material.id) continue;
+      netSf += z.area;
+      usedRooms.push({ name: `${r.name} · ${z.zone.name}`, sf: z.area });
     }
   }
   return { netSf, usedRooms };
@@ -59,10 +77,12 @@ export function estimateMaterial(material, rooms) {
   // whole box, over-ordering by up to one box.
   let cutsGrossSf = grossSf;
   const useCuts = material.costMode === 'cuts' && material.type !== 'wall';
-  if (useCuts && rooms.some((r) => r.assigned?.includes(material.id))) {
-    const assigned = rooms.filter((r) => r.assigned?.includes(material.id));
+  if (useCuts && usedRooms.length) {
     const mode = material.optimizeWholeJob ? 'optimize' : 'practical';
-    cutInfo = analyzeCuts(assigned, material, { mode });
+    // rooms using this material on their field OR on a design zone
+    const using = rooms.filter((r) => r.assigned?.includes(material.id) ||
+      (r.zones || []).some((z) => z.materialId === material.id));
+    cutInfo = analyzeCuts(using, material, { mode });
     // add a safety margin on the *broken* tiles only (breakage on site)
     const safety = 1 + (material.cutSafetyPct ?? 5) / 100;
     const rawTiles = cutInfo.totalTiles * safety;

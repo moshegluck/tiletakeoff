@@ -3,5 +3,5 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "functions": { "api/*.js": { "maxDuration": 60 } }
+  "functions": { "api/*.js": { "maxDuration": 300 } }
 }
