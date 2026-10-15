@@ -73,7 +73,11 @@ AI detection is disabled.
 3. Add environment variable:
    - `ANTHROPIC_API_KEY` = your key
    - (optional) `ANTHROPIC_MODEL` — defaults to `claude-opus-5-5`, the most
-     accurate on technical drawings. Detection uses high effort and allows the
+     accurate on technical drawings. Leave it unset unless you need another
+     model: it must read plans at full resolution (Opus 4.7+, or
+     Opus/Sonnet/Fable 5+). An older model is ignored (with a warning in the
+     function logs), and if the API rejects the configured model the request
+     falls back to the default. Detection uses high effort and allows the
      function up to 300 s (`vercel.json`); a full sheet usually takes 20–60 s.
 4. Deploy. The static site builds to `dist/`; `api/detect-plan.js` becomes a
    serverless function automatically.
