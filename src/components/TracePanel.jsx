@@ -16,6 +16,8 @@ export default function TracePanel() {
   const hasPlan = !!(s.pdfDoc || s.planImage);
   const editsKey = `${tr.manual.length}:${tr.removed.length}:${JSON.stringify(tr.region)}:${tr.settings.floorAtDoor}:${tr.settings.maxOpening}`;
   const lastEdits = useRef(editsKey);
+  const runSeq = useRef(0);
+  const pending = useRef(false);
 
   // read the sheet once a plan is loaded: is there a scale note?
   useEffect(() => {
@@ -35,6 +37,9 @@ export default function TracePanel() {
   async function run() {
     const st = useStore.getState();
     if (!st.scale) { setErr('Set the scale first (use the sheet scale below, a preset, or the ruler).'); return; }
+    // one solve at a time; a fix made mid-solve re-runs right after, never lost
+    if (st.traceBusy) { pending.current = true; return; }
+    const my = ++runSeq.current;
     setErr(''); st.setTraceBusy(true);
     try {
       const cur = st.trace || defaultTrace();
@@ -44,6 +49,7 @@ export default function TracePanel() {
         options: { floorAtDoor: cur.settings.floorAtDoor, maxOpening: cur.settings.maxOpening },
         manual: cur.manual, removed: cur.removed,
       });
+      if (my !== runSeq.current) return;
       // carry over names the user (or AI) already gave rooms in a previous run
       const names = cur.names || {};
       for (const r of result.rooms) { const k = nameKey(r); if (names[k]) { r.name = names[k]; } }
@@ -53,14 +59,17 @@ export default function TracePanel() {
       if (result.schedule?.doorHeight && !cur.settings.doorHeightSet) st.setTraceSettings({ doorHeight: result.schedule.doorHeight });
     } catch (e) {
       setErr(e.message || 'Trace failed');
-    } finally { st.setTraceBusy(false); }
+    } finally {
+      st.setTraceBusy(false);
+      if (pending.current) { pending.current = false; setTimeout(run, 0); }
+    }
   }
 
   // re-solve after a manual fix (add / erase wall, region change)
   useEffect(() => {
     if (lastEdits.current === editsKey) return;
     lastEdits.current = editsKey;
-    if (res && !s.traceBusy) run();
+    if (res) run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editsKey]);
 

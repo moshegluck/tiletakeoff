@@ -66,17 +66,39 @@ export function setCloudSaver(fn) { cloudSaver = fn; }
 function localSnapshot(s) {
   return {
     id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
-    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: s.trace,
+    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: slimTrace(s.trace),
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
     createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
   };
 }
 
+// Keep what the overlay, 3D and re-trace need; drop the solver's debug output.
+function slimTrace(tr) {
+  if (!tr?.result) return tr;
+  const r = tr.result;
+  return {
+    ...tr,
+    result: {
+      ...r, log: [], voids: [],
+      repairs: (r.repairs || []).slice(0, 400),
+      rooms: r.rooms.map(({ centerPoly: _c, edgeIds: _e, labels: _l, ...x }) => x),
+    },
+  };
+}
+
+let warnedQuota = false;
 function persist(get) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); } catch (_) {}
+    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); warnedQuota = false; }
+    catch (_) {
+      // never fail silently: a project that stops saving is worse than a warning
+      if (!warnedQuota && typeof window !== 'undefined') {
+        warnedQuota = true;
+        window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'This project is too large to keep in browser storage — sign in to save it to the cloud, or export it.' } }));
+      }
+    }
   }, 350);
   // cloud save on a slower debounce to limit writes
   if (cloudSaver) {
@@ -238,8 +260,12 @@ export const useStore = create((set, get) => ({
     const tr = { ...defaultTrace(), ...(get().trace || {}) };
     tr.settings = { ...tr.settings, ...patch };
     // ceiling height drives every traced room's wall height
-    const rooms = 'ceilingHeight' in patch
-      ? get().rooms.map((r) => (r.traceId ? { ...r, wallHeight: patch.ceilingHeight } : r))
+    const rooms = ('ceilingHeight' in patch || 'doorHeight' in patch)
+      ? get().rooms.map((r) => (r.traceId ? {
+        ...r,
+        ...('ceilingHeight' in patch ? { wallHeight: patch.ceilingHeight } : {}),
+        ...('doorHeight' in patch ? { doorHeight: patch.doorHeight } : {}),
+      } : r))
       : get().rooms;
     set({ trace: tr, rooms }); persist(get);
   },
@@ -264,11 +290,27 @@ export const useStore = create((set, get) => ({
   commitTrace: () => {
     const tr = get().trace; const res = tr?.result; if (!res) return 0;
     const keep = get().rooms.filter((r) => !r.traceId);
-    const prev = new Map(get().rooms.filter((r) => r.traceId).map((r) => [r.traceName, r]));
+    // Match each traced room to the previously committed room it replaces: same
+    // name AND nearest centre (two BEDROOMs must never collapse into one id).
+    const prevRooms = get().rooms.filter((r) => r.traceId);
+    const used = new Set();
+    const matchPrev = (t) => {
+      let best = null, bd = Infinity;
+      for (const r of prevRooms) {
+        if (used.has(r.id)) continue;
+        const c = r.labelAt || r.points[0];
+        const d = Math.hypot(c.x - t.center.x, c.y - t.center.y);
+        const sameName = r.traceName === t.name;
+        if ((sameName && d < 25) || d < 2) { const score = d - (sameName ? 1000 : 0); if (score < bd) { bd = score; best = r; } }
+      }
+      if (best) used.add(best.id);
+      return best;
+    };
     const floor = get().materials.find((m) => m.type === 'floor');
     const H = tr.settings?.ceilingHeight ?? 8;
+    const DH = tr.settings?.doorHeight ?? 6 + 8 / 12;
     const rooms = res.rooms.map((t, i) => {
-      const p = prev.get(t.name);
+      const p = matchPrev(t);
       return {
         id: p?.id || nanoid(),
         name: p?.name || t.name,
@@ -279,7 +321,7 @@ export const useStore = create((set, get) => ({
         layout: p?.layout || { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } },
         finish: p?.finish,
         traceId: t.id, traceName: t.name, roomType: t.type,
-        wallLf: t.wallLf, spurLf: t.spurLf, openings: t.openings, labelAt: t.center,
+        wallLf: t.wallLf, spurLf: t.spurLf, openings: t.openings, labelAt: t.center, doorHeight: DH,
       };
     });
     set({ rooms: [...keep, ...rooms], trace: { ...tr, committedAt: Date.now() }, tab: 'rooms', selection: { type: null, id: null }, selRooms: [] });
@@ -417,3 +459,6 @@ export const useStore = create((set, get) => ({
 }));
 
 export { ROOM_COLORS, MAT_FLOOR, MAT_WALL };
+
+// test hook for end-to-end checks (dev server only)
+if (import.meta.env?.DEV && typeof window !== 'undefined') window.__store = useStore;

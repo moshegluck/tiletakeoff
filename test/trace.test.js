@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runTrace, parseScaleNote, parseDoorSchedule } from '../src/engine/trace/index.js';
+import { runTrace, parseScaleNote, parseDoorSchedule, eraseFromBodies } from '../src/engine/trace/index.js';
 import { arcFromBezier, isDoorSwing } from '../src/engine/trace/arcs.js';
 import { mergeCollinear, pairWalls } from '../src/engine/trace/walls.js';
 import { buildHousePlan } from './fixtures/planFactory.js';
@@ -45,7 +45,8 @@ describe('trace — messy plan (doubled traces, hatch, gaps, overshoot, furnitur
     const inside = (12 - EXT / 2 - INT / 2) * (16 - EXT / 2 - INT / 2);
     const expected = inside + 8 * (INT / 2) + 5 * (INT / 2);
     // doubled traces are drawn 0.2" off on purpose; merging them may move a face ≤ 1/8"
-    expect(room(res, 'KITCHEN').area).toBeCloseTo(expected, 1);
+    // 1/8" on a 15½' side is 0.16 sf
+    expect(Math.abs(room(res, 'KITCHEN').area - expected)).toBeLessThan(0.16);
   });
 
   it('bedroom wall LF = finished perimeter net of the door', () => {
@@ -122,6 +123,69 @@ describe('trace — failure modes become located flags, not silent garbage', () 
     });
     expect(res.rooms.length).toBe(1);
     expect(res.flags.some((f) => f.kind === 'open_end' && f.at.x > 29)).toBe(true);
+  });
+});
+
+describe('trace — review regressions', () => {
+  const box = (x0, y0, x1, y1, t) => [
+    { a: { x: x0, y: y0 }, b: { x: x1, y: y0 }, t }, { a: { x: x1, y: y0 }, b: { x: x1, y: y1 }, t },
+    { a: { x: x1, y: y1 }, b: { x: x0, y: y1 }, t }, { a: { x: x0, y: y1 }, b: { x: x0, y: y0 }, t },
+  ];
+  it('a big room with a detached core inside stays a room (not a sheet border)', () => {
+    const res = runTrace({ bodies: [...box(0, 0, 50, 40, EXT), ...box(20, 15, 28, 25, INT), { a: { x: 20, y: 20 }, b: { x: 28, y: 20 }, t: INT }] });
+    const office = res.rooms.reduce((m, r) => (r.area > (m?.area || 0) ? r : m), null);
+    const expected = (50 - EXT) * (40 - EXT) - (8 + INT) * (10 + INT);
+    expect(office.area).toBeCloseTo(expected, 3);
+    expect(res.rooms.length).toBe(3);
+  });
+
+  it('a sheet-spanning border IS set aside when the page extent is known', () => {
+    const res = runTrace({ bodies: [...box(1, 1, 99, 69, 0.5), ...box(30, 20, 50, 40, INT)], sheet: { x0: 0, y0: 0, x1: 100, y1: 70 } });
+    expect(res.rooms.length).toBe(1);
+    expect(res.flags.some((f) => f.kind === 'frame')).toBe(true);
+  });
+
+  it('a closet box tied to a room by one wall becomes a hole + returns, not the room outline', () => {
+    const res = runTrace({ bodies: [...box(0, 0, 30, 24, EXT), ...box(12, 8, 18, 14, INT), { a: { x: 15, y: 0 }, b: { x: 15, y: 8 }, t: INT }] });
+    const big = res.rooms.reduce((m, r) => (r.area > (m?.area || 0) ? r : m), null);
+    const net = (30 - EXT) * (24 - EXT) - (6 + INT) * (6 + INT);
+    expect(big.area).toBeCloseTo(net, 2);
+    const polyArea = Math.abs(big.poly.reduce((s, p, i) => { const q = big.poly[(i + 1) % big.poly.length]; return s + p.x * q.y - q.x * p.y; }, 0) / 2);
+    expect(polyArea).toBeGreaterThan(600); // the committed outline is the room, not the closet
+    // LF: room faces + closet outside faces + both faces of the 8' connecting wall
+    const roomLoop = 2 * ((30 - EXT) + (24 - EXT)) - INT;     // connector covers its base
+    const closetOut = 4 * (6 + INT) - INT;
+    const connector = 2 * (8 - EXT / 2 - INT / 2);
+    expect(big.wallLf).toBeCloseTo(roomLoop + closetOut + connector, 2);
+  });
+
+  it('lines at scattered angles elsewhere on the sheet do not rotate the building', () => {
+    const base = buildHousePlan({ messy: false });
+    let seed = 3; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const noise = Array.from({ length: 1500 }, () => {
+      const x = 80 + rnd() * 60, y = rnd() * 60, a = rnd() * Math.PI;
+      return { a: { x, y }, b: { x: x + 2 * Math.cos(a), y: y + 2 * Math.sin(a) } };
+    });
+    const arcs = base.arcs.map((a) => arcFromBezier(a.pieces));
+    const clean = runTrace({ lines: base.lines, arcs, texts: base.texts });
+    const noisy = runTrace({ lines: base.lines.concat(noise), arcs, texts: base.texts });
+    expect(noisy.rooms.length).toBe(7);
+    expect(noisy.totals.floorSf).toBeCloseTo(clean.totals.floorSf, 2);
+    expect(noisy.totals.roomWallLf).toBeCloseTo(clean.totals.roomWallLf, 2);
+  });
+
+  it('erasing cuts out only the clicked stretch of a long wall', () => {
+    const out = eraseFromBodies([{ a: { x: 0, y: 0 }, b: { x: 30, y: 0 }, t: INT }], [{ a: { x: 10, y: 0.02 }, b: { x: 14, y: 0.02 } }]);
+    expect(out.length).toBe(2);
+    expect(out[0].b.x).toBeCloseTo(10, 6);
+    expect(out[1].a.x).toBeCloseTo(14, 6);
+    // a perpendicular erase never touches it
+    expect(eraseFromBodies([{ a: { x: 0, y: 0 }, b: { x: 30, y: 0 }, t: INT }], [{ a: { x: 5, y: -3 }, b: { x: 5, y: 3 } }]).length).toBe(1);
+  });
+
+  it('empty input is never "coherent"', () => {
+    const res = runTrace({ lines: [] });
+    expect(res.status).toBe('needs_input');
   });
 });
 

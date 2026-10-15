@@ -30,8 +30,12 @@ export function materialArea(material, rooms) {
       // tile height chosen in design (wainscot / shower) else full wall height
       const th = r.finish?.wallTileHeight;
       const h = th == null ? (r.wallHeight ?? 8) : th;
-      netSf += per * h;
-      usedRooms.push({ name: r.name, sf: per * h });
+      // traced wall LF is net of openings; tile that runs higher than the door
+      // head also covers the wall above each opening
+      const dh = r.doorHeight ?? 6 + 8 / 12;
+      const above = (r.openings || []).reduce((a, o) => a + (o.width || 0) * Math.max(0, h - dh), 0);
+      netSf += per * h + above;
+      usedRooms.push({ name: r.name, sf: per * h + above });
     } else {
       netSf += sf;
       usedRooms.push({ name: r.name, sf });

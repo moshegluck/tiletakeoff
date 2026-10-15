@@ -55,6 +55,7 @@ export async function readPlan(state) {
 export async function runPlanTrace(state, { evidence, region, options, manual, removed } = {}) {
   const ev = evidence || (await readPlan(state)).evidence;
   const input = evidenceToFeet(ev, state.scale, region);
-  const result = await solve({ ...input, manual: manual || [], removed: removed || [], options });
+  const sheet = { x0: 0, y0: 0, x1: (ev.width || 0) * state.scale, y1: (ev.height || 0) * state.scale };
+  const result = await solve({ ...input, sheet, manual: manual || [], removed: removed || [], options });
   return { result, evidence: ev, input: { lines: input.lines.length, bodies: input.bodies.length, arcs: input.arcs.length, texts: input.texts.length } };
 }

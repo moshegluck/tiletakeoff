@@ -19,7 +19,7 @@ let cache = { key: null, ev: null };
  * @returns {Promise<{mode:'vector'|'raster', lines, bodies, curves, texts, width, height, stats}>} px space
  */
 export async function gatherEvidence({ doc, pageNum, renderScale, planImage, pxPerFtHint }) {
-  const key = `${doc ? doc.fingerprints?.[0] || 'doc' : 'img'}:${pageNum}:${renderScale}:${planImage?.slice?.(0, 64)}`;
+  const key = `${doc ? doc.fingerprints?.[0] || 'doc' : 'img'}:${pageNum}:${renderScale}:${fingerprint(planImage)}`;
   if (cache.key === key && cache.ev) return cache.ev;
 
   let vec = null;
@@ -50,6 +50,16 @@ export async function gatherEvidence({ doc, pageNum, renderScale, planImage, pxP
   }
   cache = { key, ev };
   return ev;
+}
+
+// A cheap fingerprint of the WHOLE image string (data URLs of same-size scans
+// share their first hundred characters; blob URLs are unique anyway).
+function fingerprint(str) {
+  if (!str) return '';
+  let h = 2166136261;
+  const step = Math.max(1, Math.floor(str.length / 4096));
+  for (let i = 0; i < str.length; i += step) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return `${str.length}:${(h >>> 0).toString(36)}`;
 }
 
 export function clearEvidenceCache() { cache = { key: null, ev: null }; }

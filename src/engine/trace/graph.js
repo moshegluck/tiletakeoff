@@ -69,7 +69,9 @@ export function joinWalls(inSegs, options = {}, log = []) {
 
   // ---- corners: pairs of free ends whose lines meet just ahead (or slightly behind) ----
   const cornerC = [];
-  const endByBody = (bi) => ends.filter((e) => e.bi === bi);
+  const byBody = new Map();
+  for (const e of ends) { if (!byBody.has(e.bi)) byBody.set(e.bi, []); byBody.get(e.bi).push(e); }
+  const endByBody = (bi) => byBody.get(bi) || [];
   for (let i = 0; i < ends.length; i++) {
     const e1 = ends[i]; if (e1.joined) continue;
     const reach = maxT * 1.2 + opt.snapTol;
@@ -151,8 +153,12 @@ export function dropDetached(segs, ends, options = {}, log = []) {
   const parent = segs.map((_, i) => i);
   const find = (x) => (parent[x] === x ? x : (parent[x] = find(parent[x])));
   const tol = opt.snapTol * 1.5;
+  const gi = new GridIndex(4);
+  segs.forEach((sg, i) => gi.insert(i, Math.min(sg.a.x, sg.b.x) - tol, Math.min(sg.a.y, sg.b.y) - tol, Math.max(sg.a.x, sg.b.x) + tol, Math.max(sg.a.y, sg.b.y) + tol));
   for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
+    const si = segs[i];
+    for (const j of gi.query(Math.min(si.a.x, si.b.x) - tol, Math.min(si.a.y, si.b.y) - tol, Math.max(si.a.x, si.b.x) + tol, Math.max(si.a.y, si.b.y) + tol)) {
+      if (j <= i) continue;
       const a = segs[i], b = segs[j];
       if (touches(a.a, b, tol) || touches(a.b, b, tol) || touches(b.a, a, tol) || touches(b.b, a, tol) || segIntersect(a.a, a.b, b.a, b.b)) {
         const x = find(i), y = find(j); if (x !== y) parent[x] = y;
@@ -196,17 +202,27 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
   const opt = { ...GRAPH_DEFAULTS, ...options };
   const free = ends.filter((e) => !e.joined);
   const cands = [];
-  const blocked = (a, b, ignore) => segs.some((s, i) => {
-    if (ignore.includes(i)) return false;
-    const h = segIntersect(a, b, s.a, s.b);
-    if (!h) return false;
-    // touching at the very ends is fine
-    return h.t > 0.02 && h.t < 0.98;
-  });
+  const segIdx = new GridIndex(4);
+  segs.forEach((sg, i) => segIdx.insert(i, Math.min(sg.a.x, sg.b.x), Math.min(sg.a.y, sg.b.y), Math.max(sg.a.x, sg.b.x), Math.max(sg.a.y, sg.b.y)));
+  const segsNear = (a, b) => segIdx.query(Math.min(a.x, b.x) - 0.1, Math.min(a.y, b.y) - 0.1, Math.max(a.x, b.x) + 0.1, Math.max(a.y, b.y) + 0.1);
+  const blocked = (a, b, ignore) => {
+    for (const i of segsNear(a, b)) {
+      if (ignore.includes(i)) continue;
+      const sg = segs[i];
+      const h = segIntersect(a, b, sg.a, sg.b);
+      // touching at the very ends is fine
+      if (h && h.t > 0.02 && h.t < 0.98) return true;
+    }
+    return false;
+  };
+  const endIdx = new GridIndex(Math.max(4, opt.maxOpening / 2));
+  free.forEach((e, i) => endIdx.insert(i, e.p.x, e.p.y, e.p.x, e.p.y));
 
   // (a) collinear: two free ends facing each other across a gap
   for (let i = 0; i < free.length; i++) {
-    for (let k = i + 1; k < free.length; k++) {
+    const p = free[i].p, R = opt.maxOpening;
+    for (const k of endIdx.query(p.x - R, p.y - R, p.x + R, p.y + R)) {
+      if (k <= i) continue;
       const e1 = free[i], e2 = free[k];
       if (e1.bi === e2.bi) continue;
       const g = collinearGap(e1, e2);
@@ -218,15 +234,17 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
   // (b) end → perpendicular wall (door beside a corner, opening onto a hall)
   for (const e of free) {
     let best = null;
-    segs.forEach((s, j) => {
-      if (j === e.bi) return;
-      if (angleDiff(lineAngle(segs[e.bi].a, segs[e.bi].b), lineAngle(s.a, s.b)) < 30 * DEG) return;
+    const far = { x: e.p.x + e.dir.x * (opt.maxOpening + 2), y: e.p.y + e.dir.y * (opt.maxOpening + 2) };
+    for (const j of segsNear(e.p, far)) {
+      const s = segs[j];
+      if (j === e.bi) continue;
+      if (angleDiff(lineAngle(segs[e.bi].a, segs[e.bi].b), lineAngle(s.a, s.b)) < 30 * DEG) continue;
       const hit = lineIntersect(e.p, e.dir, s.a, sub(s.b, s.a));
-      if (!hit || hit.u < -0.001 || hit.u > 1.001) return;
+      if (!hit || hit.u < -0.001 || hit.u > 1.001) continue;
       const width = hit.s - s.t / 2;
-      if (width < opt.minOpening || width > opt.maxOpening) return;
+      if (width < opt.minOpening || width > opt.maxOpening) continue;
       if (!best || hit.s < best.s) best = { s: hit.s, pt: hit.pt, j, width, t: s.t };
-    });
+    }
     if (!best) continue;
     if (blocked(e.p, best.pt, [e.bi, best.j])) continue;
     const jamb2 = sub(best.pt, mul(e.dir, best.t / 2));
@@ -369,9 +387,11 @@ export function buildGraph(segs, options = {}, log = []) {
     };
     if (!prev) { edgeMap.set(key, e); continue; }
     dupes++;
-    // a wall beats an opening; otherwise keep the thicker, more confident one
+    // a wall beats an opening; a hand-drawn wall beats evidence; otherwise keep
+    // the thicker, more confident one
     if (prev.kind === 'opening' && e.kind === 'wall') edgeMap.set(key, e);
-    else if (prev.kind === e.kind && (e.t > prev.t || e.conf > prev.conf)) edgeMap.set(key, { ...prev, t: Math.max(prev.t, e.t), conf: Math.max(prev.conf, e.conf) });
+    else if (e.src === 'manual' && prev.kind === 'wall') edgeMap.set(key, { ...e, t: Math.max(prev.t, e.t) });
+    else if (prev.kind === e.kind && prev.src !== 'manual' && (e.t > prev.t || e.conf > prev.conf)) edgeMap.set(key, { ...prev, t: Math.max(prev.t, e.t), conf: Math.max(prev.conf, e.conf) });
   }
   if (dupes) log.push({ kind: 'dedupe', at: null, note: `${dupes} doubled/overlapping trace segments merged` });
 

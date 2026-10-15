@@ -61,6 +61,7 @@ export default function App() {
       const { doc, numPages } = await loadPdf(file);
       s.setPdf(doc, numPages);
       s.clearTrace();
+      import('./lib/planEvidence.js').then((m) => m.clearEvidenceCache());
       // render first page immediately
       const { renderPage } = await import('./lib/pdf.js');
       const out = await renderPage(doc, 1, 2000);

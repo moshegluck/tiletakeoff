@@ -56,10 +56,12 @@ function prep(raw, opt) {
 export function mergeCollinear(raw, options = {}) {
   const opt = { ...WALL_DEFAULTS, ...options };
   const L = prep(raw, opt).sort((p, q) => p.th - q.th);
+  // Group by angle against the group's FIRST line (not the previous one), so a
+  // sheet full of lines at scattered angles can't chain into one drifting group.
   const groups = [];
   let cur = [];
   for (const l of L) {
-    if (cur.length && l.th - cur[cur.length - 1].th > opt.collinearAngTol) { groups.push(cur); cur = []; }
+    if (cur.length && l.th - cur[0].th > opt.collinearAngTol) { groups.push(cur); cur = []; }
     cur.push(l);
   }
   if (cur.length) groups.push(cur);
@@ -74,12 +76,19 @@ export function mergeCollinear(raw, options = {}) {
       const pa = { x: l.u.x * l.s0 + l.n.x * l.rho, y: l.u.y * l.s0 + l.n.y * l.rho };
       const pb = { x: l.u.x * l.s1 + l.n.x * l.rho, y: l.u.y * l.s1 + l.n.y * l.rho };
       const a = dot(pa, u), b = dot(pb, u);
-      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, src: l.src };
+      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, src: l.src, orig: { a: pa, b: pb } };
     }).sort((p, q) => p.rho - q.rho);
-    // chain by rho
+    // band by rho (again anchored on the band's first line)
     let band = [];
     const flush = () => {
       if (!band.length) return;
+      if (band.length === 1) {
+        // a line with nothing to merge with is emitted exactly as drawn
+        const o = band[0].orig;
+        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, dup: 1 });
+        band = [];
+        return;
+      }
       const rho = band.reduce((s, l) => s + l.rho * (l.s1 - l.s0), 0) / band.reduce((s, l) => s + (l.s1 - l.s0), 0);
       band.sort((p, q) => p.s0 - q.s0);
       let a = band[0].s0, b = band[0].s1, w = band[0].w, cnt = 1;
@@ -87,16 +96,21 @@ export function mergeCollinear(raw, options = {}) {
         a: { x: u.x * a + n.x * rho, y: u.y * a + n.y * rho },
         b: { x: u.x * b + n.x * rho, y: u.y * b + n.y * rho }, w, dup: cnt,
       });
+      let first = band[0];
+      const emitRun = () => {
+        if (cnt === 1) merged.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, w, dup: 1 });
+        else emit();
+      };
       for (let i = 1; i < band.length; i++) {
         const l = band[i];
         if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); w = Math.max(w, l.w); cnt++; }
-        else { emit(); a = l.s0; b = l.s1; w = l.w; cnt = 1; }
+        else { emitRun(); a = l.s0; b = l.s1; w = l.w; cnt = 1; first = l; }
       }
-      emit();
+      emitRun();
       band = [];
     };
     for (const l of items) {
-      if (band.length && l.rho - band[band.length - 1].rho > opt.collinearOffTol) flush();
+      if (band.length && l.rho - band[0].rho > opt.collinearOffTol) flush();
       band.push(l);
     }
     flush();
@@ -191,8 +205,8 @@ export function pairWalls(rawLines, options = {}) {
       for (const q of ps) {
         if (q.side <= 0) continue;
         if (Math.abs(p.d - q.d) / Math.max(p.d, q.d) > opt.seriesTol) continue;
-        const ov = Math.min(p.o1, q.o1) - Math.max(p.o0, q.o0);
-        if (ov < 0.6 * Math.min(p.o1 - p.o0, q.o1 - q.o0)) continue;
+        // (no overlap test between p and q: diagonal hatch is staggered along the
+        // wall, so neighbours overlap l on different stretches)
         const d = (p.d + q.d) / 2;
         if (!extends4(p.j, d, l.id) && !extends4(q.j, d, l.id)) continue;
         hatch.add(l.id); hatch.add(p.j); hatch.add(q.j);
@@ -286,13 +300,20 @@ export function pairWalls(rawLines, options = {}) {
 
 /** Merge collinear bodies of similar thickness that overlap or nearly touch. */
 export function mergeBodies(bodies, { angTol = 1 * Math.PI / 180, offTol = 1.0 * IN, gapTol = 1.0 * IN, tTol = 1.25 * IN } = {}) {
-  const items = bodies.map((b) => ({ ...b, th: lineAngle(b.a, b.b), dead: false }));
+  const items = bodies
+    .filter((b) => b && b.a && b.b && dist(b.a, b.b) > 1e-3 && Number.isFinite(b.t))
+    .map((b) => ({ ...b, th: lineAngle(b.a, b.b), dead: false }));
+  const cell = 4;
   let changed = true;
   while (changed) {
     changed = false;
+    const idx = new GridIndex(cell);
+    items.forEach((b, i) => { if (!b.dead) idx.insert(i, Math.min(b.a.x, b.b.x) - gapTol, Math.min(b.a.y, b.b.y) - gapTol, Math.max(b.a.x, b.b.x) + gapTol, Math.max(b.a.y, b.b.y) + gapTol); });
     for (let i = 0; i < items.length; i++) {
       const p = items[i]; if (p.dead) continue;
-      for (let j = i + 1; j < items.length; j++) {
+      const near = idx.query(Math.min(p.a.x, p.b.x) - gapTol, Math.min(p.a.y, p.b.y) - gapTol, Math.max(p.a.x, p.b.x) + gapTol, Math.max(p.a.y, p.b.y) + gapTol);
+      for (const j of near) {
+        if (j <= i) continue;
         const q = items[j]; if (q.dead) continue;
         if (angleDiff(p.th, q.th) > angTol || Math.abs(p.t - q.t) > tTol) continue;
         const u = norm(sub(p.b, p.a)), n = perp(u);

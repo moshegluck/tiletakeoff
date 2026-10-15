@@ -12,7 +12,7 @@
 import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
-import { dist, mid, closestOnSeg } from './vec.js';
+import { dist } from './vec.js';
 
 export { parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf };
 export { arcFromBezier } from './arcs.js';
@@ -26,6 +26,7 @@ export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor
  * @param {{c,r}[]} [input.arcs]       door-swing arcs (ft)
  * @param {{str,x,y}[]} [input.texts]  sheet text (ft)
  * @param {{a,b}[]} [input.removed]    walls the user erased (matched by proximity)
+ * @param {{x0,y0,x1,y1}} [input.sheet] page extent in feet (lets the engine recognise a sheet border)
  * @param {object} [input.options]
  */
 export function runTrace(input = {}) {
@@ -42,8 +43,17 @@ export function runTrace(input = {}) {
     ...(input.bodies || []).map((b) => ({ conf: 0.75, src: 'given', ...b })),
   ]);
 
+  // user erasures win over evidence: cut exactly the erased stretch out of
+  // whatever wall bodies it lies along (never the whole run)
+  if (input.removed?.length) {
+    const before = bodies.length;
+    bodies = eraseFromBodies(bodies, input.removed);
+    log.push({ kind: 'erase', at: null, note: `${input.removed.length} wall piece(s) removed by hand` });
+    void before;
+  }
   const manual = (input.manual || []).map((m) => ({ ...m, conf: 1, src: 'manual' }));
-  bodies = bodies.concat(manual).map((b) => ({ ...b, kind: 'wall' }));
+  bodies = bodies.concat(manual).map((b) => ({ ...b, kind: 'wall' }))
+    .filter((b) => Number.isFinite(b.a?.x) && Number.isFinite(b.a?.y) && Number.isFinite(b.b?.x) && Number.isFinite(b.b?.y) && Number.isFinite(b.t) && b.t > 0 && dist(b.a, b.b) > 0.05);
 
   // 2. join corners / tees / drafting gaps
   const joined = joinWalls(bodies, opt, log);
@@ -54,18 +64,11 @@ export function runTrace(input = {}) {
 
   // 4. planar graph, cleaned
   const g0 = buildGraph(segs.concat(openings), opt, log);
-  // user erasures win over evidence: drop the graph edges they cover, then re-clean
-  let gE = g0;
-  if (input.removed?.length) {
-    const keep = g0.edges.filter((e) => e.kind !== 'wall' || !input.removed.some((r) => edgeCovered(g0.nodes[e.u], g0.nodes[e.v], r)));
-    if (keep.length !== g0.edges.length) log.push({ kind: 'erase', at: null, note: `${g0.edges.length - keep.length} wall piece(s) removed by hand` });
-    gE = { nodes: g0.nodes, edges: keep.map((e, i) => ({ ...e, id: i })) };
-  }
-  const g = pruneGraph(gE, opt, log);
+  const g = pruneGraph(g0, opt, log);
 
   // 5. faces → rooms, LF, flags
   const schedule = input.schedule !== undefined ? input.schedule : parseDoorSchedule(texts);
-  const res = analyzeGraph(g, { texts, arcs, schedule, options: opt });
+  const res = analyzeGraph(g, { texts, arcs, schedule, options: opt, sheet: input.sheet || null });
 
   const floorSf = res.rooms.reduce((s, r) => s + r.area, 0);
   const wallLf = res.rooms.reduce((s, r) => s + r.wallLf, 0);
@@ -97,9 +100,32 @@ export function runTrace(input = {}) {
   };
 }
 
-/** Is graph edge a–b part of the wall the user erased (r = the traced wall piece they clicked)? */
-function edgeCovered(a, b, r) {
-  const tol = 0.25;
-  const m = mid(a, b);
-  return closestOnSeg(m, r.a, r.b).d <= tol && closestOnSeg(a, r.a, r.b).d <= tol && closestOnSeg(b, r.a, r.b).d <= tol && dist(a, b) > 1e-6;
+/**
+ * Subtract each erased segment from the wall bodies it lies along.
+ * r is the traced wall piece the user clicked (graph-node coordinates, so it
+ * may run a few inches past the body into a corner — that's fine).
+ */
+export function eraseFromBodies(bodies, removed) {
+  let out = bodies;
+  for (const r of removed) {
+    const next = [];
+    for (const b of out) {
+      const L = dist(b.a, b.b);
+      if (L < 1e-6) continue;
+      const ux = (b.b.x - b.a.x) / L, uy = (b.b.y - b.a.y) / L;
+      const off = (p) => Math.abs((p.x - b.a.x) * uy - (p.y - b.a.y) * ux);
+      const along = (p) => (p.x - b.a.x) * ux + (p.y - b.a.y) * uy;
+      const tol = Math.max(0.3, (b.t || 0.4) * 0.75);
+      const rl = dist(r.a, r.b);
+      const parallel = rl > 1e-6 && Math.abs(((r.b.x - r.a.x) * uy - (r.b.y - r.a.y) * ux) / rl) < 0.06;
+      if (!parallel || off(r.a) > tol || off(r.b) > tol) { next.push(b); continue; }
+      const s0 = Math.min(along(r.a), along(r.b)), s1 = Math.max(along(r.a), along(r.b));
+      if (s1 <= 0.01 || s0 >= L - 0.01) { next.push(b); continue; }
+      const P = (s) => ({ x: b.a.x + ux * s, y: b.a.y + uy * s });
+      if (s0 > 0.1) next.push({ ...b, a: { ...b.a }, b: P(s0) });
+      if (s1 < L - 0.1) next.push({ ...b, a: P(s1), b: { ...b.b } });
+    }
+    out = next;
+  }
+  return out;
 }

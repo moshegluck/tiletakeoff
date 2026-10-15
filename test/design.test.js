@@ -78,3 +78,26 @@ describe('design picks flow into the takeoff', () => {
     expect(m.rooms[0].wallTile).toBeNull();
   });
 });
+
+describe('review regressions — takeoff side', () => {
+  it('two traced rooms with the same name keep separate ids across re-commits', () => {
+    const t = (id, cx) => ({ id, name: 'BEDROOM', type: 'bedroom', poly: sq(cx - 5, 0, 10, 10), holes: [], center: { x: cx, y: 5 }, wallLf: 40, spurLf: 0, openings: [], area: 100 });
+    useStore.getState().newProject();
+    useStore.getState().setTrace({ result: { rooms: [t('r1', 5), t('r2', 30)], walls: [], openings: [], flags: [] } });
+    useStore.getState().commitTrace();
+    const first = useStore.getState().rooms.map((r) => r.id);
+    useStore.getState().setTrace({ result: { rooms: [t('r1', 5.2), t('r2', 30.1)], walls: [], openings: [], flags: [] } });
+    useStore.getState().commitTrace();
+    const second = useStore.getState().rooms.map((r) => r.id);
+    expect(new Set(second).size).toBe(2);
+    expect(second.sort()).toEqual(first.sort());
+  });
+
+  it('full-height wall tile also covers the wall above each door', () => {
+    useStore.getState().newProject();
+    useStore.setState({ rooms: [{ id: 'b', name: 'BATH', points: sq(0, 0, 10, 8), assigned: [], wallHeight: 8, doorHeight: 6 + 8 / 12, wallLf: 33.5, openings: [{ width: 2.5 }], layout: { pattern: 'grid' } }], materials: [] });
+    useStore.getState().applyFinish('b', { wallTilePreset: WALL_TILE_PRESETS[0], wallTileHeight: null });
+    const e = estimateProject(useStore.getState());
+    expect(e.lines.find((l) => l.material.type === 'wall').netSf).toBeCloseTo(33.5 * 8 + 2.5 * (8 - (6 + 8 / 12)), 6);
+  });
+});

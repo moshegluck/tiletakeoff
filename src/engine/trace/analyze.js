@@ -13,6 +13,7 @@ import {
   sub, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp,
 } from './vec.js';
 import { traceFaces, stripSpurs, splitPinches, fmtIn } from './graph.js';
+// (dist, signedArea etc. come from vec.js above)
 
 const IN = 1 / 12;
 
@@ -60,14 +61,19 @@ export function offsetLoop(loop, nodes, distOf) {
   for (let i = 0; i < k; i++) {
     const A = L[(i - 1 + k) % k], B = L[i];
     const c = cross(A.u, B.u);
-    if (Math.abs(c) < 1e-6) {
-      e[(i - 1 + k) % k] = A.Q; s[i] = B.P;
-    } else {
-      // intersection of A's offset line and B's offset line
+    // Nearly-straight joins (real PDFs are full of 0.01° wobble) and reversals
+    // can't be intersected safely — the meeting point flies off to infinity.
+    // Step across at the shared corner instead.
+    const straightish = Math.abs(c) < 0.035 && dot(A.u, B.u) > 0;
+    let X = null;
+    if (!straightish && Math.abs(c) > 1e-9) {
       const t = cross(sub(B.P, A.P), B.u) / c;
-      const X = { x: A.P.x + A.u.x * t, y: A.P.y + A.u.y * t };
-      e[(i - 1 + k) % k] = X; s[i] = X;
+      X = { x: A.P.x + A.u.x * t, y: A.P.y + A.u.y * t };
+      const corner = A.q;
+      if (dist(X, corner) > 3 * Math.max(A.d, B.d) + 0.5) X = null; // runaway miter
     }
+    if (X) { e[(i - 1 + k) % k] = X; s[i] = X; }
+    else { e[(i - 1 + k) % k] = A.Q; s[i] = B.P; }
   }
   const poly = [];
   const segLen = [];
@@ -146,41 +152,41 @@ export function analyzeGraph(g, ctx = {}) {
 
   // ---- sheet border / frame: a loop whose only job is to enclose the building ----
   if (!ctx._frameChecked) {
+    // A sheet border runs around the edge of the PAGE. Only linework that spans
+    // the page (≥ 85% both ways) and holds no rooms of its own is treated as a
+    // frame — a big room with a detached core inside it is still a room.
     const frameComps = new Set();
-    const compsWithRooms = new Map();
-    for (const f of interior) {
-      const big = f.area >= 20;
-      if (!compsWithRooms.has(f.comp)) compsWithRooms.set(f.comp, { big: 0, containers: 0 });
-      const c = compsWithRooms.get(f.comp);
-      const isContainer = (f.holes || []).some((o) => interior.some((g) => g.comp === o.comp && g.area >= 20));
-      if (isContainer) c.containers++;
-      else if (big) c.big++;
+    const sheet = ctx.sheet;
+    const cbb = new Map();
+    for (const e of g.edges) {
+      const k = compOf.get(e.u);
+      if (!cbb.has(k)) cbb.set(k, { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+      const b = cbb.get(k);
+      for (const n of [nodes[e.u], nodes[e.v]]) { b.x0 = Math.min(b.x0, n.x); b.y0 = Math.min(b.y0, n.y); b.x1 = Math.max(b.x1, n.x); b.y1 = Math.max(b.y1, n.y); }
     }
-    for (const [comp, c] of compsWithRooms) if (c.containers > 0 && c.big === 0) frameComps.add(comp);
-
-    // Linework with no rooms of its own that either surrounds the building (an
-    // unclosed sheet border) or sits well away from it (title block, details,
-    // schedules) isn't part of the building. Anything overlapping the building
-    // stays — a leaking wall there must be flagged, never dropped.
-    const roomComps = new Set([...compsWithRooms].filter(([, c]) => c.big > 0).map(([k]) => k));
+    const roomsIn = new Map(); // comp -> { own big rooms (not containing other plans), containers }
+    for (const f of interior) {
+      if (!roomsIn.has(f.comp)) roomsIn.set(f.comp, { own: 0, containers: 0 });
+      const c = roomsIn.get(f.comp);
+      const contains = (f.holes || []).some((o) => interior.some((x) => x.comp === o.comp && x.area >= 20));
+      if (contains) c.containers++; else if (f.area >= 20) c.own++;
+    }
+    const spansSheet = (b) => sheet && (b.x1 - b.x0) >= 0.85 * (sheet.x1 - sheet.x0) && (b.y1 - b.y0) >= 0.85 * (sheet.y1 - sheet.y0);
+    for (const [k, b] of cbb) {
+      const c = roomsIn.get(k) || { own: 0, containers: 0 };
+      if (c.own === 0 && spansSheet(b)) frameComps.add(k);
+    }
+    // Roomless linework well away from the building (title block, details,
+    // schedules) isn't part of it. Anything overlapping the building stays —
+    // a leaking wall there must be flagged, never dropped.
+    const roomComps = new Set([...roomsIn].filter(([k, c]) => (c.own > 0 || c.containers > 0) && !frameComps.has(k)).map(([k]) => k));
     if (roomComps.size) {
       const bb = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-      const cbb = new Map();
-      for (const e of g.edges) {
-        const k = compOf.get(e.u);
-        if (!cbb.has(k)) cbb.set(k, { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
-        for (const n of [nodes[e.u], nodes[e.v]]) {
-          const b = cbb.get(k);
-          b.x0 = Math.min(b.x0, n.x); b.y0 = Math.min(b.y0, n.y); b.x1 = Math.max(b.x1, n.x); b.y1 = Math.max(b.y1, n.y);
-          if (roomComps.has(k)) { bb.x0 = Math.min(bb.x0, n.x); bb.y0 = Math.min(bb.y0, n.y); bb.x1 = Math.max(bb.x1, n.x); bb.y1 = Math.max(bb.y1, n.y); }
-        }
-      }
-      const M = 1;
+      for (const k of roomComps) { const b = cbb.get(k); if (!b) continue; bb.x0 = Math.min(bb.x0, b.x0); bb.y0 = Math.min(bb.y0, b.y0); bb.x1 = Math.max(bb.x1, b.x1); bb.y1 = Math.max(bb.y1, b.y1); }
       for (const [k, b] of cbb) {
         if (roomComps.has(k) || frameComps.has(k)) continue;
-        const surrounds = b.x0 <= bb.x0 - M && b.y0 <= bb.y0 - M && b.x1 >= bb.x1 + M && b.y1 >= bb.y1 + M;
         const far = b.x1 < bb.x0 - 6 || b.x0 > bb.x1 + 6 || b.y1 < bb.y0 - 6 || b.y0 > bb.y1 + 6;
-        if (surrounds || far) frameComps.add(k);
+        if (far) frameComps.add(k);
       }
     }
     if (frameComps.size) {
@@ -227,12 +233,25 @@ export function analyzeGraph(g, ctx = {}) {
   const roomOfFace = new Map();
   let rIdx = 0;
   for (const f of interior) {
-    const loops = splitPinches(f.loop);
-    if (loops.length > 1) flag('warn', 'pinch', nodes[loops[0][0].from], 'Room boundary touches itself at a single corner — the trace pinches here');
-    const parts = loops.filter((l) => l.length >= 3).map((l) => offsetLoop(l, nodes, distFor));
-    const holes = (f.holes || []).map((o) => offsetLoop(o.loop, nodes, distFor));
+    // A face boundary can visit a corner twice. Sort the sub-loops out:
+    //   positive loops  → the room outline (two = a true pinch between rooms)
+    //   negative loops  → a walled box tied to the room by a wall (a hole)
+    //   2-edge loops    → a wall walked out and back (both faces count)
+    const ringLoops = [], holeLoops = [], extraSpurs = [];
+    for (const l of splitPinches(f.loop)) {
+      const a = l.length >= 3 ? signedArea(l.map((h) => nodes[h.from])) : 0;
+      if (a > 1e-6) ringLoops.push({ l, a });
+      else if (a < -1e-6) holeLoops.push(l);
+      else for (const h of l) if (!extraSpurs.includes(h.e)) extraSpurs.push(h.e);
+    }
+    ringLoops.sort((p, q) => q.a - p.a);
+    if (ringLoops.length > 1) flag('warn', 'pinch', nodes[ringLoops[1].l[0].from], 'Two spaces touch at a single corner here — check whether they should be one room or two');
+    if (!ringLoops.length) continue;
+    const parts = ringLoops.map((r) => offsetLoop(r.l, nodes, distFor));
+    const holes = (f.holes || []).map((o) => offsetLoop(o.loop, nodes, distFor)).concat(holeLoops.map((l) => offsetLoop(l, nodes, distFor)));
+    const holeCenterArea = holeLoops.reduce((s, l) => s + Math.abs(signedArea(l.map((h) => nodes[h.from]))), 0);
     let area = parts.reduce((s, p) => s + signedArea(p.poly), 0) + holes.reduce((s, p) => s + signedArea(p.poly), 0);
-    const centerArea = f.area - (f.holes || []).reduce((s, o) => s + Math.abs(o.area), 0);
+    const centerArea = f.area - (f.holes || []).reduce((s, o) => s + Math.abs(o.area), 0) - holeCenterArea;
     const perim = parts.reduce((s, p) => s + polyPerimeter(p.poly), 0);
     const inverted = parts.reduce((s, p) => s + p.inverted, 0) + holes.reduce((s, p) => s + p.inverted, 0);
 
@@ -242,9 +261,10 @@ export function analyzeGraph(g, ctx = {}) {
       voids.push({ poly: f.poly, area: Math.max(0, area), centerArea });
       continue;
     }
+    let fellBack = false;
     if (area > centerArea + 1e-6 || inverted > 0) {
       flag('warn', 'offset', interiorPoint(f.poly), 'Room outline needed a fallback around a very short wall — check the corners here');
-      if (area > centerArea || area <= 0) area = centerArea;
+      if (area > centerArea || area <= 0) { area = centerArea; fellBack = true; }
     }
 
     // wall linear footage along the finished face, net of openings
@@ -260,10 +280,10 @@ export function analyzeGraph(g, ctx = {}) {
     // spurs: a partition that dead-ends inside the room has two faces + an end cap
     const spurList = [];
     let spurLf = 0;
-    const spurEdges = f.spurs.filter((e) => e.kind !== 'opening');
+    const spurEdges = [...f.spurs, ...extraSpurs.filter((e) => !f.spurs.includes(e))].filter((e) => e.kind !== 'opening');
     if (spurEdges.length) {
-      // group spur edges into chains attached at a boundary node
-      const onLoop = new Set(f.loop.map((h) => h.from));
+      // group spur edges into chains attached at a boundary node (room outline or a hole)
+      const onLoop = new Set([...f.loop.map((h) => h.from), ...(f.holes || []).flatMap((o) => o.loop.map((h) => h.from))]);
       const byNode = new Map();
       for (const e of spurEdges) for (const n of [e.u, e.v]) { if (!byNode.has(n)) byNode.set(n, []); byNode.get(n).push(e); }
       const used = new Set();
@@ -276,12 +296,19 @@ export function analyzeGraph(g, ctx = {}) {
           for (const n of [x.u, x.v]) for (const y of byNode.get(n) || []) if (!used.has(y)) { used.add(y); q.push(y); }
         }
         const total = chain.reduce((s, x) => s + dist(nodes[x.u], nodes[x.v]), 0);
-        const attach = chain.flatMap((x) => [x.u, x.v]).find((n) => onLoop.has(n));
-        const hostT = attach != null ? Math.max(0, ...g.edges.filter((x) => (x.u === attach || x.v === attach) && !chain.includes(x)).map((x) => x.t)) : 0;
-        const lf = Math.max(0, 2 * total - hostT);
-        spurLf += lf;
         const ends = chain.flatMap((x) => [x.u, x.v]);
-        const freeEnd = ends.find((n) => ends.filter((m) => m === n).length === 1 && n !== attach);
+        const attaches = [...new Set(ends.filter((n) => onLoop.has(n)))];
+        const attach = attaches[0];
+        const frees = [...new Set(ends.filter((n) => ends.filter((m) => m === n).length === 1 && !onLoop.has(n)))];
+        const tc = chain.reduce((s, x) => s + x.t * dist(nodes[x.u], nodes[x.v]), 0) / (total || 1);
+        // both faces, minus the part buried in each host wall, minus the strip of
+        // host face it covers, plus an end cap at each free end:
+        //   2·L − Σ hostT − |attach|·t + |free|·t
+        let hostSum = 0;
+        for (const n of attaches) hostSum += Math.max(0, ...g.edges.filter((x) => (x.u === n || x.v === n) && !chain.includes(x)).map((x) => x.t));
+        const lf = Math.max(0, 2 * total - hostSum - attaches.length * tc + frees.length * tc);
+        spurLf += lf;
+        const freeEnd = frees[0];
         spurList.push({ lf, length: total, t: chain[0].t, a: attach != null ? { ...nodes[attach] } : { ...nodes[chain[0].u] }, b: freeEnd != null ? { ...nodes[freeEnd] } : { ...nodes[chain[0].v] }, edges: chain.map((x) => x.id) });
       }
     }
@@ -289,15 +316,15 @@ export function analyzeGraph(g, ctx = {}) {
     const id = `r${++rIdx}`;
     const room = {
       id, faceId: f.id,
-      poly: parts[0]?.poly || f.poly,
+      poly: fellBack ? ringLoops[0].l.map((h) => ({ ...nodes[h.from] })) : parts[0].poly,
       extraPolys: parts.slice(1).map((p) => p.poly),
-      holes: holes.map((h) => h.poly),
-      centerPoly: f.poly,
+      holes: fellBack ? (f.holes || []).map((o) => o.poly).concat(holeLoops.map((l) => l.map((h) => ({ ...nodes[h.from] })))) : holes.map((h) => h.poly),
+      centerPoly: ringLoops[0].l.map((h) => nodes[h.from]),
       area, centerArea, perimeter: perim,
       wallLf: wallLf + spurLf, wallLfLoop: wallLf, openingLf, spurLf, spurs: spurList,
       edgeIds: [...new Set(edgeLfs.map((x) => x.e.id))],
       labels: (f.labels || []).map((t) => t.str.trim()),
-      center: interiorPoint(parts[0]?.poly?.length >= 3 ? parts[0].poly : f.poly),
+      center: interiorPoint(parts[0].poly.length >= 3 ? parts[0].poly : f.poly),
       openings: [],
       flags: [],
     };
@@ -309,10 +336,12 @@ export function analyzeGraph(g, ctx = {}) {
       if (!nameParts.some((x) => x.toLowerCase() === s.toLowerCase())) nameParts.push(s);
     }
     // keep labels that sit together (within ~4 ft of the first room-type label)
-    const anchor = lbls.find((t) => roomTypeOf(t.str) !== 'room') || lbls[0];
+    const typedL = lbls.filter((t) => roomTypeOf(t.str) !== 'room');
+    const anchor = (typedL.length ? typedL : lbls).slice().sort((a, b) => dist(a, room.center) - dist(b, room.center))[0];
     const near = anchor ? lbls.filter((t) => dist(t, anchor) < 4.5) : [];
     room.name = near.length ? [...new Set(near.map((t) => t.str.trim()))].join(' ') : null;
-    room.type = roomTypeOf(room.name || '');
+    // the room's type comes from its own anchor label, not a neighbour's stray tag
+    room.type = anchor && roomTypeOf(anchor.str) !== 'room' ? roomTypeOf(anchor.str) : roomTypeOf(room.name || '');
     // two different room names far apart in one face → merged rooms
     const typed = lbls.filter((t) => roomTypeOf(t.str) !== 'room');
     const far = typed.filter((t) => anchor && dist(t, anchor) >= 6 && roomTypeOf(t.str) !== roomTypeOf(anchor.str));
@@ -322,6 +351,10 @@ export function analyzeGraph(g, ctx = {}) {
     }
     rooms.push(room);
     roomOfFace.set(f.id, room);
+  }
+
+  if (!rooms.length && !ctx._quiet) {
+    flag('error', 'no_rooms', null, 'No closed rooms were found — check the scale and the trace area, or the drawing may be too faint / not a floor plan');
   }
 
   // default names
@@ -363,10 +396,14 @@ export function analyzeGraph(g, ctx = {}) {
   // ---- dangling ends ----
   const deg = new Map();
   for (const e of g.edges) { deg.set(e.u, (deg.get(e.u) || 0) + 1); deg.set(e.v, (deg.get(e.v) || 0) + 1); }
+  const halfInto = new Map();
+  for (const h of half) halfInto.set(`${h.e.id}:${h.to}`, h);
+  const edgeAt = new Map();
+  for (const e of g.edges) { if (!edgeAt.has(e.u)) edgeAt.set(e.u, e); if (!edgeAt.has(e.v)) edgeAt.set(e.v, e); }
   for (const [n, d] of deg) {
     if (d !== 1) continue;
-    const e = g.edges.find((x) => x.u === n || x.v === n);
-    const h = half.find((x) => x.e === e && x.to === n);
+    const e = edgeAt.get(n);
+    const h = halfInto.get(`${e.id}:${n}`);
     const f = h ? faceOfHalf.get(h.id) : null;
     const room = roomOf(f);
     if (room) flag('info', 'spur', nodes[n], `Free-standing wall end in ${room.name} (partition / pony wall) — both faces counted in wall LF`, { roomId: room.id });

@@ -18,6 +18,48 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Cloud (optional)** — Supabase auth + per-user projects with Row Level Security; auto-saves your work. Runs local-only (localStorage) if Supabase env vars are absent.
 - **Export** — CSV, multi-sheet Excel (.xlsx), and re-importable JSON.
 
+## Trace — takeoff from a reconstructed model (not from pixels)
+
+Most AI takeoff tools read the plan image and measure what they see. They get
+individual lengths right but lose the *topology* — rooms that don't close,
+walls walked twice, linear footage that misses the in-and-out of a partition.
+**Trace** works the other way round: it rebuilds the walls as one connected
+model, insists that the model is coherent, and takes every number off that
+model. The PDF is only the evidence.
+
+1. **Read the plan.** Vector PDFs: every wall face, door swing and label is read
+   straight out of the PDF (`src/lib/pdfVectors.js`). Scans: strokes are found
+   in the image after auto-straightening (`src/lib/rasterWalls.js`). The scale
+   note on the sheet (e.g. `1/4" = 1'-0"`) is picked up automatically.
+2. **Find the walls.** Parallel face lines a wall-thickness apart become wall
+   bodies; doubled traces merge; evenly spaced hatch / tile patterns are ignored
+   (`src/engine/trace/walls.js`).
+3. **Connect them.** Corners and tees are closed, drafting gaps repaired, and
+   doors / openings bridged — using door swings as rulers (`graph.js`).
+4. **Close every room.** The walls become a planar graph; every room must be a
+   closed loop (face tracing). A wall that dead-ends inside a room is counted in
+   *and* out. Anything that doesn't close becomes a **located flag** — never a
+   silent number (`analyze.js`).
+5. **Check it makes sense.** Door widths are checked against what the room is
+   (a 5' "door" into a bath is flagged; an 8' cased opening between kitchen and
+   living is fine), against the door schedule, and the scale is cross-checked
+   against standard door sizes.
+6. **Fix and re-solve.** Add or erase a wall on the plan; the whole model
+   re-solves so rooms, SF and LF stay consistent. Then **Send rooms to takeoff**.
+
+Floor SF is measured to finished wall faces (to the door centre by default);
+wall LF is net of openings and includes both faces of dead-end partitions.
+
+### 3D walk-through
+The traced model builds a walkable house: true wall thickness, door headers and
+hung doors, ceiling height, tiled floors at true tile size. Click any floor or
+wall to choose a finish — every pick becomes a priced material in the estimate.
+
+### Try it
+`samples/sample-house.pdf` (vector) and `samples/sample-house-scanned.pdf`
+(crooked scan) are included. Load one with **PDF**, click **Trace**, accept the
+sheet scale, **Trace plan**. Regenerate with `npm run sample:pdf`.
+
 ## Testing
 
 The engine layer (geometry, units, layouts, cut redistribution, estimate,
