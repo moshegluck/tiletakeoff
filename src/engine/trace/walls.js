@@ -225,7 +225,10 @@ export function pairWalls(rawLines, options = {}) {
     c.typical = !!pk;
     c.prio = pk ? 0 : 1;
   }
-  cands.sort((p, q) => p.prio - q.prio || p.d - q.d || q.overlap - p.overlap);
+  // A wall face's true partner is the one it runs alongside the longest: a sink
+  // or shelf line may sit a "wall thickness" off the face, but only for a short
+  // stretch. Longer overlap first, then the thinner spacing.
+  cands.sort((p, q) => p.prio - q.prio || (q.overlap - p.overlap) || p.d - q.d);
 
   // ---- greedy assignment with per-line interval coverage ----
   const bodies = [];

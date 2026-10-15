@@ -144,8 +144,34 @@ export function analyzeGraph(g, ctx = {}) {
     if (host) { (host.holes ||= []).push(o); o.hostOf = host; }
   }
 
+  // ---- sheet border / frame: a loop whose only job is to enclose the building ----
+  if (!ctx._frameChecked) {
+    const frameComps = new Set();
+    const compsWithRooms = new Map();
+    for (const f of interior) {
+      const big = f.area >= 20;
+      if (!compsWithRooms.has(f.comp)) compsWithRooms.set(f.comp, { big: 0, containers: 0 });
+      const c = compsWithRooms.get(f.comp);
+      const isContainer = (f.holes || []).some((o) => interior.some((g) => g.comp === o.comp && g.area >= 20));
+      if (isContainer) c.containers++;
+      else if (big) c.big++;
+    }
+    for (const [comp, c] of compsWithRooms) if (c.containers > 0 && c.big === 0) frameComps.add(comp);
+    if (frameComps.size) {
+      const g2 = { nodes: g.nodes, edges: g.edges.filter((e) => !frameComps.has(compOf.get(e.u))).map((e, i) => ({ ...e, id: i })) };
+      const res = analyzeGraph(g2, { ...ctx, _frameChecked: true });
+      res.flags.push({ id: 'f_frame', severity: 'info', kind: 'frame', at: null, msg: `${frameComps.size} sheet border / frame loop(s) around the plan ignored` });
+      res.ignoredEdges = g.edges.length - g2.edges.length;
+      return res;
+    }
+  }
+
   // ---- labels → faces ----
-  const labelItems = texts.filter((t) => isLabel(t.str));
+  // only text over the building counts — schedules, notes and title blocks sit outside it
+  const bb = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  for (const f of interior) for (const p of f.poly) { bb.x0 = Math.min(bb.x0, p.x); bb.y0 = Math.min(bb.y0, p.y); bb.x1 = Math.max(bb.x1, p.x); bb.y1 = Math.max(bb.y1, p.y); }
+  const overBuilding = (t) => t.x >= bb.x0 - 1 && t.x <= bb.x1 + 1 && t.y >= bb.y0 - 1 && t.y <= bb.y1 + 1;
+  const labelItems = texts.filter((t) => isLabel(t.str) && overBuilding(t));
   const faceAt = (p) => {
     let best = null;
     for (const f of interior) {
@@ -329,7 +355,7 @@ export function analyzeGraph(g, ctx = {}) {
   }
 
   // ---- door / opening sanity in context ----
-  checkOpenings(openings, rooms, schedule, flag);
+  checkOpenings(openings, rooms, schedule, flag, arcs.length > 0);
 
   // ---- door-swing scale calibration ----
   const calibration = calibrateFromDoors(arcs);
@@ -357,7 +383,8 @@ export function analyzeGraph(g, ctx = {}) {
 
 const STD_LEAF = [1.5, 1 + 8 / 12, 1 + 10 / 12, 2, 2 + 2 / 12, 2 + 4 / 12, 2 + 6 / 12, 2 + 8 / 12, 2 + 10 / 12, 3, 3.5];
 
-function checkOpenings(openings, rooms, schedule, flag) {
+function checkOpenings(openings, rooms, schedule, flag, swingsReadable) {
+  if (!swingsReadable && openings.length) flag('info', 'no_swings', null, 'Door swings could not be read on this sheet — door widths come from the wall gaps');
   const byId = new Map(rooms.map((r) => [r.id, r]));
   for (const o of openings) {
     const at = mid(o.a, o.b);
@@ -377,7 +404,7 @@ function checkOpenings(openings, rooms, schedule, flag) {
     } else if (!types.includes('exterior') && w > 8 && o.arcs.length === 0) {
       flag('info', 'inferred_opening', at, `${label}: wide cased opening inferred — confirm it's open and not a missing wall`);
     }
-    if (o.openingType === 'opening' && w <= 4 && !types.includes('closet')) {
+    if (swingsReadable && o.openingType === 'opening' && w <= 4 && !types.includes('closet')) {
       flag('info', 'no_swing', at, `${label}: no door swing found (pocket / bifold / cased?) — width taken from the wall gap`);
     }
     if (schedule && schedule.widths?.length && o.arcs.length) {
