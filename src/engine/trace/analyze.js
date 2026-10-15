@@ -17,6 +17,7 @@ import { traceFaces, stripSpurs, splitPinches, fmtIn } from './graph.js';
 
 const IN = 1 / 12;
 
+/** @type {[string, RegExp][]} */
 export const ROOM_TYPES = [
   ['bath', /\b(bath|bathroom|bth|wc|w\.c\.?|powder|pwdr|toilet|lav|lavatory|ensuite|en-suite|shower|restroom|half bath|1\/2 bath)\b/i],
   ['closet', /\b(closet|clos|clo|cl|wic|w\.i\.c\.?|walk-?in|linen|lin|pantry|pan|storage|stor|wardrobe)\b/i],

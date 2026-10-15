@@ -26,6 +26,8 @@ export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor
  * @param {{c,r}[]} [input.arcs]       door-swing arcs (ft)
  * @param {{str,x,y}[]} [input.texts]  sheet text (ft)
  * @param {{a,b}[]} [input.removed]    walls the user erased (matched by proximity)
+ * @param {{a,b,t}[]} [input.manual]   walls the user drew by hand (ft) — always win
+ * @param {object|null} [input.schedule] door schedule; omitted = parsed from texts
  * @param {{x0,y0,x1,y1}} [input.sheet] page extent in feet (lets the engine recognise a sheet border)
  * @param {object} [input.options]
  */

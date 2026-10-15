@@ -201,6 +201,7 @@ function collinearGap(e1, e2) {
 export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
   const opt = { ...GRAPH_DEFAULTS, ...options };
   const free = ends.filter((e) => !e.joined);
+  /** @type {any[]} */
   const cands = [];
   const segIdx = new GridIndex(4);
   segs.forEach((sg, i) => segIdx.insert(i, Math.min(sg.a.x, sg.b.x), Math.min(sg.a.y, sg.b.y), Math.max(sg.a.x, sg.b.x), Math.max(sg.a.y, sg.b.y)));
@@ -490,6 +491,7 @@ export function traceFaces(g) {
   };
 
   const seen = new Set();
+  /** @type {any[]} */
   const faces = [];
   for (const h0 of H) {
     if (seen.has(h0.id)) continue;
