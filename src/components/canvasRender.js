@@ -5,14 +5,15 @@
 //
 // rc shape:
 //   { s, scale, ft2px, px2ft, toScreen,
-//     planImg, draft, mkDraft, ruler }   (the last four are the
-//   current values of those refs, not the refs themselves)
+//     planImg, draft, mkDraft, ruler, marquee, hoverSnap }   (the
+//   transient ones are the current values of those refs, not the refs)
 // ============================================================
 
 import { centroid, polygonArea, bounds } from '../engine/geometry.js';
 import { generateLayout } from '../engine/layouts.js';
 import { formatLength, formatArea } from '../engine/units.js';
 import { markupValue } from '../engine/markups.js';
+import { roomRegions, zonesOf } from '../engine/zones.js';
 import { MONO, hexA } from './canvasUtils.js';
 import { roundRect } from './canvasUtils.js';
 
@@ -45,6 +46,11 @@ export function renderScene(ctx, W, H, rc) {
   if (rc.mkDraft) drawMkDraft(ctx, rc);
   if (rc.ruler) drawRuler(ctx, rc);
   if (rc.marquee) drawMarquee(ctx, rc.marquee);
+  if (rc.hoverSnap) {
+    const p = rc.toScreen(rc.ft2px(rc.hoverSnap.x), rc.ft2px(rc.hoverSnap.y));
+    ctx.save(); ctx.strokeStyle = '#1d7a4d'; ctx.lineWidth = 2;
+    ctx.strokeRect(p.x - 6, p.y - 6, 12, 12); ctx.restore();
+  }
 }
 
 // Rubber-band selection rectangle (screen coords) for multi-select.
@@ -221,13 +227,68 @@ export function drawFootGrid(ctx, W, H, rc) {
 }
 
 function roomScreenPath(ctx, r, rc) {
-  const { ft2px, toScreen } = rc;
   ctx.beginPath();
-  r.points.forEach((p, i) => {
+  tracePoly(ctx, r.points, rc);
+}
+
+// Add one closed polygon (feet) to the current path without starting a new
+// one, so rings and holes can be filled/clipped with the even-odd rule.
+function tracePoly(ctx, pts, rc) {
+  const { ft2px, toScreen } = rc;
+  pts.forEach((p, i) => {
     const sp = toScreen(ft2px(p.x), ft2px(p.y));
     i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y);
   });
   ctx.closePath();
+}
+
+// Floor design zones: border bands as tinted rings that follow the walls,
+// inlays as tinted shapes with a label. A zone with no material yet is drawn
+// faint and dashed so it reads as "not being estimated".
+function drawZones(ctx, r, rc) {
+  if (!zonesOf(r).length) return;
+  const { s, scale, ft2px, toScreen } = rc;
+  const reg = roomRegions(r);
+  const roomSel = s.selection.type === 'room' && s.selection.id === r.id;
+  for (const b of reg.bands) {
+    const col = b.zone.color || '#7a3fa0';
+    const sel = roomSel && s.selZone === b.zone.id;
+    ctx.save();
+    ctx.beginPath(); tracePoly(ctx, b.outer, rc); tracePoly(ctx, b.holes[0], rc);
+    ctx.fillStyle = hexA(col, b.zone.materialId ? (sel ? .55 : .38) : .12);
+    ctx.fill('evenodd');
+    ctx.strokeStyle = col; ctx.lineWidth = sel ? 2.2 : 1.1;
+    if (!b.zone.materialId) ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const z of reg.inlays) {
+    const col = z.zone.color || '#b25e00';
+    const sel = roomSel && s.selZone === z.zone.id;
+    ctx.save();
+    ctx.beginPath(); tracePoly(ctx, z.outer, rc);
+    ctx.fillStyle = hexA(col, z.zone.materialId ? (sel ? .5 : .32) : .1);
+    ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = sel ? 2.4 : 1.4;
+    if (!z.zone.materialId) ctx.setLineDash([4, 3]);
+    ctx.stroke(); ctx.setLineDash([]);
+    const pts = z.outer.map((p) => toScreen(ft2px(p.x), ft2px(p.y)));
+    let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    pts.forEach((p) => { minx = Math.min(minx, p.x); maxx = Math.max(maxx, p.x); miny = Math.min(miny, p.y); maxy = Math.max(maxy, p.y); });
+    if (maxx - minx > 46 && maxy - miny > 26) {
+      const c = centroid(z.outer), cs = toScreen(ft2px(c.x), ft2px(c.y));
+      ctx.textAlign = 'center'; ctx.fillStyle = col;
+      ctx.font = '600 11px Inter, sans-serif'; ctx.fillText(z.zone.name, cs.x, cs.y - 2);
+      if (scale) { ctx.font = '600 10px ' + MONO; ctx.fillText(formatArea(z.area, s.unitSystem), cs.x, cs.y + 11); }
+    }
+    if (sel && s.tool === 'select') {
+      pts.forEach((p) => {
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = col; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 7); ctx.fill(); ctx.stroke();
+      });
+    }
+    ctx.restore();
+  }
 }
 
 export function drawRoom(ctx, r, rc) {
@@ -246,6 +307,7 @@ export function drawRoom(ctx, r, rc) {
     ctx.setLineDash([5, 4]); ctx.strokeStyle = '#c8521f'; ctx.lineWidth = 2; ctx.stroke();
     ctx.setLineDash([]);
   }
+  drawZones(ctx, r, rc);
   const c = centroid(r.points); const cs = toScreen(ft2px(c.x), ft2px(c.y));
   const area = scale ? polygonArea(r.points) : 0;
   ctx.fillStyle = r.color; ctx.font = '600 12px Inter, sans-serif'; ctx.textAlign = 'center';
@@ -256,7 +318,7 @@ export function drawRoom(ctx, r, rc) {
   }
   // vertex handles only when this room is the sole selection (multi-select
   // moves the group, so per-vertex editing is hidden then)
-  if (primary && s.tool === 'select' && (s.selRooms?.length ?? 0) <= 1) {
+  if (primary && !s.selZone && s.tool === 'select' && (s.selRooms?.length ?? 0) <= 1) {
     r.points.forEach((p) => {
       const sp = toScreen(ft2px(p.x), ft2px(p.y));
       ctx.fillStyle = '#fff'; ctx.strokeStyle = r.color; ctx.lineWidth = 2;
@@ -267,49 +329,122 @@ export function drawRoom(ctx, r, rc) {
 }
 
 export function drawTileGrid(ctx, rc) {
-  const { s, ft2px, toScreen } = rc;
+  const { s } = rc;
   const m = s.materials.find((x) => x.id === s.gridMaterialId); if (!m) return;
   const twFt = (m.tw + (m.grout || 0)) / 12, thFt = (m.th + (m.grout || 0)) / 12;
-  s.rooms.filter((r) => r.assigned?.includes(m.id)).forEach((r) => {
-    ctx.save();
-    roomScreenPath(ctx, r, rc); ctx.clip();
-    const tiles = generateLayout(r.points, {
-      pattern: r.layout?.pattern || m.pattern || 'grid',
-      tileW: twFt, tileH: thFt,
-      angleDeg: r.layout?.angleDeg || 0, origin: r.layout?.origin || { x: 0, y: 0 },
-    });
-    const z = s.view.zoom;
-    tiles.forEach((t) => {
-      const sp = toScreen(ft2px(t.cx), ft2px(t.cy));
-      const w = ft2px(t.w) * z, h = ft2px(t.h) * z;
-      if (w < 2 || h < 2) return;
-      ctx.save(); ctx.translate(sp.x, sp.y); ctx.rotate(t.rot);
-      ctx.fillStyle = hexA(m.color, .1); ctx.strokeStyle = hexA(m.color, .5); ctx.lineWidth = 1;
-      ctx.fillRect(-w / 2, -h / 2, w - 1, h - 1); ctx.strokeRect(-w / 2, -h / 2, w - 1, h - 1);
+  for (const r of s.rooms) {
+    const onField = r.assigned?.includes(m.id);
+    const onZone = zonesOf(r).some((z) => z.materialId === m.id);
+    if (!onField && !onZone) continue;
+    const reg = roomRegions(r);
+    if (onField) {
+      // clip to the field only: room minus bands minus inlays (even-odd)
+      ctx.save();
+      ctx.beginPath();
+      for (const f of reg.field) { tracePoly(ctx, f.outer, rc); f.holes.forEach((h) => tracePoly(ctx, h, rc)); }
+      ctx.clip('evenodd');
+      drawLayoutTiles(ctx, rc, m, r.points, r.layout, twFt, thFt);
       ctx.restore();
-    });
+    }
+    for (const z of reg.inlays) {
+      if (z.zone.materialId !== m.id) continue;
+      ctx.save();
+      ctx.beginPath(); tracePoly(ctx, z.outer, rc); ctx.clip();
+      drawLayoutTiles(ctx, rc, m, z.outer, z.layout, twFt, thFt);
+      ctx.restore();
+    }
+    for (const b of reg.bands) if (b.zone.materialId === m.id) drawBandJoints(ctx, rc, m, b);
+  }
+}
+
+function drawLayoutTiles(ctx, rc, m, poly, layout, twFt, thFt) {
+  const { s, ft2px, toScreen } = rc;
+  const tiles = generateLayout(poly, {
+    pattern: layout?.pattern || m.pattern || 'grid',
+    tileW: twFt, tileH: thFt,
+    angleDeg: layout?.angleDeg || 0, origin: layout?.origin || { x: 0, y: 0 },
+  });
+  const z = s.view.zoom;
+  tiles.forEach((t) => {
+    const sp = toScreen(ft2px(t.cx), ft2px(t.cy));
+    const w = ft2px(t.w) * z, h = ft2px(t.h) * z;
+    if (w < 2 || h < 2) return;
+    ctx.save(); ctx.translate(sp.x, sp.y); ctx.rotate(t.rot);
+    ctx.fillStyle = hexA(m.color, .1); ctx.strokeStyle = hexA(m.color, .5); ctx.lineWidth = 1;
+    ctx.fillRect(-w / 2, -h / 2, w - 1, h - 1); ctx.strokeRect(-w / 2, -h / 2, w - 1, h - 1);
     ctx.restore();
   });
 }
 
+// Border band: a joint across the band at every piece length along each run.
+function drawBandJoints(ctx, rc, m, band) {
+  const { ft2px, toScreen } = rc;
+  const g = (m.grout || 0) / 12;
+  const L = Math.max(m.tw, m.th) / 12 + g;
+  if (!(L > 0)) return;
+  const half = (+band.zone.width || 0) / 2;
+  const C = band.centerline;
+  // inward normal sign depends on the polygon's winding
+  let sa = 0;
+  for (let i = 0; i < C.length; i++) { const p = C[i], q = C[(i + 1) % C.length]; sa += p.x * q.y - q.x * p.y; }
+  const sgn = sa > 0 ? 1 : -1;
+  ctx.save();
+  ctx.strokeStyle = hexA(m.color, .9); ctx.lineWidth = 1;
+  for (let i = 0; i < C.length; i++) {
+    const a = C[i], b = C[(i + 1) % C.length];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 1e-6) continue;
+    const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+    const nx = -uy * sgn, ny = ux * sgn;
+    for (let d = 0; d <= len + 1e-6; d += L) {
+      const px = a.x + ux * d, py = a.y + uy * d;
+      const p1 = toScreen(ft2px(px - nx * half), ft2px(py - ny * half));
+      const p2 = toScreen(ft2px(px + nx * half), ft2px(py + ny * half));
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 export function drawDraft(ctx, rc) {
   const { s, scale, ft2px, toScreen, draft: d } = rc;
+  // floor design drafts (zrect / zpoly) draw purple so they read as "not a wall"
+  const zone = d.kind === 'zrect' || d.kind === 'zpoly';
+  const col = zone ? '#7a3fa0' : '#c8521f';
+  const closed = d.kind === 'rect' || d.kind === 'zrect';
   ctx.save();
   ctx.setLineDash([6, 4]); ctx.lineWidth = 1.8;
-  ctx.strokeStyle = '#c8521f'; ctx.fillStyle = hexA('#c8521f', .08);
+  ctx.strokeStyle = col; ctx.fillStyle = hexA(col, .08);
   ctx.beginPath();
-  d.points.forEach((p, i) => { const sp = toScreen(ft2px(p.x), ft2px(p.y)); i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y); });
-  if (d.kind === 'rect') ctx.closePath();
+  const path = [...d.points, ...(!closed && d.hover ? [d.hover] : [])];
+  path.forEach((p, i) => { const sp = toScreen(ft2px(p.x), ft2px(p.y)); i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y); });
+  if (closed) ctx.closePath();
   ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
   d.points.forEach((p) => {
     const sp = toScreen(ft2px(p.x), ft2px(p.y));
-    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#c8521f'; ctx.lineWidth = 2;
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = col; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(sp.x, sp.y, 4, 0, 7); ctx.fill(); ctx.stroke();
   });
-  if (scale && d.kind === 'rect' && d.points.length === 4) {
+  // snap marker: the point landed on a room/zone corner or wall
+  if (d.snap) {
+    const sp = toScreen(ft2px(d.snap.x), ft2px(d.snap.y));
+    ctx.strokeStyle = '#1d7a4d'; ctx.lineWidth = 2;
+    ctx.strokeRect(sp.x - 6, sp.y - 6, 12, 12);
+  }
+  if (scale && closed && d.points.length === 4) {
     const b = bounds(d.points); const c = toScreen(ft2px(b.minx + b.w / 2), ft2px(b.miny + b.h / 2));
     ctx.fillStyle = '#10171f'; ctx.font = '600 12px ' + MONO; ctx.textAlign = 'center';
     ctx.fillText(`${formatLength(b.w, s.unitSystem)} × ${formatLength(b.h, s.unitSystem)}`, c.x, c.y);
+  }
+  // live segment length while tracing a design polygon
+  if (scale && d.kind === 'zpoly' && d.hover && d.points.length) {
+    const a = d.points[d.points.length - 1];
+    const txt = formatLength(Math.hypot(d.hover.x - a.x, d.hover.y - a.y), s.unitSystem);
+    const hs = toScreen(ft2px(d.hover.x), ft2px(d.hover.y));
+    ctx.font = '600 11px ' + MONO; ctx.textAlign = 'left';
+    const w = ctx.measureText(txt).width + 12;
+    ctx.fillStyle = col; roundRect(ctx, hs.x + 12, hs.y - 9, w, 18, 4); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(txt, hs.x + 18, hs.y + 3.5);
   }
   ctx.restore();
 }

@@ -9,6 +9,7 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Markups (Bluebeam-style)** — Length, Area, Box, and Count measurement tools with per-markup unit cost, line cost, notes, and a measurement log that totals by type. Hotkeys M / A / B / C.
 - **All measurement types** — feet-inches (fractions), decimal feet, inches, meters, cm, mm. Switch any time; everything re-renders.
 - **Tile layouts** — straight grid, running brick (50% / 33%), herringbone, diagonal 45°, basketweave, with rotation. Full vs. cut tiles shaded on canvas.
+- **Floor design (borders & inlays)** — the room outline is the walls; floor designs live inside it as zones with their own material. A **border band** is defined by distance-from-wall + width and is derived from the wall polygon (no tracing; follows L-shapes and re-flows when the room changes; stack bands for layered borders/listellos). An **inlay** (medallion, rug inset, feature panel) is traced (D) or boxed (I) on the plan's floor lines, snapping to room/inlay corners and walls, with its own pattern anchored to its corner or center. Zones are carved out of the field, so field + borders + inlays always add back up to the room. Border tile is counted the way it's installed — wall runs of strips, full courses plus one rip course.
 - **Cut-redistribution engine** — sizes every cut piece via exact polygon clipping, tracks offcuts, and reuses them on other cuts (with chained reuse and grain-lock for planks). Two modes: practical first-fit and whole-job best-fit optimize. Reports real tiles ordered vs. naive waste %, with the tiles saved.
 - **Installer cut sheet** — per-room summary, consolidated batch cut list, and a tile-by-tile cutting plan showing which offcut feeds which cut. Print-ready.
 - **Tile library** — square, rectangle/subway, plank, mosaic, and metric sizes; grout-joint presets; pattern-based waste suggestions.
@@ -20,8 +21,8 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 
 ## Testing
 
-The engine layer (geometry, units, layouts, cut redistribution, estimate,
-markups, cut sheet) has a Vitest suite — 82 tests covering correctness and the
+The engine layer (geometry, units, layouts, floor-design zones, cut
+redistribution, estimate, markups, cut sheet) has a Vitest suite — 113 tests covering correctness and the
 defensive/edge cases that cause silent financial errors (undefined tile sizes,
 zero-area rooms, unassigned materials, degenerate polygons, the
 never-exceed-naive invariant on the cut optimizer, and HTML-injection escaping
@@ -89,7 +90,7 @@ in-memory window (per warm instance) otherwise.
 
 ```
 src/
-  engine/      units, geometry, layouts, estimate   (pure, framework-free)
+  engine/      units, geometry, layouts, zones, estimate   (pure, framework-free)
   data/        tileCatalog                            (libraries)
   state/       store.js (Zustand + localStorage)
   components/  Canvas2D, Viewer3D, Panels, DetectModal
@@ -105,12 +106,9 @@ reusable (e.g. a future Supabase/multi-user backend can call it directly).
 ## Roadmap (not yet built)
 
 - Pattern-accurate herringbone/pinwheel/versailles fragment geometry (current cut model treats angled fragments as bounding rectangles — conservative, and flagged in the estimate)
-- Accent/border bands and feature strips per room edge
+- Per-wall border control (skip a band along cabinets/thresholds) and inlay frames
 - Shared tile_library UI (schema is already in the migration)
 - Markup ↔ Excel live link (Quantity-Link style)
 - Seam diagrams for sheet goods
 - Bluebeam-style markups list with per-item cost columns and legend
 - PDF page rendering into the canvas (measure directly on plan PDFs)
-- Pattern-accurate herringbone/pinwheel/versailles fragment geometry (current cut model treats angled fragments as bounding rectangles — conservative, and flagged in the estimate)
-- Accent/border bands and feature strips per room edge
-- Shared tile_library UI (schema is already in the migration)

@@ -16,6 +16,8 @@ const TOOLS = [
   { id: 'select', key: 'V', label: 'Select / Move', icon: 'M3 3l7.5 18 2.5-7.5L20.5 11z' },
   { id: 'room', key: 'R', label: 'Draw Rectangle Room', icon: 'M3 3h18v18H3z', sep: true },
   { id: 'polygon', key: 'P', label: 'Trace Polygon Room', icon: 'M12 2l9 6-3 11H6L3 8z' },
+  { id: 'zone_poly', key: 'D', label: 'Trace Floor Design (inlay, medallion)', icon: 'M3 3h18v18H3zM12 7l5 5-5 5-5-5z' },
+  { id: 'zone_rect', key: 'I', label: 'Box Floor Design (rectangular inlay)', icon: 'M3 3h18v18H3zM8 8h8v8H8z' },
   { id: 'ruler', key: 'L', label: 'Set Scale (Ruler)', icon: 'M2 8l6-6 14 14-6 6zM8 8l2 2M11 5l2 2M5 11l2 2', sep: true },
   { id: 'grid', key: 'G', label: 'Tile Grid Overlay', icon: 'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18' },
   { id: 'mk_length', key: 'M', label: 'Measure Length', icon: 'M3 17L17 3M7 5l2 2M5 9l2 2M9 9l2 2M11 13l2 2', sep: true },
@@ -84,6 +86,8 @@ export default function App() {
       else if (k === 'delete' || k === 'backspace') {
         const st = useStore.getState();
         if (st.selRooms.length > 1) st.deleteRooms(st.selRooms);
+        // a selected border/inlay goes first — never the whole room under it
+        else if (s.selection.type === 'room' && st.selZone) st.deleteZone(s.selection.id, st.selZone);
         else if (s.selection.type === 'room') s.deleteRoom(s.selection.id);
         else if (s.selection.type === 'material') s.deleteMaterial(s.selection.id);
         else if (s.selection.type === 'markup') s.deleteMarkup(s.selection.id);

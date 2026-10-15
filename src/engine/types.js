@@ -20,6 +20,7 @@
  * @property {PatternId} pattern
  * @property {number} [angleDeg]   rotation in degrees (grid/brick)
  * @property {Point}  [origin]     layout origin offset in feet
+ * @property {'corner'|'center'} [anchor]  inlays: pin the origin to the shape
  */
 
 /**
@@ -38,6 +39,26 @@
  * @property {string[]} assigned       material ids applied to this room
  * @property {number} [wallHeight]     ft, for wall-tile coverage proxy
  * @property {LayoutSpec} [layout]
+ * @property {Zone[]} [zones]          floor design zones (borders/inlays)
+ */
+
+/**
+ * A floor design zone inside a room — not a wall. See engine/zones.js.
+ *  'border': a band offset in from the walls (`inset` from the wall,
+ *            `width` across, both feet). Derived from the room polygon.
+ *  'inlay':  a traced polygon on the floor (`points`, feet) with its own
+ *            tile layout — rug insets, medallions, feature panels.
+ * The zone's area is carved out of the room's field.
+ * @typedef {Object} Zone
+ * @property {string} id
+ * @property {'border'|'inlay'} kind
+ * @property {string} name
+ * @property {?string} [materialId]
+ * @property {string} [color]
+ * @property {number} [inset]         border: distance from the walls, ft
+ * @property {number} [width]         border: band width, ft
+ * @property {Point[]} [points]       inlay: polygon, ft
+ * @property {LayoutSpec} [layout]    inlay: tile layout inside the zone
  */
 
 /**
@@ -122,6 +143,8 @@
  * @property {'practical'|'optimize'} mode
  * @property {CutAssignment[]} assignments
  * @property {?string} note
+ * @property {{lf:number, strips:number, tiles:number}} border  border-band run totals
+ * @property {{name:string, kind:string, areaSf:number, pattern:string, cuts:number, lf?:number}[]} surfaces
  */
 
 /**
@@ -138,7 +161,7 @@
  * @property {number} cost
  * @property {?CutResult} cutInfo
  * @property {CostMode} costMode
- * @property {{name:string,sf:number}[]} [usedRooms]
+ * @property {{name:string,sf:number,lf?:number}[]} [usedRooms]
  * @property {number} [tileSf]
  * @property {number} [wasteMul]
  */

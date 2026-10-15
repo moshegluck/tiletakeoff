@@ -1,5 +1,5 @@
 import React from 'react';
-import { useStore, ROOM_COLORS } from '../state/store.js';
+import { useStore, ROOM_COLORS, ZONE_COLORS } from '../state/store.js';
 import { polygonArea, rectPoly } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
 import { formatLength, formatArea, parseLength } from '../engine/units.js';
@@ -9,6 +9,7 @@ import { exportCSV, exportXLSX, exportJSON } from '../lib/export.js';
 import { buildProjectCutSheets, openCutSheet } from '../engine/cutSheet.js';
 import { formatLength as fmtLen } from '../engine/units.js';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
+import { roomRegions, zonesOf, isAxisRect } from '../engine/zones.js';
 
 const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -103,7 +104,7 @@ function RoomCard({ room: r }) {
             </div>
           </div>
 
-          <div className="field"><label>Materials in this room</label>
+          <div className="field"><label>Materials in this room{(r.zones || []).length ? ' (field & walls)' : ''}</label>
             <div className="assign">
               {s.materials.length === 0 && <span className="note" style={{ margin: 0 }}>Add a material first →</span>}
               {s.materials.map((m) => {
@@ -113,6 +114,143 @@ function RoomCard({ room: r }) {
                   onClick={() => s.toggleAssign(r.id, m.id)}>
                   <span className="dot" style={{ background: m.color }} />{m.name}</button>;
               })}
+            </div>
+          </div>
+
+          <FloorDesign room={r} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Floor design: borders & inlays (not walls) ----
+   The room outline is the walls. A border band is derived from those walls
+   (distance from wall + width), so there is nothing to trace. An inlay /
+   medallion / rug inset is traced or boxed on the floor with the design
+   tools (D / I) and carved out of the field. */
+function FloorDesign({ room: r }) {
+  const s = useStore();
+  const zones = zonesOf(r);
+  const reg = roomRegions(r);
+  const floorMats = s.materials.filter((m) => m.type !== 'wall');
+  const roomSf = polygonArea(r.points);
+  const fa = (sf) => formatArea(sf, s.unitSystem);
+  const start = (tool) => { s.select('room', r.id); s.setTool(tool); };
+  return (
+    <div className="field"><label>Floor design · borders &amp; inlays</label>
+      {zones.length === 0 && (
+        <div className="note" style={{ marginTop: 0 }}>
+          The room outline is the walls. Add a <b>border</b> (follows the walls at a set distance) or
+          trace an <b>inlay</b> — medallion, rug inset, feature panel — on the floor.
+        </div>
+      )}
+      {zones.map((z) => <ZoneCard key={z.id} room={r} zone={z} reg={reg} floorMats={floorMats} />)}
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <button className="ghost-add" style={{ margin: 0, flex: 1 }} onClick={() => s.addZone(r.id, { kind: 'border', inset: 0, width: 0.5 })}>+ Border</button>
+        <button className="ghost-add" style={{ margin: 0, flex: 1 }} title="Click points on the floor design; click the first point, double-click or Enter to finish (D)" onClick={() => start('zone_poly')}>Trace inlay</button>
+        <button className="ghost-add" style={{ margin: 0, flex: 1 }} title="Drag a rectangle on the floor (I)" onClick={() => start('zone_rect')}>Box inlay</button>
+      </div>
+      {zones.length > 0 && s.scale && (
+        <div className="note">Field {fa(reg.fieldArea)} = room {fa(roomSf)} − design {fa(Math.max(0, roomSf - reg.fieldArea))}</div>
+      )}
+      {reg.warnings.map((w) => <div className="note" key={w} style={{ color: 'var(--warn, #a8430f)' }}>⚠ {w}</div>)}
+    </div>
+  );
+}
+
+function ZoneCard({ room: r, zone: z, reg, floorMats }) {
+  const s = useStore();
+  const sel = s.selZone === z.id;
+  const band = reg.bands.find((b) => b.zone.id === z.id);
+  const inl = reg.inlays.find((i) => i.zone.id === z.id);
+  const area = band?.area ?? inl?.area ?? 0;
+  const up = (patch) => s.updateZone(r.id, z.id, patch);
+  const rect = z.kind === 'inlay' && isAxisRect(z.points);
+  const zb = z.kind === 'inlay' && z.points?.length ? bounds(z.points) : null;
+  const layout = z.layout || { pattern: 'grid' };
+  const setLayout = (patch) => up({ layout: { ...layout, ...patch } });
+  return (
+    <div className={'card' + (sel ? ' sel' : '')} style={{ margin: '6px 0' }}>
+      <div className="card-head" onClick={() => s.selectZone(r.id, z.id)}>
+        <span className="swatch" style={{ background: z.color }} />
+        <input className="card-name" value={z.name} onClick={(e) => e.stopPropagation()} onChange={(e) => up({ name: e.target.value })} />
+        <span className="card-meta">
+          {s.scale ? <>{band ? `${formatLength(band.lf, s.unitSystem)} · ` : ''}{formatArea(area, s.unitSystem)}</> : '—'}
+          {!band && !inl && ' (skipped)'}
+        </span>
+        <button className="icon-btn" title="Delete" onClick={(e) => { e.stopPropagation(); s.deleteZone(r.id, z.id); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
+        </button>
+      </div>
+      {sel && (
+        <div className="card-body">
+          <div className="field"><label>Material</label>
+            <select className="inp" value={z.materialId || ''} onChange={(e) => up({ materialId: e.target.value || null })}>
+              <option value="">— not estimated —</option>
+              {floorMats.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.tw}×{m.th}&quot;)</option>)}
+            </select>
+            {!z.materialId && <div className="note" style={{ marginTop: 4 }}>Pick a floor material — until then this area is removed from the field but not ordered.</div>}
+          </div>
+
+          {z.kind === 'border' && (
+            <div className="field"><label>Distance from wall · band width</label>
+              <div className="row">
+                <DimInput value={z.inset || 0} system={s.unitSystem} allowZero onCommit={(v) => up({ inset: v })} />
+                <div className="units" style={{ padding: '0 2px' }}>+</div>
+                <DimInput value={z.width || 0} system={s.unitSystem} onCommit={(v) => up({ width: v })} />
+              </div>
+              <div className="note" style={{ marginTop: 4 }}>Runs around every wall of the room, including L-shapes. Stack several bands (e.g. a listello 12&quot; in) for a layered border.</div>
+            </div>
+          )}
+
+          {z.kind === 'inlay' && (
+            <>
+              {rect && zb && s.scale && (
+                <div className="field"><label>Size</label>
+                  <div className="row">
+                    <DimInput value={zb.w} system={s.unitSystem} onCommit={(w) => up({ points: rectPoly(zb.minx, zb.miny, w, zb.h) })} />
+                    <div className="units" style={{ padding: '0 2px' }}>×</div>
+                    <DimInput value={zb.h} system={s.unitSystem} onCommit={(h) => up({ points: rectPoly(zb.minx, zb.miny, zb.w, h) })} />
+                  </div>
+                </div>
+              )}
+              {zb && (
+                <button className="ghost-add" style={{ margin: '4px 0' }} onClick={() => {
+                  const rb = bounds(r.points);
+                  const dx = rb.minx + rb.w / 2 - (zb.minx + zb.w / 2), dy = rb.miny + rb.h / 2 - (zb.miny + zb.h / 2);
+                  up({ points: z.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
+                }}>Center in room</button>
+              )}
+              {!rect && <div className="note" style={{ marginTop: 0 }}>{z.points?.length} points · drag its corners on the canvas to adjust.</div>}
+              <div className="field"><label>Inlay pattern</label>
+                <select className="inp" value={layout.pattern || 'grid'} onChange={(e) => setLayout({ pattern: e.target.value })}>
+                  {PATTERNS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </div>
+              {(layout.pattern === 'grid' || layout.pattern?.startsWith('brick')) && (
+                <div className="field"><label>Rotation (°)</label>
+                  <input className="inp mono" type="number" step="5" value={layout.angleDeg || 0}
+                    onChange={(e) => setLayout({ angleDeg: +e.target.value || 0 })} />
+                </div>
+              )}
+              <div className="field"><label>Tiles start from</label>
+                <div className="seg">
+                  {[['corner', 'Corner'], ['center', 'Center (even cuts)']].map(([id, label]) => (
+                    <button key={id} className={(layout.anchor || 'corner') === id ? 'on' : ''} onClick={() => setLayout({ anchor: id })}>{label}</button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="field"><label>Color</label>
+            <div className="assign">
+              {ZONE_COLORS.map((c) => (
+                <button key={c} className={'pill' + (z.color === c ? ' on' : '')}
+                  style={z.color === c ? { background: c, borderColor: c } : {}}
+                  onClick={() => up({ color: c })}><span className="dot" style={{ background: c }} /></button>
+              ))}
             </div>
           </div>
         </div>
@@ -126,13 +264,13 @@ function resizeRect(s, r, w, h) {
   s.updateRoom(r.id, { points: rectPoly(b.minx, b.miny, Math.max(0.25, w), Math.max(0.25, h)) });
 }
 
-function DimInput({ value, system, onCommit }) {
+function DimInput({ value, system, onCommit, allowZero = false }) {
   const [txt, setTxt] = React.useState('');
   React.useEffect(() => { setTxt(formatLength(value, system).replace(/ (ft|in|m|cm|mm|m²|sf)$/, '')); }, [value, system]);
   return (
     <div className="units" style={{ flex: 1 }}>
       <input className="inp mono" value={txt} onChange={(e) => setTxt(e.target.value)}
-        onBlur={() => { const ft = parseLength(txt, system); if (ft != null && ft > 0) onCommit(ft); }}
+        onBlur={() => { const ft = parseLength(txt, system); if (ft != null && (ft > 0 || (allowZero && ft === 0))) onCommit(ft); }}
         onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} />
     </div>
   );
@@ -359,6 +497,9 @@ function EstimatePanel() {
             )}
 
             <div className="est-row"><span>Net area</span><b>{l.netSf.toFixed(1)} sf</b></div>
+            {(l.usedRooms || []).some((u) => u.lf) && (
+              <div className="est-row"><span>Border run</span><b>{fmtLen((l.usedRooms || []).reduce((a, u) => a + (u.lf || 0), 0), s.unitSystem)}</b></div>
+            )}
 
             {l.costMode === 'waste' && (
               <>
@@ -372,6 +513,9 @@ function EstimatePanel() {
                 <div className="est-row"><span>Full tiles</span><b>{ci.fullTiles}</b></div>
                 <div className="est-row"><span>Cut pieces needed</span><b>{ci.cutPieces}</b></div>
                 <div className="est-row"><span>Tiles broken for cuts</span><b>{ci.newTilesBrokenForCuts}</b></div>
+                {ci.border?.tiles > 0 && (
+                  <div className="est-row"><span>Border strips ({ci.border.strips} pcs)</span><b>{ci.border.tiles} tiles</b></div>
+                )}
                 <div className="est-row" style={{ color: 'var(--ok)' }}>
                   <span>↳ offcuts reused</span><b style={{ color: 'var(--ok)' }}>{ci.reusedOffcuts} · saved {ci.tilesSavedByReuse} tiles</b>
                 </div>

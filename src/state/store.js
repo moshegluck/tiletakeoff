@@ -11,6 +11,9 @@ import { WASTE_BY_PATTERN } from '../data/tileCatalog.js';
 const KEY = 'tiletakeoff.project.v1';
 
 const ROOM_COLORS = ['#1d4e6b', '#a8430f', '#3a6b35', '#6b3a72', '#1f6b6b', '#8a5a14', '#444f6b', '#6b2f4a'];
+// floor design zones (borders / inlays) get their own colors so they read
+// against the room tint even when every floor material shares one swatch
+const ZONE_COLORS = ['#7a3fa0', '#b25e00', '#1d6fb0', '#1d7a4d', '#b8323f', '#5b6b1d'];
 const MAT_FLOOR = '#caa46a', MAT_WALL = '#6b9cc4';
 
 function blankProject() {
@@ -84,6 +87,7 @@ export const useStore = create((set, get) => ({
   tab: 'rooms',
   selection: { type: null, id: null },
   selRooms: [],          // multi-selected room ids (Bluebeam-style marquee/shift)
+  selZone: null,         // selected floor design zone id (its room is the selection)
   gridMaterialId: null,
   view3d: false,
   pdfDoc: null,        // loaded pdf.js doc (runtime only)
@@ -117,10 +121,10 @@ export const useStore = create((set, get) => ({
   setTab: (tab) => set({ tab }),
   // Selecting a single room mirrors it into selRooms so the two stay in sync;
   // selecting anything else clears the multi-selection.
-  select: (type, id) => set({ selection: { type, id }, selRooms: type === 'room' && id ? [id] : [] }),
+  select: (type, id) => set({ selection: { type, id }, selRooms: type === 'room' && id ? [id] : [], selZone: null }),
   // ---- multi-select (rooms) ----
   selectRooms: (ids) => set({
-    selRooms: ids,
+    selRooms: ids, selZone: null,
     selection: { type: ids.length ? 'room' : null, id: ids.length ? ids[ids.length - 1] : null },
     tab: ids.length ? 'rooms' : get().tab,
   }),
@@ -128,9 +132,9 @@ export const useStore = create((set, get) => ({
     const cur = get().selRooms;
     const has = cur.includes(id);
     const next = has ? cur.filter((x) => x !== id) : [...cur, id];
-    set({ selRooms: next, selection: { type: next.length ? 'room' : null, id: next.length ? next[next.length - 1] : null } });
+    set({ selRooms: next, selZone: null, selection: { type: next.length ? 'room' : null, id: next.length ? next[next.length - 1] : null } });
   },
-  clearRoomSel: () => set({ selRooms: [], selection: { type: null, id: null } }),
+  clearRoomSel: () => set({ selRooms: [], selection: { type: null, id: null }, selZone: null }),
   deleteRooms: (ids) => {
     const kill = new Set(ids);
     const sel = get().selection;
@@ -138,14 +142,15 @@ export const useStore = create((set, get) => ({
       rooms: get().rooms.filter((r) => !kill.has(r.id)),
       selRooms: get().selRooms.filter((x) => !kill.has(x)),
       selection: kill.has(sel.id) ? { type: null, id: null } : sel,
+      selZone: kill.has(sel.id) ? null : get().selZone,
     });
     persist(get);
   },
   setGridMaterial: (id) => set({ gridMaterialId: id }),
   toggle3d: (v) => set({ view3d: v ?? !get().view3d }),
 
-  newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, selRooms: [], gridMaterialId: null, tool: 'select' }); persist(get); },
-  loadSnapshot: (snap) => { set({ ...blankProject(), ...snap }); persist(get); },
+  newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select' }); persist(get); },
+  loadSnapshot: (snap) => { set({ ...blankProject(), ...snap, selZone: null }); persist(get); },
   setCloudId: (cloudId) => { set({ cloudId }); persist(get); },
   // load a project row fetched from Supabase into the working store
   loadCloudDoc: (row) => {
@@ -157,7 +162,7 @@ export const useStore = create((set, get) => ({
       rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [],
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
-      selection: { type: null, id: null }, selRooms: [], gridMaterialId: null, tool: 'select',
+      selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select',
     });
     // local mirror only; don't trigger a cloud write of what we just read.
     // Use the trimmed snapshot so we don't serialize planImage / the live
@@ -203,9 +208,54 @@ export const useStore = create((set, get) => ({
       rooms: get().rooms.filter((r) => r.id !== id),
       selRooms: get().selRooms.filter((x) => x !== id),
       selection: sel.id === id ? { type: null, id: null } : sel,
+      selZone: sel.id === id ? null : get().selZone,
     });
     persist(get);
   },
+
+  // ---- floor design zones (borders / inlays inside a room) ----
+  // Zones are floor-only design details, not walls: a border band derived
+  // from the room's walls, or an inlay traced on the floor. Their area is
+  // carved out of the room's field (engine/zones.js).
+  addZone: (roomId, zone) => {
+    const room = get().rooms.find((r) => r.id === roomId);
+    if (!room) return null;
+    const zones = room.zones || [];
+    const n = zones.filter((z) => z.kind === zone.kind).length + 1;
+    // default to a floor material that isn't already this room's field tile
+    const floors = get().materials.filter((m) => m.type !== 'wall');
+    const pick = floors.find((m) => !room.assigned.includes(m.id)) || null;
+    const z = {
+      id: nanoid(),
+      name: zone.kind === 'border' ? `Border ${n}` : `Inlay ${n}`,
+      color: ZONE_COLORS[zones.length % ZONE_COLORS.length],
+      materialId: pick ? pick.id : null,
+      ...zone,
+    };
+    set({
+      rooms: get().rooms.map((r) => r.id === roomId ? { ...r, zones: [...zones, z] } : r),
+      selection: { type: 'room', id: roomId }, selRooms: [roomId], selZone: z.id, tab: 'rooms',
+    });
+    persist(get);
+    return z.id;
+  },
+  updateZone: (roomId, zoneId, patch) => {
+    set({ rooms: get().rooms.map((r) => r.id !== roomId ? r : {
+      ...r, zones: (r.zones || []).map((z) => z.id === zoneId ? { ...z, ...patch } : z),
+    }) });
+    persist(get);
+  },
+  deleteZone: (roomId, zoneId) => {
+    set({
+      rooms: get().rooms.map((r) => r.id !== roomId ? r : { ...r, zones: (r.zones || []).filter((z) => z.id !== zoneId) }),
+      selZone: get().selZone === zoneId ? null : get().selZone,
+    });
+    persist(get);
+  },
+  clearZoneSel: () => set({ selZone: null }),
+  selectZone: (roomId, zoneId) => set({
+    selection: { type: 'room', id: roomId }, selRooms: [roomId], selZone: zoneId, tab: 'rooms',
+  }),
 
   // ---- materials ----
   addMaterial: (type = 'floor') => {
@@ -270,7 +320,11 @@ export const useStore = create((set, get) => ({
     const sel = get().selection;
     set({
       materials: get().materials.filter((m) => m.id !== id),
-      rooms: get().rooms.map((r) => ({ ...r, assigned: r.assigned.filter((x) => x !== id) })),
+      rooms: get().rooms.map((r) => ({
+        ...r,
+        assigned: r.assigned.filter((x) => x !== id),
+        ...(r.zones ? { zones: r.zones.map((z) => z.materialId === id ? { ...z, materialId: null } : z) } : {}),
+      })),
       gridMaterialId: get().gridMaterialId === id ? null : get().gridMaterialId,
       selection: sel.id === id ? { type: null, id: null } : sel,
     });
@@ -292,4 +346,4 @@ export const useStore = create((set, get) => ({
   },
 }));
 
-export { ROOM_COLORS, MAT_FLOOR, MAT_WALL };
+export { ROOM_COLORS, ZONE_COLORS, MAT_FLOOR, MAT_WALL };
