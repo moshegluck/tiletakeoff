@@ -28,11 +28,39 @@ export async function signInWithPassword(email, password) {
   if (error) throw error;
   return data.user;
 }
+// Returns { user, session }. session is null when the project requires email
+// confirmation: the account exists but can't sign in until the link is clicked.
 export async function signUp(email, password) {
   if (!cloudEnabled) throw new Error('Cloud not configured');
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({
+    email, password, options: { emailRedirectTo: window.location.origin },
+  });
   if (error) throw error;
-  return data.user;
+  return { user: data.user, session: data.session };
+}
+// Send the sign-up confirmation link again.
+export async function resendConfirmation(email) {
+  if (!cloudEnabled) throw new Error('Cloud not configured');
+  const { error } = await supabase.auth.resend({
+    type: 'signup', email, options: { emailRedirectTo: window.location.origin },
+  });
+  if (error) throw error;
+}
+// Plain-language message for a Supabase auth failure. Keeps `code` so the UI
+// can offer the right next step (e.g. resend the confirmation email).
+export function authErrorMessage(e) {
+  const code = e?.code || '';
+  const msg = String(e?.message || '');
+  if (e?.name === 'AuthRetryableFetchError' || /failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+    return "Can't reach the account server. Check your internet connection; if it keeps happening, the app's Supabase settings (VITE_SUPABASE_URL) are pointing at a project that's down.";
+  }
+  if (code === 'email_not_confirmed' || /email not confirmed/i.test(msg)) return 'Your email isn’t confirmed yet. Open the confirmation link we emailed you (check spam), or send it again below.';
+  if (code === 'invalid_credentials' || /invalid login credentials/i.test(msg)) return 'Wrong email or password. No account yet? Create one below.';
+  if (code === 'user_already_exists' || code === 'email_exists' || /already registered/i.test(msg)) return 'An account with this email already exists. Sign in instead, or reset the password.';
+  if (code === 'over_email_send_rate_limit' || /rate limit/i.test(msg)) return 'Too many emails were sent just now. Wait a few minutes and try again.';
+  if (code === 'email_address_not_authorized') return 'The app’s email service can’t send to this address yet (Supabase’s built-in email only reaches your team’s addresses). Set up custom SMTP in Supabase, or turn off “Confirm email”.';
+  if (code === 'signup_disabled') return 'New accounts are turned off for this app.';
+  return msg || 'Something went wrong. Please try again.';
 }
 export async function signOut() {
   if (cloudEnabled) await supabase.auth.signOut();
