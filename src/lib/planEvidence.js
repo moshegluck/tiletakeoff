@@ -24,7 +24,7 @@ export async function gatherEvidence({ doc, pageNum, renderScale, planImage, pxP
 
   let vec = null;
   if (doc) {
-    const pdfjs = await import('pdfjs-dist');
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const { extractPageVectors } = await import('./pdfVectors.js');
     const page = await doc.getPage(pageNum);
     vec = await extractPageVectors(page, renderScale, pdfjs.OPS);

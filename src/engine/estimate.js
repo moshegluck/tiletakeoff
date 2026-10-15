@@ -9,7 +9,7 @@
 //               a small safety waste on top. More accurate, less padding.
 // ============================================================
 
-import { polygonArea, polygonPerimeter } from './geometry.js';
+import { roomArea, roomWallLf } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
 
 /**
@@ -23,10 +23,10 @@ export function materialArea(material, rooms) {
   const usedRooms = [];
   for (const r of rooms) {
     if (!r.assigned?.includes(material.id)) continue;
-    const sf = polygonArea(r.points);
+    const sf = roomArea(r);
     if (material.type === 'wall') {
-      // wall coverage proxy: perimeter * wall height (default 8 ft)
-      const per = polygonPerimeter(r.points);
+      // wall coverage: wall LF (traced: net of openings, incl. returns) × wall height
+      const per = roomWallLf(r);
       const h = r.wallHeight ?? 8;
       netSf += per * h;
       usedRooms.push({ name: r.name, sf: per * h });
@@ -97,7 +97,7 @@ export function estimateProject(state) {
   const materialSubtotal = lines.reduce((s, l) => s + l.cost, 0);
 
   // labor: optional per-sf rate over total floor area
-  const floorSf = state.rooms.reduce((s, r) => s + polygonArea(r.points), 0);
+  const floorSf = state.rooms.reduce((s, r) => s + roomArea(r), 0);
   const laborRate = state.laborRatePerSf ?? 0;
   const labor = floorSf * laborRate;
 

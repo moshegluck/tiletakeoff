@@ -8,7 +8,10 @@
 // dependency, and the version always matches the installed pdfjs-dist.
 // ============================================================
 
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// The LEGACY build: pdf.js 5.7's modern build calls Map#getOrInsertComputed (a
+// 2026 JS feature) with no fallback, so PDFs fail to open in browsers that
+// don't ship it yet (older Safari/Chrome/iPad). The legacy build polyfills it.
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 
 let _lib = null;
 let _workerSetup = false;
@@ -16,7 +19,7 @@ let _workerSetup = false;
 async function getLib() {
   if (_lib) return _lib;
 
-  const lib = await import('pdfjs-dist');
+  const lib = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
   if (!_workerSetup) {
     lib.GlobalWorkerOptions.workerSrc = workerUrl;

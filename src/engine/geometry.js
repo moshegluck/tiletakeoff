@@ -15,6 +15,25 @@ export function polygonArea(pts) {
   return Math.abs(a) / 2;
 }
 
+/**
+ * Net floor area of a room: its outline minus any holes (columns, chases).
+ * Traced rooms carry `holes`; hand-drawn rooms have none.
+ */
+export function roomArea(r) {
+  let a = polygonArea(r.points);
+  for (const h of r.holes || []) a -= polygonArea(h);
+  return Math.max(0, a);
+}
+
+/**
+ * Wall linear footage for wall tile / base. Traced rooms carry the true
+ * finished-face LF net of openings, including the in-and-out of partitions;
+ * hand-drawn rooms fall back to the outline perimeter.
+ */
+export function roomWallLf(r) {
+  return Number.isFinite(r.wallLf) ? r.wallLf : polygonPerimeter(r.points);
+}
+
 export function polygonPerimeter(pts) {
   let per = 0;
   for (let i = 0; i < pts.length; i++) {

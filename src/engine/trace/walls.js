@@ -312,5 +312,5 @@ export function mergeBodies(bodies, { angTol = 1 * Math.PI / 180, offTol = 1.0 *
       }
     }
   }
-  return items.filter((b) => !b.dead).map(({ th, dead, ...b }) => b);
+  return items.filter((b) => !b.dead).map(({ th: _th, dead: _dead, ...b }) => b);
 }

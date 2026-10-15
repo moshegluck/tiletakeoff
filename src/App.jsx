@@ -7,7 +7,7 @@ import AccountBar from './components/AccountBar.jsx';
 import { UNIT_SYSTEMS, ARCH_SCALES, SCALE_GROUPS, archFeetPerPaperInch } from './engine/units.js';
 import { exportCSV } from './lib/export.js';
 import { onAuthEvent } from './lib/cloud.js';
-import { polygonArea } from './engine/geometry.js';
+import { roomArea } from './engine/geometry.js';
 import Landing from './components/Landing.jsx';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
@@ -60,12 +60,14 @@ export default function App() {
       const { loadPdf } = await import('./lib/pdf.js');
       const { doc, numPages } = await loadPdf(file);
       s.setPdf(doc, numPages);
+      s.clearTrace();
       // render first page immediately
       const { renderPage } = await import('./lib/pdf.js');
       const out = await renderPage(doc, 1, 2000);
       s.setPlanImage(out.dataUrl, out.width, out.height);
       s.setPlanDpi(72 * out.renderScale);
-      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `PDF loaded · ${numPages} page${numPages > 1 ? 's' : ''}. Set the scale (pick a preset or draw the ruler).`, ok: true } }));
+      s.setTab('trace');
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `PDF loaded · ${numPages} page${numPages > 1 ? 's' : ''}. Check the scale, then Trace plan.`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not open PDF: ' + err.message } }));
@@ -115,7 +117,7 @@ export default function App() {
     return <Landing onStart={() => enter(false)} onSignIn={() => enter(true)} />;
   }
 
-  const totalSf = s.rooms.reduce((a, r) => a + (s.scale ? polygonArea(r.points) : 0), 0);
+  const totalSf = s.rooms.reduce((a, r) => a + (s.scale ? roomArea(r) : 0), 0);
 
   return (
     <div className="app">
@@ -134,6 +136,9 @@ export default function App() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2h9l5 5v15H6zM15 2v5h5" /><path d="M9 13h6M9 17h4" /></svg>PDF
           <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={onPdfPick} />
         </label>
+        <button className={'tbtn' + (s.tab === 'trace' ? ' on' : '')} onClick={() => s.setTab('trace')} title="Rebuild the walls from the plan and take off from the model">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 20V8l6-4 6 4v4h4v8z" /><path d="M10 20v-6h4v6" /></svg>Trace
+        </button>
         <button className="tbtn" onClick={() => setDetect(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19" /><circle cx="12" cy="12" r="3" /></svg>AI Detect
         </button>
@@ -171,7 +176,7 @@ export default function App() {
 
         <aside className="right">
           <div className="tabs">
-            {[['rooms', 'Rooms', s.rooms.length], ['materials', 'Materials', s.materials.length], ['markups', 'Markups', s.markups.length], ['estimate', 'Estimate', null]].map(([id, label, ct]) => (
+            {[['trace', 'Trace', s.trace?.result ? (s.trace.result.counts.error || s.trace.result.counts.warn || null) : null], ['rooms', 'Rooms', s.rooms.length], ['materials', 'Materials', s.materials.length], ['markups', 'Markups', s.markups.length], ['estimate', 'Estimate', null]].map(([id, label, ct]) => (
               <button key={id} className={'tab' + (s.tab === id ? ' active' : '')} onClick={() => s.setTab(id)}>
                 {label}{ct != null && <span className="ct">{ct}</span>}
               </button>
@@ -194,6 +199,10 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
       <Canvas2D />
       <div className="hud">
         <span className="chip">{Math.round(s.view.zoom * 100)}%</span>
+        {s.tool === 'tr_wall' && <span className="chip warn">Add wall: click points · Shift = straight · Esc to stop</span>}
+        {s.tool === 'tr_erase' && <span className="chip warn">Erase: click a traced wall that is not real</span>}
+        {s.tool === 'tr_region' && <span className="chip warn">Drag a box around the floor plan to trace</span>}
+        {s.traceBusy && <span className="chip">tracing…</span>}
         <ScaleControl />
         {s.scale && (
           <button className={'chip toggle' + (s.showGrid ? ' on' : '')} onClick={s.toggleGrid}

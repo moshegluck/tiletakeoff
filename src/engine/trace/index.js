@@ -42,10 +42,6 @@ export function runTrace(input = {}) {
     ...(input.bodies || []).map((b) => ({ conf: 0.75, src: 'given', ...b })),
   ]);
 
-  // user erasures win over evidence
-  if (input.removed?.length) {
-    bodies = bodies.filter((b) => !input.removed.some((r) => isSameWall(b, r)));
-  }
   const manual = (input.manual || []).map((m) => ({ ...m, conf: 1, src: 'manual' }));
   bodies = bodies.concat(manual).map((b) => ({ ...b, kind: 'wall' }));
 
@@ -58,7 +54,14 @@ export function runTrace(input = {}) {
 
   // 4. planar graph, cleaned
   const g0 = buildGraph(segs.concat(openings), opt, log);
-  const g = pruneGraph(g0, opt, log);
+  // user erasures win over evidence: drop the graph edges they cover, then re-clean
+  let gE = g0;
+  if (input.removed?.length) {
+    const keep = g0.edges.filter((e) => e.kind !== 'wall' || !input.removed.some((r) => edgeCovered(g0.nodes[e.u], g0.nodes[e.v], r)));
+    if (keep.length !== g0.edges.length) log.push({ kind: 'erase', at: null, note: `${g0.edges.length - keep.length} wall piece(s) removed by hand` });
+    gE = { nodes: g0.nodes, edges: keep.map((e, i) => ({ ...e, id: i })) };
+  }
+  const g = pruneGraph(gE, opt, log);
 
   // 5. faces → rooms, LF, flags
   const schedule = input.schedule !== undefined ? input.schedule : parseDoorSchedule(texts);
@@ -94,11 +97,9 @@ export function runTrace(input = {}) {
   };
 }
 
-/** Does wall body b match an erase record r (two points picked on the plan)? */
-function isSameWall(b, r) {
-  const m = mid(r.a, r.b);
-  const c = closestOnSeg(m, b.a, b.b);
-  if (c.d > Math.max(0.5, (b.t || 0.4))) return false;
-  const L = dist(r.a, r.b);
-  return L < 0.01 || closestOnSeg(r.a, b.a, b.b).d < 1 || closestOnSeg(r.b, b.a, b.b).d < 1;
+/** Is graph edge a–b part of the wall the user erased (r = the traced wall piece they clicked)? */
+function edgeCovered(a, b, r) {
+  const tol = 0.25;
+  const m = mid(a, b);
+  return closestOnSeg(m, r.a, r.b).d <= tol && closestOnSeg(a, r.a, r.b).d <= tol && closestOnSeg(b, r.a, r.b).d <= tol && dist(a, b) > 1e-6;
 }

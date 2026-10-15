@@ -8,6 +8,7 @@ import { renderScene } from './canvasRender.js';
 // Cursor per active tool. Drawing tools get a crosshair; select/pan get a hand.
 const TOOL_CURSOR = {
   select: 'default', pan: 'grab', ruler: 'crosshair', room: 'crosshair',
+  tr_wall: 'crosshair', tr_erase: 'pointer', tr_region: 'crosshair',
   polygon: 'crosshair', grid: 'default', mk_length: 'crosshair',
   mk_area: 'crosshair', mk_rect: 'crosshair', mk_count: 'crosshair',
 };
@@ -36,6 +37,7 @@ export default function Canvas2D() {
   const pan = useRef(null);
   const drag = useRef(null);
   const marquee = useRef(null); // rubber-band multi-select rect (screen coords)
+  const trDraft = useRef(null);  // trace tools: add wall / erase / region
   const planImg = useRef(null);
   const raf = useRef(0);
   const space = useRef(false);  // spacebar held → drag pans the page
@@ -128,10 +130,67 @@ export default function Canvas2D() {
       mkDraft: mkDraft.current,
       ruler: ruler.current,
       marquee: marquee.current,
+      trDraft: trDraft.current,
     });
   }
 
   drawRef.current = draw;
+
+  // ---------- trace helpers ----------
+  // snap to a traced wall node within ~12 screen px
+  function traceSnap(p, sp) {
+    const res = useStore.getState().trace?.result;
+    if (!res) return p;
+    let best = null, bd = 12;
+    for (const w of res.walls) for (const q of [w.a, w.b]) {
+      const qs = toScreen(ft2px(q.x), ft2px(q.y));
+      const d = Math.hypot(qs.x - sp.x, qs.y - sp.y);
+      if (d < bd) { bd = d; best = q; }
+    }
+    return best ? { x: best.x, y: best.y } : p;
+  }
+  function traceWallAt(sp) {
+    const res = useStore.getState().trace?.result;
+    if (!res) return null;
+    let best = null, bd = 10;
+    for (const w of res.walls) {
+      const a = toScreen(ft2px(w.a.x), ft2px(w.a.y)), b = toScreen(ft2px(w.b.x), ft2px(w.b.y));
+      const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((sp.x - a.x) * dx + (sp.y - a.y) * dy) / L2));
+      const d = Math.hypot(a.x + dx * t - sp.x, a.y + dy * t - sp.y) - (ft2px(w.t) * s.view.zoom) / 2;
+      if (d < bd) { bd = d; best = w; }
+    }
+    return best;
+  }
+  function traceFlagAt(sp) {
+    const st = useStore.getState();
+    const res = st.trace?.result;
+    if (!res || !st.showTrace) return null;
+    for (const f of res.flags) {
+      if (!f.at || (f.severity === 'info' && !(st.traceFocus?.id === f.id))) continue;
+      const p = toScreen(ft2px(f.at.x), ft2px(f.at.y));
+      if (Math.hypot(p.x - sp.x, p.y - sp.y) <= 11) return f;
+    }
+    return null;
+  }
+
+  // reset tool drafts when the tool changes
+  useEffect(() => { trDraft.current = null; schedule(); }, [s.tool, schedule]);
+
+  // zoom to a feet location (flag / room focus from the Trace panel)
+  useEffect(() => {
+    const onZoom = (e) => {
+      const st = useStore.getState();
+      if (!st.scale || !wrapRef.current) return;
+      const r = wrapRef.current.getBoundingClientRect();
+      const z = Math.max(st.view.zoom, 0.9);
+      const mx = e.detail.x / st.scale, my = e.detail.y / st.scale;
+      st.setView({ zoom: z, x: r.width / 2 - mx * z, y: r.height / 2 - my * z });
+      schedule();
+    };
+    window.addEventListener('tt:zoomto', onZoom);
+    return () => window.removeEventListener('tt:zoomto', onZoom);
+  }, [schedule]);
 
   // ---------- interaction ----------
   function evPt(e) { const r = cvRef.current.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -152,10 +211,30 @@ export default function Canvas2D() {
     }
     // right mouse button → finish/close an in-progress measurement or polygon
     if (e.button === 2) {
+      if (trDraft.current) { trDraft.current = null; schedule(); return; }
       if (mkDraft.current || draft.current?.kind === 'poly') finishDraft();
       return;
     }
 
+    if (s.tool === 'tr_wall' && scale) {
+      const p = traceSnap({ x: mfx, y: mfy }, sp);
+      const t = (useStore.getState().trace?.settings?.defaultWallIn ?? 4.5) / 12;
+      const d = trDraft.current;
+      if (!d?.a) { trDraft.current = { kind: 'wall', a: p, hover: p, t }; }
+      else {
+        const b = d.hover || p;
+        if (Math.hypot(b.x - d.a.x, b.y - d.a.y) > 0.25) s.addTraceWall(d.a, b, t);
+        // keep drawing from here, like a snake — Esc / right-click ends
+        trDraft.current = { kind: 'wall', a: b, hover: b, t };
+      }
+      schedule(); return;
+    }
+    if (s.tool === 'tr_erase' && scale) {
+      const w = traceWallAt(sp);
+      if (w) { s.eraseTraceWall(w.a, w.b); trDraft.current = null; }
+      schedule(); return;
+    }
+    if (s.tool === 'tr_region') { trDraft.current = { kind: 'region', p0: mp, p1: mp }; schedule(); return; }
     if (s.tool === 'ruler') { ruler.current = { p1: mp, p2: mp }; return; }
     if (s.tool === 'room') {
       draft.current = { kind: 'rect', ox: mfx, oy: mfy, points: rectPoly(mfx, mfy, 0, 0) };
@@ -215,6 +294,8 @@ export default function Canvas2D() {
       return;
     }
     if (s.tool === 'select') {
+      const f = traceFlagAt(sp);
+      if (f) { s.setTraceFocus({ type: 'flag', id: f.id }); s.setTab('trace'); schedule(); return; }
       const hit = hitTest(sp);
       const cur = useStore.getState().selRooms;
       if (hit) {
@@ -247,6 +328,13 @@ export default function Canvas2D() {
     const sp = evPt(e), mp = toModel(sp.x, sp.y);
     const mfx = px2ft(mp.x), mfy = px2ft(mp.y);
 
+    if (s.tool === 'tr_wall' && trDraft.current?.a && scale) {
+      let p = traceSnap({ x: mfx, y: mfy }, sp);
+      if (e.shiftKey) p = axisLock(trDraft.current.a, p);
+      trDraft.current.hover = p; schedule(); return;
+    }
+    if (s.tool === 'tr_erase' && scale) { trDraft.current = { kind: 'erase', hit: traceWallAt(sp) }; schedule(); return; }
+    if (trDraft.current?.kind === 'region' && down.current) { trDraft.current.p1 = mp; schedule(); return; }
     if (pan.current) { s.setView({ ...s.view, x: pan.current.x + (sp.x - pan.current.sp.x), y: pan.current.y + (sp.y - pan.current.sp.y) }); schedule(); return; }
     if (marquee.current) { marquee.current.sp1 = sp; schedule(); return; }
     if (ruler.current && down.current) { ruler.current.p2 = e.shiftKey ? axisLock(ruler.current.p1, mp) : mp; schedule(); return; }
@@ -290,6 +378,13 @@ export default function Canvas2D() {
   }
 
   function onUp() {
+    if (trDraft.current?.kind === 'region') {
+      const { p0, p1 } = trDraft.current; trDraft.current = null;
+      if (Math.abs(p1.x - p0.x) > 20 && Math.abs(p1.y - p0.y) > 20) {
+        s.setTrace({ region: { x0: Math.min(p0.x, p1.x), y0: Math.min(p0.y, p1.y), x1: Math.max(p0.x, p1.x), y1: Math.max(p0.y, p1.y) } });
+      }
+      s.setTool('select'); down.current = null; schedule(); return;
+    }
     if (marquee.current) {
       const m = marquee.current; marquee.current = null;
       const moved = Math.hypot(m.sp1.x - m.sp0.x, m.sp1.y - m.sp0.y);
@@ -403,6 +498,7 @@ export default function Canvas2D() {
   // while a draft is actually open.
   function onKeyCapture(e) {
     if (/input|select|textarea/i.test(e.target.tagName)) return;
+    if (trDraft.current && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); trDraft.current = null; schedule(); return; }
     if (!mkDraft.current && draft.current?.kind !== 'poly' && !mkActive.current) return;
     const k = e.key;
     if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); finishDraft(); }

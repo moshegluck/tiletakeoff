@@ -157,10 +157,36 @@ export function analyzeGraph(g, ctx = {}) {
       else if (big) c.big++;
     }
     for (const [comp, c] of compsWithRooms) if (c.containers > 0 && c.big === 0) frameComps.add(comp);
+
+    // Linework with no rooms of its own that either surrounds the building (an
+    // unclosed sheet border) or sits well away from it (title block, details,
+    // schedules) isn't part of the building. Anything overlapping the building
+    // stays — a leaking wall there must be flagged, never dropped.
+    const roomComps = new Set([...compsWithRooms].filter(([, c]) => c.big > 0).map(([k]) => k));
+    if (roomComps.size) {
+      const bb = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      const cbb = new Map();
+      for (const e of g.edges) {
+        const k = compOf.get(e.u);
+        if (!cbb.has(k)) cbb.set(k, { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+        for (const n of [nodes[e.u], nodes[e.v]]) {
+          const b = cbb.get(k);
+          b.x0 = Math.min(b.x0, n.x); b.y0 = Math.min(b.y0, n.y); b.x1 = Math.max(b.x1, n.x); b.y1 = Math.max(b.y1, n.y);
+          if (roomComps.has(k)) { bb.x0 = Math.min(bb.x0, n.x); bb.y0 = Math.min(bb.y0, n.y); bb.x1 = Math.max(bb.x1, n.x); bb.y1 = Math.max(bb.y1, n.y); }
+        }
+      }
+      const M = 1;
+      for (const [k, b] of cbb) {
+        if (roomComps.has(k) || frameComps.has(k)) continue;
+        const surrounds = b.x0 <= bb.x0 - M && b.y0 <= bb.y0 - M && b.x1 >= bb.x1 + M && b.y1 >= bb.y1 + M;
+        const far = b.x1 < bb.x0 - 6 || b.x0 > bb.x1 + 6 || b.y1 < bb.y0 - 6 || b.y0 > bb.y1 + 6;
+        if (surrounds || far) frameComps.add(k);
+      }
+    }
     if (frameComps.size) {
       const g2 = { nodes: g.nodes, edges: g.edges.filter((e) => !frameComps.has(compOf.get(e.u))).map((e, i) => ({ ...e, id: i })) };
       const res = analyzeGraph(g2, { ...ctx, _frameChecked: true });
-      res.flags.push({ id: 'f_frame', severity: 'info', kind: 'frame', at: null, msg: `${frameComps.size} sheet border / frame loop(s) around the plan ignored` });
+      res.flags.push({ id: 'f_frame', severity: 'info', kind: 'frame', at: null, msg: `${frameComps.size} piece(s) of non-building linework ignored (sheet border, title block, details)` });
       res.ignoredEdges = g.edges.length - g2.edges.length;
       return res;
     }

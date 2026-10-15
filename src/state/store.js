@@ -31,9 +31,18 @@ function blankProject() {
     planWidth: 0,          // pixel width of loaded plan image
     planHeight: 0,         // pixel height of loaded plan image
     planDpi: 0,            // px per paper-inch of the plan (72 * pdf renderScale); 0 = unknown
+    trace: null,           // reconstructed wall model: { result, settings, manual, removed, region, source, committedAt }
     cloudId: null,         // supabase project id when saved to cloud
     createdAt: Date.now(),
     updatedAt: Date.now(),
+  };
+}
+
+export function defaultTrace() {
+  return {
+    result: null,
+    settings: { ceilingHeight: 8, doorHeight: 6 + 8 / 12, floorAtDoor: 'center', maxOpening: 16, defaultWallIn: 4.5 },
+    manual: [], removed: [], edits: [], region: null, source: null, committedAt: null,
   };
 }
 
@@ -57,7 +66,7 @@ export function setCloudSaver(fn) { cloudSaver = fn; }
 function localSnapshot(s) {
   return {
     id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
-    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups,
+    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: s.trace,
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
     createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
@@ -89,6 +98,9 @@ export const useStore = create((set, get) => ({
   pdfDoc: null,        // loaded pdf.js doc (runtime only)
   pdfPages: 0,
   pdfPage: 1,
+  showTrace: true,
+  traceBusy: false,
+  traceFocus: null,      // { type: 'flag' | 'room', id }
 
   // ---- generic ----
   setName: (name) => { set({ name }); persist(get); },
@@ -154,7 +166,7 @@ export const useStore = create((set, get) => ({
       ...blankProject(),
       id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system,
       scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
-      rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [],
+      rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, selRooms: [], gridMaterialId: null, tool: 'select',
@@ -184,7 +196,16 @@ export const useStore = create((set, get) => ({
     return room.id;
   },
   addRect: (x, y, w, h, name) => get().addRoom(rectPoly(x, y, w, h), name),
-  updateRoom: (id, patch) => { set({ rooms: get().rooms.map((r) => r.id === id ? { ...r, ...patch } : r) }); persist(get); },
+  updateRoom: (id, patch) => {
+    set({ rooms: get().rooms.map((r) => {
+      if (r.id !== id) return r;
+      const next = { ...r, ...patch };
+      // a traced room whose outline is hand-edited no longer matches the traced wall LF
+      if (patch.points && r.traceId && !('wallLf' in patch)) { next.wallLf = undefined; next.spurLf = 0; next.edited = true; }
+      return next;
+    }) });
+    persist(get);
+  },
   setRoomLayout: (id, patch) => {
     set({ rooms: get().rooms.map((r) => r.id === id ? { ...r, layout: { ...r.layout, ...patch } } : r) });
     persist(get);
@@ -205,6 +226,65 @@ export const useStore = create((set, get) => ({
       selection: sel.id === id ? { type: null, id: null } : sel,
     });
     persist(get);
+  },
+
+  // ---- trace (reconstructed wall model) ----
+  setTrace: (patch) => { set({ trace: { ...defaultTrace(), ...(get().trace || {}), ...patch } }); persist(get); },
+  clearTrace: () => { set({ trace: null, traceFocus: null }); persist(get); },
+  setShowTrace: (v) => set({ showTrace: v ?? !get().showTrace }),
+  setTraceBusy: (b) => set({ traceBusy: b }),
+  setTraceFocus: (f) => set({ traceFocus: f }),
+  setTraceSettings: (patch) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    tr.settings = { ...tr.settings, ...patch };
+    // ceiling height drives every traced room's wall height
+    const rooms = 'ceilingHeight' in patch
+      ? get().rooms.map((r) => (r.traceId ? { ...r, wallHeight: patch.ceilingHeight } : r))
+      : get().rooms;
+    set({ trace: tr, rooms }); persist(get);
+  },
+  addTraceWall: (a, b, t) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    set({ trace: { ...tr, manual: [...tr.manual, { a, b, t }], edits: [...(tr.edits || []), 'manual'] } }); persist(get);
+  },
+  eraseTraceWall: (a, b) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    set({ trace: { ...tr, removed: [...tr.removed, { a, b }], edits: [...(tr.edits || []), 'removed'] } }); persist(get);
+  },
+  undoTraceEdit: () => {
+    const tr = get().trace; if (!tr) return;
+    const last = tr.edits?.[tr.edits.length - 1];
+    if (!last) return;
+    const edits = tr.edits.slice(0, -1);
+    if (last === 'manual') set({ trace: { ...tr, manual: tr.manual.slice(0, -1), edits } });
+    else set({ trace: { ...tr, removed: tr.removed.slice(0, -1), edits } });
+    persist(get);
+  },
+  /** Turn the traced rooms into takeoff rooms (keeps hand-drawn rooms and prior material picks). */
+  commitTrace: () => {
+    const tr = get().trace; const res = tr?.result; if (!res) return 0;
+    const keep = get().rooms.filter((r) => !r.traceId);
+    const prev = new Map(get().rooms.filter((r) => r.traceId).map((r) => [r.traceName, r]));
+    const floor = get().materials.find((m) => m.type === 'floor');
+    const H = tr.settings?.ceilingHeight ?? 8;
+    const rooms = res.rooms.map((t, i) => {
+      const p = prev.get(t.name);
+      return {
+        id: p?.id || nanoid(),
+        name: p?.name || t.name,
+        color: p?.color || ROOM_COLORS[(keep.length + i) % ROOM_COLORS.length],
+        points: t.poly, holes: t.holes || [],
+        assigned: p?.assigned || (floor ? [floor.id] : []),
+        wallHeight: H,
+        layout: p?.layout || { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } },
+        finish: p?.finish,
+        traceId: t.id, traceName: t.name, roomType: t.type,
+        wallLf: t.wallLf, spurLf: t.spurLf, openings: t.openings, labelAt: t.center,
+      };
+    });
+    set({ rooms: [...keep, ...rooms], trace: { ...tr, committedAt: Date.now() }, tab: 'rooms', selection: { type: null, id: null }, selRooms: [] });
+    persist(get);
+    return rooms.length;
   },
 
   // ---- materials ----

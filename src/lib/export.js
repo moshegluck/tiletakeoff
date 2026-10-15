@@ -3,7 +3,7 @@
 // ============================================================
 
 import { estimateProject } from '../engine/estimate.js';
-import { polygonArea, polygonPerimeter } from '../engine/geometry.js';
+import { roomArea, roomWallLf } from '../engine/geometry.js';
 import { round } from '../engine/units.js';
 
 function downloadBlob(content, type, filename) {
@@ -82,9 +82,9 @@ export function exportCSV(state) {
   rows.push(['', '', '', '', '', '', '', '', '', '', 'TOTAL', round(e.total, 2)]);
   rows.push([]);
   rows.push(['Rooms']);
-  rows.push(['Name', 'Area SF', 'Perimeter LF', 'Wall Height', 'Materials']);
+  rows.push(['Name', 'Area SF', 'Wall LF', 'Wall Height', 'Materials']);
   state.rooms.forEach((r) => rows.push([
-    r.name, round(polygonArea(r.points), 2), round(polygonPerimeter(r.points), 2),
+    r.name, round(roomArea(r), 2), round(roomWallLf(r), 2),
     r.wallHeight ?? 8,
     r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
   ]));
@@ -118,9 +118,9 @@ export async function exportXLSX(state) {
   ]);
 
   wb.addWorksheet('Rooms').addRows([
-    ['Name', 'Area SF', 'Perimeter LF', 'Wall Height', 'Pattern', 'Materials'],
+    ['Name', 'Area SF', 'Wall LF', 'Wall Height', 'Pattern', 'Materials'],
     ...state.rooms.map((r) => [
-      r.name, round(polygonArea(r.points), 2), round(polygonPerimeter(r.points), 2),
+      r.name, round(roomArea(r), 2), round(roomWallLf(r), 2),
       r.wallHeight ?? 8, r.layout?.pattern ?? 'grid',
       r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
     ]),

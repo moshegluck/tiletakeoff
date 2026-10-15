@@ -68,6 +68,35 @@ const ROOM_SCHEMA = {
   },
 };
 
+// ---- room naming (trace mode) ----
+// The geometry comes from the trace engine; the model only READS the plan:
+// for each traced room centre it returns the label printed there.
+const LABEL_SYSTEM = `You read architectural floor plans. You are given a plan image and a list of
+rooms that were already measured by a geometry engine; each has an id and the pixel position of
+its centre on this image. For each room, read the room name printed inside that space on the plan
+(e.g. "MASTER BATH", "W.I.C.", "KITCHEN"). If no name is printed, give the most likely name from
+the fixtures you can see (toilet/tub → bath, rod/shelf → closet, range/sink run → kitchen).
+Also classify each as one of: bath, closet, kitchen, laundry, bedroom, living, dining, hall,
+garage, outdoor, mech, room. Never invent rooms; return exactly the ids you were given.`;
+
+const LABEL_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['rooms'],
+  properties: {
+    rooms: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['id', 'name', 'type', 'printed'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['bath', 'closet', 'kitchen', 'laundry', 'bedroom', 'living', 'dining', 'hall', 'garage', 'outdoor', 'mech', 'room'] },
+          printed: { type: 'boolean' },
+        },
+      },
+    },
+  },
+};
+
 const ALLOWED_MEDIA = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 // ~8M base64 chars ≈ 6 MB decoded — generous for a plan page, bounds cost/DoS.
 const MAX_B64 = 8_000_000;
@@ -187,7 +216,7 @@ export default async function handler(req, res) {
     }
 
     // ---- input validation ----
-    const { imageBase64, mediaType = 'image/png', pixelsPerFoot } = req.body || {};
+    const { imageBase64, mediaType = 'image/png', pixelsPerFoot, mode, rooms: traced } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {
       return res.status(400).json({ error: 'imageBase64 required' });
     }
@@ -198,6 +227,39 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Unsupported image type. Use PNG, JPEG, WebP or GIF.' });
     }
     const ppf = Number.isFinite(+pixelsPerFoot) && +pixelsPerFoot > 0 ? +pixelsPerFoot : null;
+
+    if (mode === 'label') {
+      const list = Array.isArray(traced) ? traced.slice(0, 150).map((r) => ({
+        id: String(r.id).slice(0, 20), x: Math.round(+r.x || 0), y: Math.round(+r.y || 0), areaSf: Math.round(+r.areaSf || 0),
+      })) : [];
+      if (!list.length) return res.status(400).json({ error: 'rooms required' });
+      const anthropic = new Anthropic({ apiKey: key, timeout: 50_000, maxRetries: 1 });
+      let msg;
+      try {
+        msg = await anthropic.messages.create({
+          model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
+          max_tokens: 4096,
+          system: LABEL_SYSTEM,
+          output_config: { format: { type: 'json_schema', schema: LABEL_SCHEMA } },
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
+              { type: 'text', text: `Rooms (pixel centres on this image):\n${JSON.stringify(list)}` },
+            ],
+          }],
+        });
+      } catch (err) {
+        console.error('[detect-plan:label] SDK error', err?.status, err?.message);
+        return res.status(502).json({ error: err?.status === 429 ? 'AI service is busy. Please try again shortly.' : 'AI naming failed. Please try again.' });
+      }
+      const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
+      let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ rooms: [] }); }
+      const ids = new Set(list.map((r) => r.id));
+      const out = (parsed?.rooms || []).filter((r) => ids.has(r.id) && typeof r.name === 'string' && r.name.trim())
+        .map((r) => ({ id: r.id, name: r.name.trim().slice(0, 40), type: r.type, printed: !!r.printed }));
+      return res.status(200).json({ rooms: out });
+    }
 
     const userText = ppf
       ? `The plan is rendered at approximately ${ppf} pixels per foot. Extract all rooms.`

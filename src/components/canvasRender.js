@@ -9,7 +9,7 @@
 //   current values of those refs, not the refs themselves)
 // ============================================================
 
-import { centroid, polygonArea, bounds } from '../engine/geometry.js';
+import { centroid, polygonArea, bounds, roomArea } from '../engine/geometry.js';
 import { generateLayout } from '../engine/layouts.js';
 import { formatLength, formatArea } from '../engine/units.js';
 import { markupValue } from '../engine/markups.js';
@@ -39,6 +39,7 @@ export function renderScene(ctx, W, H, rc) {
   }
   if (scale && s.showGrid) drawFootGrid(ctx, W, H, rc);
   for (const r of s.rooms) drawRoom(ctx, r, rc);
+  if (scale && (s.trace || rc.trDraft)) drawTrace(ctx, rc);
   for (const mk of s.markups) drawMarkup(ctx, mk, rc);
   if (s.tool === 'grid' && s.gridMaterialId) drawTileGrid(ctx, rc);
   if (rc.draft) drawDraft(ctx, rc);
@@ -223,11 +224,13 @@ export function drawFootGrid(ctx, W, H, rc) {
 function roomScreenPath(ctx, r, rc) {
   const { ft2px, toScreen } = rc;
   ctx.beginPath();
-  r.points.forEach((p, i) => {
-    const sp = toScreen(ft2px(p.x), ft2px(p.y));
-    i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y);
-  });
-  ctx.closePath();
+  for (const ring of [r.points, ...(r.holes || [])]) {
+    ring.forEach((p, i) => {
+      const sp = toScreen(ft2px(p.x), ft2px(p.y));
+      i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y);
+    });
+    ctx.closePath();
+  }
 }
 
 export function drawRoom(ctx, r, rc) {
@@ -239,15 +242,15 @@ export function drawRoom(ctx, r, rc) {
   roomScreenPath(ctx, r, rc);
   ctx.fillStyle = hexA(r.color, selected ? .18 : .1);
   ctx.strokeStyle = r.color; ctx.lineWidth = selected ? 2.5 : 1.6;
-  ctx.fill(); ctx.stroke();
+  ctx.fill('evenodd'); ctx.stroke();
   // a dashed accent ring marks every member of a multi-selection
   if (inMulti && s.selRooms.length > 1) {
     roomScreenPath(ctx, r, rc);
     ctx.setLineDash([5, 4]); ctx.strokeStyle = '#c8521f'; ctx.lineWidth = 2; ctx.stroke();
     ctx.setLineDash([]);
   }
-  const c = centroid(r.points); const cs = toScreen(ft2px(c.x), ft2px(c.y));
-  const area = scale ? polygonArea(r.points) : 0;
+  const c = r.labelAt || centroid(r.points); const cs = toScreen(ft2px(c.x), ft2px(c.y));
+  const area = scale ? roomArea(r) : 0;
   ctx.fillStyle = r.color; ctx.font = '600 12px Inter, sans-serif'; ctx.textAlign = 'center';
   ctx.fillText(r.name, cs.x, cs.y - 4);
   if (scale) {
@@ -333,6 +336,136 @@ export function drawRuler(ctx, rc) {
     const w = ctx.measureText(txt).width + 12;
     ctx.fillStyle = '#c8521f'; roundRect(ctx, mx + 10, my - 20, w, 18, 4); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.fillText(txt, mx + 16, my - 7.5);
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// TRACE OVERLAY — the reconstructed model drawn over the plan, so you can see
+// exactly what the takeoff is made of and where it needs you.
+// ---------------------------------------------------------------------------
+const TR = {
+  wall: 'rgba(15,47,71,.62)', wallEdge: '#0f2f47', manual: 'rgba(29,122,77,.75)', repair: 'rgba(178,94,0,.7)',
+  open: '#c8521f', ok: '#1d7a4d', review: '#b25e00', error: '#b3261e',
+};
+
+export function drawTrace(ctx, rc) {
+  const { s, ft2px, toScreen } = rc;
+  const res = s.trace?.result;
+  const S = (p) => toScreen(ft2px(p.x), ft2px(p.y));
+  const z = s.view.zoom;
+  const pxPerFt = ft2px(1) * z;
+  const focus = s.traceFocus;
+  ctx.save();
+
+  if (res && s.showTrace) {
+    const committed = !!s.trace.committedAt;
+    // rooms (only until they've been sent to the takeoff — then the room layer shows them)
+    for (const r of res.rooms) {
+      const on = focus?.type === 'room' && focus.id === r.id;
+      if (committed && !on) continue;
+      const col = TR[r.status] || TR.ok;
+      ctx.beginPath();
+      for (const ring of [r.poly, ...(r.holes || [])]) {
+        ring.forEach((p, i) => { const q = S(p); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+        ctx.closePath();
+      }
+      ctx.fillStyle = hexA(col, on ? 0.2 : 0.09); ctx.fill('evenodd');
+      ctx.strokeStyle = hexA(col, 0.9); ctx.lineWidth = on ? 2.5 : 1.2; ctx.stroke();
+    }
+    // walls as real bodies
+    for (const w of res.walls) {
+      const dx = w.b.x - w.a.x, dy = w.b.y - w.a.y, L = Math.hypot(dx, dy) || 1;
+      const nx = -dy / L * w.t / 2, ny = dx / L * w.t / 2;
+      const q = [S({ x: w.a.x + nx, y: w.a.y + ny }), S({ x: w.b.x + nx, y: w.b.y + ny }), S({ x: w.b.x - nx, y: w.b.y - ny }), S({ x: w.a.x - nx, y: w.a.y - ny })];
+      ctx.beginPath(); q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
+      ctx.fillStyle = w.src === 'manual' ? TR.manual : w.src === 'repair' ? TR.repair : TR.wall;
+      ctx.fill();
+    }
+    // openings: dashed across the gap, width label when zoomed in
+    ctx.setLineDash([6, 4]); ctx.lineWidth = 2;
+    for (const o of res.openings) {
+      const a = S(o.a), b = S(o.b);
+      ctx.strokeStyle = o.openingType === 'opening' ? hexA(TR.open, 0.75) : TR.open;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if (pxPerFt > 9) {
+      ctx.font = '600 10px ' + MONO; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (const o of res.openings) {
+        const m = S({ x: (o.a.x + o.b.x) / 2, y: (o.a.y + o.b.y) / 2 });
+        const txt = formatLength(o.width, s.unitSystem);
+        const w = ctx.measureText(txt).width + 8;
+        ctx.fillStyle = 'rgba(255,255,255,.92)'; roundRect(ctx, m.x - w / 2, m.y - 8, w, 16, 4); ctx.fill();
+        ctx.fillStyle = TR.open; ctx.fillText(txt, m.x, m.y + 0.5);
+      }
+    }
+    // room labels before commit
+    if (!committed) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      for (const r of res.rooms) {
+        const c = S(r.center);
+        // only as many lines as fit inside the room on screen
+        let x0 = Infinity, x1 = -Infinity;
+        for (const p of r.poly) { const q = S(p); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); }
+        const room = x1 - x0 - 8;
+        const lines = [
+          { t: r.name, f: '700 12px Inter, sans-serif', c: TR[r.status] || TR.ok },
+          { t: formatArea(r.area, s.unitSystem), f: '600 10.5px ' + MONO, c: '#33414f' },
+          { t: `${formatLength(r.wallLf, s.unitSystem)} LF`, f: '600 10.5px ' + MONO, c: '#5b6976' },
+        ].filter((l) => { ctx.font = l.f; return ctx.measureText(l.t).width <= room; });
+        let y = c.y - (lines.length - 1) * 7;
+        for (const l of lines) { ctx.font = l.f; ctx.fillStyle = l.c; ctx.fillText(l.t, c.x, y + 4); y += 14; }
+      }
+    }
+    // auto-fixes: small ticks, only when zoomed in enough to matter
+    if (pxPerFt > 14) {
+      ctx.fillStyle = 'rgba(29,122,77,.8)';
+      for (const r of res.repairs) { if (!r.at || r.kind === 'opening') continue; const p = S(r.at); ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, 7); ctx.fill(); }
+    }
+    // flags: pins
+    let n = 0;
+    for (const f of res.flags) {
+      if (!f.at) continue;
+      const on = focus?.type === 'flag' && focus.id === f.id;
+      if (f.severity === 'info' && !on) continue;
+      n++;
+      const p = S(f.at);
+      const col = TR[f.severity] || TR.review;
+      if (on) { ctx.beginPath(); ctx.arc(p.x, p.y, 17, 0, 7); ctx.strokeStyle = hexA(col, 0.5); ctx.lineWidth = 4; ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 7); ctx.fillStyle = col; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = '700 11px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(f.severity === 'info' ? 'i' : '!', p.x, p.y + 0.5);
+    }
+    void n;
+  }
+
+  // selected trace area (px rect in plan-image space)
+  const reg = s.trace?.region;
+  if (reg) {
+    const a = toScreen(reg.x0, reg.y0), b = toScreen(reg.x1, reg.y1);
+    ctx.setLineDash([8, 5]); ctx.strokeStyle = '#1d6fb0'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y); ctx.setLineDash([]);
+  }
+  // tool drafts
+  const d = rc.trDraft;
+  if (d?.kind === 'wall' && d.a && d.hover) {
+    const a = S(d.a), b = S(d.hover);
+    ctx.strokeStyle = TR.manual; ctx.lineWidth = Math.max(3, ft2px(d.t || 0.375) * z);
+    ctx.lineCap = 'butt'; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.font = '600 11px ' + MONO; ctx.fillStyle = '#1d7a4d'; ctx.textAlign = 'left';
+    ctx.fillText(formatLength(Math.hypot(d.hover.x - d.a.x, d.hover.y - d.a.y), s.unitSystem), b.x + 10, b.y - 8);
+  }
+  if (d?.kind === 'region' && d.p0 && d.p1) {
+    const a = toScreen(d.p0.x, d.p0.y), b = toScreen(d.p1.x, d.p1.y);
+    ctx.setLineDash([8, 5]); ctx.strokeStyle = '#1d6fb0'; ctx.lineWidth = 1.5; ctx.fillStyle = 'rgba(29,111,176,.06)';
+    ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y); ctx.setLineDash([]);
+  }
+  if (d?.kind === 'erase' && d.hit) {
+    const w = d.hit, a = S(w.a), b = S(w.b);
+    ctx.strokeStyle = TR.error; ctx.lineWidth = Math.max(4, ft2px(w.t) * z + 2);
+    ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.globalAlpha = 1;
   }
   ctx.restore();
 }

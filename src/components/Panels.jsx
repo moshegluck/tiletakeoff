@@ -1,6 +1,6 @@
 import React from 'react';
 import { useStore, ROOM_COLORS } from '../state/store.js';
-import { polygonArea, rectPoly } from '../engine/geometry.js';
+import { rectPoly, roomArea, roomWallLf } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
 import { formatLength, formatArea, parseLength } from '../engine/units.js';
 import { PATTERNS } from '../engine/layouts.js';
@@ -8,12 +8,14 @@ import { TILE_CATALOG, GROUT_JOINTS } from '../data/tileCatalog.js';
 import { exportCSV, exportXLSX, exportJSON } from '../lib/export.js';
 import { buildProjectCutSheets, openCutSheet } from '../engine/cutSheet.js';
 import { formatLength as fmtLen } from '../engine/units.js';
+import TracePanel from './TracePanel.jsx';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
 
 const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function Panels() {
   const tab = useStore((s) => s.tab);
+  if (tab === 'trace') return <TracePanel />;
   if (tab === 'rooms') return <RoomsPanel />;
   if (tab === 'materials') return <MaterialsPanel />;
   if (tab === 'markups') return <MarkupsPanel />;
@@ -49,7 +51,7 @@ function RoomsPanel() {
 function RoomCard({ room: r }) {
   const s = useStore();
   const open = s.selection.type === 'room' && s.selection.id === r.id;
-  const area = s.scale ? polygonArea(r.points) : 0;
+  const area = s.scale ? roomArea(r) : 0;
   const isRect = r.points.length === 4;
   const b = bounds(r.points);
 
@@ -75,7 +77,16 @@ function RoomCard({ room: r }) {
               </div>
             </div>
           )}
-          {!isRect && <div className="note" style={{ marginTop: 8 }}>Polygon room · {r.points.length} vertices · drag vertices on canvas to edit.</div>}
+          {r.traceId && s.scale && (
+            <div className="trace-facts">
+              <span>Floor <b>{formatArea(area, s.unitSystem)}</b></span>
+              <span>Wall LF <b>{formatLength(roomWallLf(r), s.unitSystem)}</b></span>
+              {r.spurLf > 0 && <span>incl. returns <b>{formatLength(r.spurLf, s.unitSystem)}</b></span>}
+              {r.openings?.length > 0 && <span>{r.openings.length} opening{r.openings.length > 1 ? 's' : ''}: {r.openings.map((o) => formatLength(o.width, s.unitSystem)).join(', ')}</span>}
+              {r.holes?.length > 0 && <span>{r.holes.length} column/chase deducted</span>}
+            </div>
+          )}
+          {!isRect && !r.traceId && <div className="note" style={{ marginTop: 8 }}>Polygon room · {r.points.length} vertices · drag vertices on canvas to edit.</div>}
 
           <div className="field"><label>Wall height (for wall tile)</label>
             <DimInput value={r.wallHeight ?? 8} system={s.unitSystem} onCommit={(h) => s.updateRoom(r.id, { wallHeight: h })} />
