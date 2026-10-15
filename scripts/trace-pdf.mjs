@@ -29,7 +29,6 @@ if (!file) {
   process.exit(2);
 }
 
-const fmtFtIn = (ft) => { const t = Math.round(ft * 12); return `${Math.floor(t / 12)}'-${t % 12}"`; };
 const pad = (s, n) => String(s).padEnd(n).slice(0, n);
 const num = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : '—');
 
