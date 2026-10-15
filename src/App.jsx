@@ -32,6 +32,10 @@ export default function App() {
   const [detect, setDetect] = useState(false);
   const [toast, setToast] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  // phones: the side panel is a bottom drawer (CSS); this opens / closes it
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const tab = s.tab;
+  useEffect(() => { setSheetOpen(true); }, [tab]);
   const [landing, setLanding] = useState(() => {
     try { return localStorage.getItem('tt.entered') !== '1'; } catch (_) { return true; }
   });
@@ -175,10 +179,11 @@ export default function App() {
           <StageWrap totalSf={totalSf} onPdfPage={loadPdfPage} pdfBusy={pdfBusy} />
         )}
 
-        <aside className="right">
+        <aside className={'right' + (sheetOpen ? ' open' : '')}>
+          <button className="sheet-handle" aria-label={sheetOpen ? 'Close panel' : 'Open panel'} onClick={() => setSheetOpen(!sheetOpen)} />
           <div className="tabs">
             {[['trace', 'Trace', s.trace?.result ? (s.trace.result.counts.error || s.trace.result.counts.warn || null) : null], ['rooms', 'Rooms', s.rooms.length], ['materials', 'Materials', s.materials.length], ['markups', 'Markups', s.markups.length], ['estimate', 'Estimate', null]].map(([id, label, ct]) => (
-              <button key={id} className={'tab' + (s.tab === id ? ' active' : '')} onClick={() => s.setTab(id)}>
+              <button key={id} className={'tab' + (s.tab === id ? ' active' : '')} onClick={() => { if (s.tab === id) setSheetOpen(!sheetOpen); else { s.setTab(id); setSheetOpen(true); } }}>
                 {label}{ct != null && <span className="ct">{ct}</span>}
               </button>
             ))}

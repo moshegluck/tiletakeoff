@@ -104,8 +104,15 @@ const MAX_B64 = 8_000_000;
 // Supabase (optional). When BOTH vars are present the route requires a valid
 // user JWT. Vercel exposes all project env vars to functions regardless of the
 // VITE_ prefix, so accept either name.
-const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const SB_ANON = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+// The env still names a deleted Supabase project; map it to the live one so
+// signed-in users' tokens validate (mirrors src/lib/supabase.js).
+const DEAD_REFS = ['edsywvqtlnoyqtsamryn'];
+const LIVE_URL = 'https://qgvloanrqzuciuhpepjy.supabase.co';
+const LIVE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFndmxvYW5ycXp1Y2l1aHBlcGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyMzcyNjcsImV4cCI6MjA5OTgxMzI2N30.Q2zI4tSlW04HjOxHEqO9M7YmSLdF2kgOrHJ3Asiw6x0';
+const ENV_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const DEAD = DEAD_REFS.some((r) => ENV_URL.includes(r));
+const SB_URL = DEAD ? LIVE_URL : ENV_URL;
+const SB_ANON = DEAD ? LIVE_ANON : (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '');
 const AUTH_REQUIRED = Boolean(SB_URL && SB_ANON);
 const sb = AUTH_REQUIRED
   ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } })

@@ -178,32 +178,28 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
   .unit-sel{padding:6px 6px;font-size:12px}
 
   /* 2-col main: narrow toolbar + canvas */
-  main{grid-template-columns:48px 1fr;padding-bottom:56px}
+  main{grid-template-columns:48px 1fr;padding-bottom:64px}
 
-  /* right panel hidden by default — slides up as sheet */
+  /* right panel = bottom drawer: tab bar always peeks, tap a tab to open */
   aside.right{
     position:fixed;
-    bottom:56px; left:0; right:0;
-    height:60vh;
+    bottom:0; left:0; right:0;
+    height:72vh; height:72dvh;
     border-left:none;
     border-top:1px solid var(--line);
     border-radius:14px 14px 0 0;
     box-shadow:0 -6px 30px rgba(16,23,31,.14);
-    transform:translateY(100%);
+    transform:translateY(calc(100% - 64px));
     transition:transform .25s cubic-bezier(.4,0,.2,1);
     z-index:30;
   }
   aside.right.open{transform:translateY(0)}
 
   /* pull-handle on the sheet */
-  aside.right::before{
-    content:'';
-    display:block;
-    width:36px;height:4px;
-    background:var(--line);
-    border-radius:2px;
-    margin:10px auto 0;
-  }
+  .sheet-handle{display:block;width:100%;height:18px;border:none;background:transparent;flex:none;position:relative;padding:0}
+  .sheet-handle::after{content:'';position:absolute;left:50%;top:7px;width:40px;height:4px;margin-left:-20px;background:var(--line);border-radius:2px}
+  .tabs{overflow-x:auto;flex:none}
+  .tab{flex:none;padding:10px 12px}
 
   /* toolbar: tighter */
   .toolbar{padding:8px 0}
@@ -232,8 +228,8 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
   .mobile-nav button.active{color:var(--accent)}
   .mobile-nav button svg{width:22px;height:22px}
 
-  /* toast above bottom nav */
-  .toast{bottom:66px}
+  /* toast above the drawer's tab bar */
+  .toast{bottom:76px}
 
   /* bigger tap targets on zoom */
   .zbtn{width:40px;height:40px;font-size:20px}
@@ -244,6 +240,7 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 /* Desktop: hide mobile nav */
 @media(min-width:769px){
   .mobile-nav{display:none}
+  .sheet-handle{display:none}
   aside.right{display:flex} /* always visible */
 }
 

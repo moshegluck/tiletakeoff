@@ -28,7 +28,14 @@ export default function TracePanel() {
       try {
         const { readPlan } = await import('../lib/traceClient.js');
         const { sheetScale } = await readPlan(useStore.getState());
-        if (alive) setSheet(sheetScale);
+        if (!alive) return;
+        setSheet(sheetScale);
+        // the sheet states its scale and none is set yet → just use it
+        const st = useStore.getState();
+        if (sheetScale && !st.scale) {
+          st.setScale(sheetScale.scale); st.setArchScale(sheetScale.id);
+          window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Scale read from sheet · ${sheetScale.label}`, ok: true } }));
+        }
       } catch (_) { /* reading is best-effort */ }
     })();
     return () => { alive = false; };
