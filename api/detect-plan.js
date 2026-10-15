@@ -23,8 +23,10 @@
 //   - never leaks upstream error bodies or stack traces to the client.
 // ============================================================
 
+import dns from 'node:dns/promises';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import { resolveSupabase } from '../src/lib/supabasePublic.js';
 
 // Claude reads a dense plan carefully; give it room (Fluid compute allows 300 s).
 export const config = { maxDuration: 300 };
@@ -94,9 +96,20 @@ const MAX_EDGE = 2576;
 const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const SB_ANON = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const AUTH_REQUIRED = Boolean(SB_URL && SB_ANON);
-const sb = AUTH_REQUIRED
-  ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } })
-  : null;
+// Verify sessions against the same project the browser build signs in to:
+// if the configured project no longer exists, that's the app's live project
+// (see src/lib/supabasePublic.js). Resolved once per warm instance.
+let _sb;
+function getSupabase() {
+  if (!_sb) {
+    _sb = resolveSupabase({ url: SB_URL, anonKey: SB_ANON }, (host) => dns.lookup(host)).then((c) => {
+      if (c.source === 'fallback') console.warn(`[detect-plan] ${c.reason}; verifying sessions against ${c.url}`);
+      return createClient(c.url, c.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    });
+    _sb.catch(() => { _sb = undefined; }); // retry on the next request
+  }
+  return _sb;
+}
 
 // Rate limiter. Uses Upstash Redis (durable across serverless instances) when
 // configured, else falls back to a best-effort in-memory window (per warm
@@ -219,6 +232,7 @@ export default async function handler(req, res) {
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       if (!token) return res.status(401).json({ error: 'Sign in to use AI detection.' });
+      const sb = await getSupabase();
       const { data, error } = await sb.auth.getUser(token);
       if (error || !data?.user) {
         return res.status(401).json({ error: 'Your session has expired — sign in again.' });
