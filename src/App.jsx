@@ -4,11 +4,13 @@ import Canvas2D from './components/Canvas2D.jsx';
 import { Panels } from './components/Panels.jsx';
 import DetectModal from './components/DetectModal.jsx';
 import AccountBar from './components/AccountBar.jsx';
-import { UNIT_SYSTEMS, ARCH_SCALES, SCALE_GROUPS, archFeetPerPaperInch } from './engine/units.js';
+import { UNIT_SYSTEMS } from './engine/units.js';
 import { exportCSV } from './lib/export.js';
 import { onAuthEvent } from './lib/cloud.js';
 import { polygonArea } from './engine/geometry.js';
 import Landing from './components/Landing.jsx';
+import ScaleControl from './components/ScaleControl.jsx';
+import { openPlanFile } from './lib/planLoad.js';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
 
@@ -33,6 +35,17 @@ export default function App() {
   const s = useStore();
   const [detect, setDetect] = useState(false);
   const [toast, setToast] = useState(null);
+  // phones: the right panel is a bottom sheet; tabs open/close it
+  const [sheet, setSheet] = useState(false);
+  const isPhone = () => window.matchMedia('(max-width: 768px)').matches;
+  const onTab = (id) => {
+    if (!isPhone()) { s.setTab(id); return; }
+    if (sheet && s.tab === id) setSheet(false);
+    else { s.setTab(id); setSheet(true); }
+  };
+  // picking a drawing tool (e.g. "Trace inlay" in the panel) drops the sheet
+  // so the plan is free to draw on
+  useEffect(() => { if (s.tool !== 'select') setSheet(false); }, [s.tool]);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [landing, setLanding] = useState(() => {
     try { return localStorage.getItem('tt.entered') !== '1'; } catch (_) { return true; }
@@ -59,18 +72,12 @@ export default function App() {
     if (!file) return;
     setPdfBusy(true);
     try {
-      const { loadPdf } = await import('./lib/pdf.js');
-      const { doc, numPages } = await loadPdf(file);
-      s.setPdf(doc, numPages);
-      // render first page immediately
-      const { renderPage } = await import('./lib/pdf.js');
-      const out = await renderPage(doc, 1, 2000);
-      s.setPlanImage(out.dataUrl, out.width, out.height);
-      s.setPlanDpi(72 * out.renderScale);
-      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `PDF loaded · ${numPages} page${numPages > 1 ? 's' : ''}. Set the scale (pick a preset or draw the ruler).`, ok: true } }));
+      const out = await openPlanFile(file);
+      const what = out.kind === 'pdf' ? `PDF loaded · ${out.pages} page${out.pages > 1 ? 's' : ''}` : 'Plan image loaded';
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}. Set the scale (pick a preset or draw the ruler).`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {
-      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not open PDF: ' + err.message } }));
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not open the plan: ' + err.message } }));
     } finally { setPdfBusy(false); }
   }
 
@@ -136,19 +143,19 @@ export default function App() {
         <AccountBar />
         <label className="tbtn" style={{ cursor: 'pointer' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2h9l5 5v15H6zM15 2v5h5" /><path d="M9 13h6M9 17h4" /></svg>PDF
-          <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={onPdfPick} />
+          <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={onPdfPick} />
         </label>
         <button className="tbtn" onClick={() => setDetect(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19" /><circle cx="12" cy="12" r="3" /></svg>AI Detect
         </button>
-        <button className={'tbtn' + (s.view3d ? ' on' : '')} onClick={() => s.toggle3d()}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l9 5v10l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v10" /></svg>{s.view3d ? '2D' : '3D'}
+        <button className={'tbtn' + (s.view3d ? ' on' : '')} onClick={() => s.toggle3d()} title={s.view3d ? '2D plan' : '3D view'}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l9 5v10l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v10" /></svg><span className="tbtn-label">{s.view3d ? '2D' : '3D'}</span>
         </button>
-        <button className="tbtn" onClick={() => exportCSV(s)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>Export
+        <button className="tbtn" onClick={() => exportCSV(s)} title="Export CSV">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg><span className="tbtn-label">Export</span>
         </button>
-        <button className="tbtn primary" onClick={() => { if (confirm('Start a new takeoff? Current work is saved in this browser.')) s.newProject(); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>New
+        <button className="tbtn primary" title="New takeoff" onClick={() => { if (confirm('Start a new takeoff? Current work is saved in this browser.')) s.newProject(); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg><span className="tbtn-label">New</span>
         </button>
       </header>
 
@@ -173,10 +180,11 @@ export default function App() {
           <StageWrap totalSf={totalSf} onPdfPage={loadPdfPage} pdfBusy={pdfBusy} />
         )}
 
-        <aside className="right">
+        <aside className={'right' + (sheet ? ' open' : '')}>
+          <button className="sheet-handle" aria-label={sheet ? 'Close panel' : 'Open panel'} onClick={() => setSheet(!sheet)} />
           <div className="tabs">
             {[['rooms', 'Rooms', s.rooms.length], ['materials', 'Materials', s.materials.length], ['markups', 'Markups', s.markups.length], ['estimate', 'Estimate', null]].map(([id, label, ct]) => (
-              <button key={id} className={'tab' + (s.tab === id ? ' active' : '')} onClick={() => s.setTab(id)}>
+              <button key={id} className={'tab' + (s.tab === id ? ' active' : '')} onClick={() => onTab(id)}>
                 {label}{ct != null && <span className="ct">{ct}</span>}
               </button>
             ))}
@@ -232,41 +240,4 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
 function zoom(s, f) {
   const z = Math.max(0.15, Math.min(8, s.view.zoom * f));
   s.setView({ ...s.view, zoom: z });
-}
-
-// Scale control: pick an architectural preset (only meaningful once a PDF is
-// loaded, so its pixels-per-paper-inch is known) or fall back to drawing the
-// ruler along a known dimension.
-function ScaleControl() {
-  const s = useStore();
-  const hasPresets = s.planDpi > 0;
-  const current = s.scale
-    ? (s.archScale
-        ? 'Scale ' + (ARCH_SCALES.find((a) => a.id === s.archScale)?.label || '')
-        : 'Scale: custom (ruler)')
-    : '⚠ Set scale…';
-  const onChange = (e) => {
-    const v = e.target.value;
-    if (v === '__ruler') { s.setTool('ruler'); return; }
-    if (!v) return;
-    const a = ARCH_SCALES.find((x) => x.id === v);
-    const fpi = archFeetPerPaperInch(a);
-    if (a && fpi && s.planDpi > 0) {
-      s.setScale(fpi / s.planDpi);
-      s.setArchScale(v);
-      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Scale set · ${a.label}`, ok: true } }));
-    }
-  };
-  return (
-    <select className="hud-sel" value={s.archScale || ''} onChange={onChange}
-      title={hasPresets ? 'Choose a drawing scale, or calibrate with the ruler' : 'Load a PDF for scale presets, or calibrate with the ruler'}>
-      <option value="">{current}</option>
-      <option value="__ruler">Custom — draw a line…</option>
-      {hasPresets && SCALE_GROUPS.map(([g, label]) => (
-        <optgroup key={g} label={label}>
-          {ARCH_SCALES.filter((a) => a.group === g).map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-        </optgroup>
-      ))}
-    </select>
-  );
 }

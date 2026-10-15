@@ -15,14 +15,15 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Tile library** — square, rectangle/subway, plank, mosaic, and metric sizes; grout-joint presets; pattern-based waste suggestions.
 - **Estimate engine** — per material choose Waste% or Cut-reuse costing; full tiles + broken-for-cuts + safety margin → order qty (sf/tile/box), plus labor $/sf and tax.
 - **3D viewer** — extrudes rooms to walls and tiles the floors; orbit / zoom / pan.
-- **AI detection (hybrid)** — upload a floor-plan image, Claude (via the official Anthropic SDK, using **structured outputs** for guaranteed-valid room data and high-resolution vision) proposes rooms as editable rectangles, you review/correct before committing.
+- **AI detection (hybrid)** — runs on the plan that's already open (no re-upload): the part of the sheet on screen, or the whole page, re-rendered from the PDF at the model's full resolution. Claude (official Anthropic SDK, **structured outputs**, high-resolution vision) traces each room's outline in that image's pixels and reads printed room sizes; the app maps the pixels back onto the plan so rooms land exactly over the drawing — rectangles or L-shapes, walls squared up. You review them drawn over the plan, untick false positives, and add. Rooms already drawn are skipped; with no scale set, the scale is read from the printed room sizes and snapped to the standard preset (e.g. 1/4" = 1'-0").
 - **Cloud (optional)** — Supabase auth + per-user projects with Row Level Security; auto-saves your work. Runs local-only (localStorage) if Supabase env vars are absent.
 - **Export** — CSV, multi-sheet Excel (.xlsx), and re-importable JSON.
 
 ## Testing
 
 The engine layer (geometry, units, layouts, floor-design zones, cut
-redistribution, estimate, markups, cut sheet) has a Vitest suite — 113 tests covering correctness and the
+redistribution, estimate, markups, cut sheet, AI-detection mapping) plus the
+`/api/detect-plan` route (with a mocked SDK) have a Vitest suite — 130 tests covering correctness and the
 defensive/edge cases that cause silent financial errors (undefined tile sizes,
 zero-area rooms, unassigned materials, degenerate polygons, the
 never-exceed-naive invariant on the cut optimizer, and HTML-injection escaping
@@ -71,8 +72,9 @@ AI detection is disabled.
 2. In Vercel: **New Project → import the repo**. Framework preset = Vite (auto-detected).
 3. Add environment variable:
    - `ANTHROPIC_API_KEY` = your key
-   - (optional) `ANTHROPIC_MODEL` = `claude-sonnet-5` (the default; any
-     vision-capable Claude model works)
+   - (optional) `ANTHROPIC_MODEL` — defaults to `claude-opus-5-5`, the most
+     accurate on technical drawings. Detection uses high effort and allows the
+     function up to 300 s (`vercel.json`); a full sheet usually takes 20–60 s.
 4. Deploy. The static site builds to `dist/`; `api/detect-plan.js` becomes a
    serverless function automatically.
 

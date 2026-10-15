@@ -1,5 +1,9 @@
 // ============================================================
 // pdf.js — load and render PDF pages.
+// Uses pdf.js's LEGACY build: the modern build calls brand-new JS
+// built-ins (e.g. Map.prototype.getOrInsertComputed) that many browsers in
+// use don't have yet, and a PDF then fails to open with "… is not a
+// function". The legacy build ships those polyfills, main thread and worker.
 // The worker ships as a SAME-ORIGIN bundled asset (not a CDN URL):
 // Vite emits pdfjs-dist's worker with a content hash and hands us its
 // URL. A CDN worker is a single point of failure — if cdnjs is blocked
@@ -8,7 +12,7 @@
 // dependency, and the version always matches the installed pdfjs-dist.
 // ============================================================
 
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 
 let _lib = null;
 let _workerSetup = false;
@@ -16,7 +20,7 @@ let _workerSetup = false;
 async function getLib() {
   if (_lib) return _lib;
 
-  const lib = await import('pdfjs-dist');
+  const lib = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
   if (!_workerSetup) {
     lib.GlobalWorkerOptions.workerSrc = workerUrl;
