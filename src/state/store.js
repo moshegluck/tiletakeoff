@@ -287,6 +287,50 @@ export const useStore = create((set, get) => ({
     return rooms.length;
   },
 
+  // ---- design (3D) — finishes tie back to estimating materials ----
+  /**
+   * patch: { floorPreset, floorMaterialId, paint, wallTilePreset, wallMaterialId, wallTileHeight }
+   */
+  applyFinish: (roomId, patch) => {
+    let mats = get().materials;
+    const ensure = (preset, type) => {
+      let m = mats.find((x) => x.presetId === preset.id && x.type === type);
+      if (!m) {
+        m = {
+          id: nanoid(), name: preset.name, type, color: preset.color,
+          tw: preset.tw, th: preset.th, grout: preset.grout ?? 0.125, pattern: preset.pattern || 'grid',
+          waste: WASTE_BY_PATTERN[preset.pattern] ?? 10, price: preset.price ?? 0, priceUnit: 'sf', sfPerBox: 15,
+          faceCoverage: preset.faceCoverage ?? 1, costMode: 'waste', optimizeWholeJob: false, cutSafetyPct: 5,
+          presetId: preset.id, finishStyle: preset.style,
+        };
+        mats = [...mats, m];
+      }
+      return m;
+    };
+    const rooms = get().rooms.map((r) => {
+      if (r.id !== roomId) return r;
+      const fin = { ...(r.finish || {}) };
+      let assigned = r.assigned.slice();
+      const typeOf = (id) => mats.find((m) => m.id === id)?.type;
+      const setOnly = (type, id) => { assigned = assigned.filter((x) => typeOf(x) !== type); if (id) assigned.push(id); };
+      if (patch.floorPreset) { const m = ensure(patch.floorPreset, 'floor'); setOnly('floor', m.id); fin.floor = patch.floorPreset.id; }
+      if (patch.floorMaterialId) setOnly('floor', patch.floorMaterialId);
+      if (patch.paint) fin.paint = patch.paint;
+      if (patch.wallTilePreset) {
+        const m = ensure(patch.wallTilePreset, 'wall'); setOnly('wall', m.id); fin.wallTile = patch.wallTilePreset.id;
+        if (fin.wallTileHeight === undefined || fin.wallTileHeight === 0) fin.wallTileHeight = 4;
+      }
+      if (patch.wallMaterialId) { setOnly('wall', patch.wallMaterialId); if (!fin.wallTileHeight) fin.wallTileHeight = 4; }
+      if ('wallTileHeight' in patch) {
+        fin.wallTileHeight = patch.wallTileHeight;
+        if (patch.wallTileHeight === 0) { setOnly('wall', null); fin.wallTile = null; }
+      }
+      return { ...r, finish: fin, assigned };
+    });
+    set({ materials: mats, rooms });
+    persist(get);
+  },
+
   // ---- materials ----
   addMaterial: (type = 'floor') => {
     const isFloor = type !== 'wall';

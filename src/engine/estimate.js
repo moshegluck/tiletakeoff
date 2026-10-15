@@ -27,7 +27,9 @@ export function materialArea(material, rooms) {
     if (material.type === 'wall') {
       // wall coverage: wall LF (traced: net of openings, incl. returns) × wall height
       const per = roomWallLf(r);
-      const h = r.wallHeight ?? 8;
+      // tile height chosen in design (wainscot / shower) else full wall height
+      const th = r.finish?.wallTileHeight;
+      const h = th == null ? (r.wallHeight ?? 8) : th;
       netSf += per * h;
       usedRooms.push({ name: r.name, sf: per * h });
     } else {
