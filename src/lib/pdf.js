@@ -1,5 +1,9 @@
 // ============================================================
 // pdf.js — load and render PDF pages.
+// Uses pdf.js's LEGACY build: the modern build calls brand-new JS
+// built-ins (e.g. Map.prototype.getOrInsertComputed) that many browsers in
+// use don't have yet, and a PDF then fails to open with "… is not a
+// function". The legacy build ships those polyfills, main thread and worker.
 // The worker ships as a SAME-ORIGIN bundled asset (not a CDN URL):
 // Vite emits pdfjs-dist's worker with a content hash and hands us its
 // URL. A CDN worker is a single point of failure — if cdnjs is blocked
@@ -8,9 +12,6 @@
 // dependency, and the version always matches the installed pdfjs-dist.
 // ============================================================
 
-// The LEGACY build: pdf.js 5.7's modern build calls Map#getOrInsertComputed (a
-// 2026 JS feature) with no fallback, so PDFs fail to open in browsers that
-// don't ship it yet (older Safari/Chrome/iPad). The legacy build polyfills it.
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 
 let _lib = null;

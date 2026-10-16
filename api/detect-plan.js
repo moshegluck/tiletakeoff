@@ -1,17 +1,22 @@
 // ============================================================
 // /api/detect-plan.js — Vercel serverless function.
-// Receives a base64 floor-plan image + a known scale, asks Claude
-// (vision) to return rooms as rectangles in feet. The ANTHROPIC_API_KEY
-// lives in an env var and never reaches the browser.
+// Receives one image cut from the user's plan (the PDF page or region
+// they are looking at, re-rendered at high resolution) and asks Claude
+// (vision) for every room's outline IN THE PIXELS OF THAT IMAGE, plus any
+// printed room size. The browser maps those pixels back onto the plan, so
+// rooms land exactly over the drawing. With `mode: 'label'` (Trace) the
+// rooms are already measured by the trace engine and the model only reads
+// the name printed at each one. The ANTHROPIC_API_KEY lives in an env var
+// and never reaches the browser.
 //
-// AI upgrades:
-//   - Official Anthropic SDK (typed, retries, timeouts) instead of raw fetch.
-//   - Structured outputs (output_config.format + JSON schema) so the room
-//     list is GUARANTEED valid JSON in the expected shape — no markdown
-//     fence stripping, no "model returned non-JSON" failure path.
-//   - Adaptive thinking for better reasoning on dense/complex plans.
-//   - Default model claude-sonnet-5 (current, high-resolution vision — reads
-//     dimension strings and scale bars far better than prior tiers).
+// Model: Claude Opus 5.5 by default. ANTHROPIC_MODEL may name another model
+// that reads plans at full resolution (see src/lib/planModels.js); an older
+// one is ignored, and a configured model the API rejects falls back to the
+// default. Image coordinates map 1:1 to pixels up to 2576 px on the long
+// edge, and higher effort reads technical drawings more accurately.
+// Structured outputs guarantee the room list is valid JSON in this shape.
+// Refusal fallbacks are on, so a safety-classifier false positive on a
+// drawing retries on another model instead of failing.
 //
 // Hardening (the key spends real money, so the route is guarded):
 //   - requires a valid Supabase session WHEN Supabase is configured;
@@ -24,26 +29,37 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import { projectForToken } from '../src/lib/supabasePublic.js';
+import { FALLBACK_MODELS, planModels, isModelProblem } from '../src/lib/planModels.js';
 
-export const config = { maxDuration: 60 };
+// Claude reads a dense plan carefully; give it room (Fluid compute allows 300 s).
+export const config = { maxDuration: 300 };
 
-const SYSTEM = `You are a flooring takeoff assistant analyzing an architectural floor plan image.
-Extract EVERY enclosed room/space you can identify. Do not filter by room type and do not
-decide what gets tiled — the contractor makes scope decisions. For each room return its
-rectangular footprint (or bounding box if irregular) with real-world dimensions in FEET.
+const MODELS = planModels(process.env.ANTHROPIC_MODEL);
+if (MODELS.ignored) {
+  console.warn(`[detect-plan] ANTHROPIC_MODEL=${MODELS.ignored} can't read plans at full resolution; using ${MODELS.chain[0]}. Remove or update ANTHROPIC_MODEL.`);
+}
 
-Rules:
-- Read dimension strings and scale bars when present; otherwise estimate from the given pixelsPerFoot.
-- Return decimal feet (e.g. 12.5), not feet-inches strings.
-- Coordinates: top-left origin, +x right, +y down, in FEET from the plan's top-left.
-- If unsure of a label, use a generic name (e.g. "Room A").
-- confidence is 0.0–1.0 (how sure you are of the room and its dimensions).
+const SYSTEM = `You are a flooring takeoff assistant. You are given one image cut from an architectural drawing; it may be a whole sheet or a zoomed-in part of one.
 
-The response format is enforced by a JSON schema — return the rooms array only.`;
+Find every enclosed room or space on the floor plan in the image: kitchens, baths, closets, halls, corridors, foyers, laundry, lobbies and so on. Do not decide what gets tiled; the estimator decides scope. Ignore title blocks, schedules, notes, details, elevations and sections. Skip rooms that are cut off by the image edge so much that their extent can't be seen.
+
+For each room:
+- name: the room label as printed (e.g. "BATH 2"), or a short generic name ("Room A") if it has none.
+- x, y, w, h: the room's bounding box in pixels of this image (origin top-left, +x right, +y down), measured to the inside face of the walls.
+- outline: the room's floor outline as pixel vertices in order around the room, following the inside face of the walls. A plain rectangle is its 4 corners; an L-shaped room has 6.
+- dim_text: the room size printed inside the room (e.g. 12'-6" x 10'-0"), or "" if none is printed.
+- dim_w_ft, dim_h_ft: that printed size in decimal feet, oriented to the image: dim_w_ft is the horizontal (x) size and dim_h_ft the vertical (y) size. 0 when no size is printed.
+- confidence: 0 to 1, how sure you are of the room and its outline.
+
+The coordinates are used to trace the rooms over this exact image, so be precise.`;
 
 // Structured-output schema. Structured outputs require additionalProperties:false
-// and all properties in `required`; numeric ranges (0–1 confidence) are enforced
-// downstream in cleanRoom() since the schema layer doesn't support min/max.
+// and every property in `required`; ranges are enforced in cleanRoom().
+const POINT = {
+  type: 'object', additionalProperties: false, required: ['x', 'y'],
+  properties: { x: { type: 'number' }, y: { type: 'number' } },
+};
 const ROOM_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -54,13 +70,17 @@ const ROOM_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'x', 'y', 'w', 'h', 'confidence'],
+        required: ['name', 'x', 'y', 'w', 'h', 'outline', 'dim_text', 'dim_w_ft', 'dim_h_ft', 'confidence'],
         properties: {
           name: { type: 'string' },
           x: { type: 'number' },
           y: { type: 'number' },
           w: { type: 'number' },
           h: { type: 'number' },
+          outline: { type: 'array', items: POINT },
+          dim_text: { type: 'string' },
+          dim_w_ft: { type: 'number' },
+          dim_h_ft: { type: 'number' },
           confidence: { type: 'number' },
         },
       },
@@ -98,25 +118,31 @@ const LABEL_SCHEMA = {
 };
 
 const ALLOWED_MEDIA = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-// ~8M base64 chars ≈ 6 MB decoded — generous for a plan page, bounds cost/DoS.
-const MAX_B64 = 8_000_000;
+// Vercel caps a function request body at 4.5 MB; ~4.2M base64 chars ≈ 3 MB
+// decoded leaves room for the JSON around it. The client sends ~0.5–2 MB.
+const MAX_B64 = 4_200_000;
+// Larger images are downscaled by the API anyway (2576 px long edge).
+const MAX_EDGE = 2576;
 
 // Supabase (optional). When BOTH vars are present the route requires a valid
 // user JWT. Vercel exposes all project env vars to functions regardless of the
 // VITE_ prefix, so accept either name.
-// The env still names a deleted Supabase project; map it to the live one so
-// signed-in users' tokens validate (mirrors src/lib/supabase.js).
-const DEAD_REFS = ['edsywvqtlnoyqtsamryn'];
-const LIVE_URL = 'https://qgvloanrqzuciuhpepjy.supabase.co';
-const LIVE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFndmxvYW5ycXp1Y2l1aHBlcGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyMzcyNjcsImV4cCI6MjA5OTgxMzI2N30.Q2zI4tSlW04HjOxHEqO9M7YmSLdF2kgOrHJ3Asiw6x0';
-const ENV_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const DEAD = DEAD_REFS.some((r) => ENV_URL.includes(r));
-const SB_URL = DEAD ? LIVE_URL : ENV_URL;
-const SB_ANON = DEAD ? LIVE_ANON : (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '');
+const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SB_ANON = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const AUTH_REQUIRED = Boolean(SB_URL && SB_ANON);
-const sb = AUTH_REQUIRED
-  ? createClient(SB_URL, SB_ANON, { auth: { persistSession: false, autoRefreshToken: false } })
-  : null;
+// Verify each session with the project that issued it: the token names its
+// issuer, and only our projects (the configured one, or the app's live one in
+// src/lib/supabasePublic.js) are accepted. A stale env var naming a deleted
+// project then can't lock everyone out, and nothing depends on a DNS check.
+const sbClients = new Map();
+function supabaseFor(project) {
+  let c = sbClients.get(project.url);
+  if (!c) {
+    c = createClient(project.url, project.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    sbClients.set(project.url, c);
+  }
+  return c;
+}
 
 // Rate limiter. Uses Upstash Redis (durable across serverless instances) when
 // configured, else falls back to a best-effort in-memory window (per warm
@@ -178,23 +204,116 @@ function clientIp(req) {
   return first || req.socket?.remoteAddress || 'unknown';
 }
 
-// Coerce/validate one room from the model. Returns null if unusable so a
-// hallucinated NaN/Infinity/negative dimension can't corrupt the user's project.
-function cleanRoom(r) {
+// Coerce/validate one room from the model against the image it was given.
+// Returns null if unusable so a hallucinated NaN/Infinity/negative value can't
+// corrupt the user's project.
+function cleanRoom(r, W, H) {
   if (!r || typeof r !== 'object') return null;
   const num = (v) => (Number.isFinite(+v) ? +v : null);
-  const x = num(r.x) ?? 0;
-  const y = num(r.y) ?? 0;
-  const w = num(r.w);
-  const h = num(r.h);
-  if (w == null || h == null || w <= 0 || h <= 0) return null;
-  // reject absurd values (feet) that would blow up the canvas / estimate
-  if (w > 1000 || h > 1000 || Math.abs(x) > 100000 || Math.abs(y) > 100000) return null;
+  const clampX = (v) => Math.min(W, Math.max(0, v));
+  const clampY = (v) => Math.min(H, Math.max(0, v));
+  let x = num(r.x), y = num(r.y), w = num(r.w), h = num(r.h);
+  if (x == null || y == null || w == null || h == null) return null;
+  const x1 = clampX(x + w), y1 = clampY(y + h);
+  x = clampX(x); y = clampY(y);
+  w = x1 - x; h = y1 - y;
+  if (w < 3 || h < 3) return null;
+  const outline = Array.isArray(r.outline)
+    ? r.outline.slice(0, 64)
+        .map((p) => ({ x: num(p?.x), y: num(p?.y) }))
+        .filter((p) => p.x != null && p.y != null)
+        .map((p) => ({ x: clampX(p.x), y: clampY(p.y) }))
+    : [];
+  const ft = (v) => { const n = num(v); return n != null && n > 0 && n < 1000 ? n : 0; };
   let conf = num(r.confidence);
   if (conf == null || conf < 0) conf = 0.5;
   if (conf > 1) conf = 1;
-  const name = typeof r.name === 'string' && r.name.trim() ? r.name.slice(0, 80) : 'Room';
-  return { name, x, y, w, h, confidence: conf };
+  const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 80) : 'Room';
+  const dimText = typeof r.dim_text === 'string' ? r.dim_text.slice(0, 60) : '';
+  return { name, x, y, w, h, outline, dimText, dimWFt: ft(r.dim_w_ft), dimHFt: ft(r.dim_h_ft), confidence: conf };
+}
+
+// One Messages call on one model. With a fallback-capable model, opt into
+// server-side refusal fallbacks; if the API rejects that request shape, retry
+// plainly so an optional extra can never take detection down.
+async function askModel(anthropic, params) {
+  if (FALLBACK_MODELS.has(params.model)) {
+    try {
+      return await anthropic.beta.messages.create({
+        ...params,
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+      });
+    } catch (err) {
+      if (!(err instanceof Anthropic.BadRequestError)) throw err;
+      console.error('[detect-plan] fallback request rejected, retrying without it:', err?.message);
+    }
+  }
+  return anthropic.messages.create(params);
+}
+
+// Try each model in the chain; move on only when the API says the model
+// itself can't serve the request (unknown to this key, or missing a feature).
+async function askClaude(anthropic, params) {
+  const { chain } = MODELS;
+  for (let i = 0; ; i++) {
+    try {
+      return await askModel(anthropic, { ...params, model: chain[i] });
+    } catch (err) {
+      if (i === chain.length - 1 || !isModelProblem(err)) throw err;
+      console.error(`[detect-plan] ${chain[i]} rejected the request (${err?.status}: ${err?.message}); trying ${chain[i + 1]}`);
+    }
+  }
+}
+
+// What to tell the user when the Anthropic call fails (never the upstream body).
+function sdkErrorText(err, fallback) {
+  const status = err?.status;
+  return status === 429 || status === 529 ? 'The AI service is busy. Please try again in a minute.'
+    : (status === 401 || status === 403) ? 'AI detection is misconfigured on this server (API key).'
+    : status === 404 ? 'AI detection is misconfigured on this server (model).'
+    : status === 413 ? 'Plan image too large for the AI service. Zoom in and try again.'
+    : err instanceof Anthropic.APIConnectionTimeoutError ? 'The AI took too long on this plan. Zoom in on part of it and try again.'
+    : fallback;
+}
+
+// Trace mode: the geometry comes from the trace engine; the model only reads
+// the name printed at each traced room's centre (pixels of this image).
+async function labelRooms(body, key, res) {
+  const traced = body?.rooms;
+  const list = Array.isArray(traced) ? traced.slice(0, 150).map((r) => ({
+    id: String(r.id).slice(0, 20), x: Math.round(+r.x || 0), y: Math.round(+r.y || 0), areaSf: Math.round(+r.areaSf || 0),
+  })) : [];
+  if (!list.length) return res.status(400).json({ error: 'rooms required' });
+  const W = Math.round(+body.imageWidth), H = Math.round(+body.imageHeight);
+  const size = W > 0 && H > 0 ? `This image is ${W} × ${H} pixels. ` : '';
+  const anthropic = new Anthropic({ apiKey: key, timeout: 90_000, maxRetries: 1 });
+  let msg;
+  try {
+    msg = await askClaude(anthropic, {
+      max_tokens: 8000,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'medium', format: { type: 'json_schema', schema: LABEL_SCHEMA } },
+      system: LABEL_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: body.mediaType || 'image/jpeg', data: body.imageBase64 } },
+          { type: 'text', text: `${size}Rooms (pixel centres on this image):\n${JSON.stringify(list)}` },
+        ],
+      }],
+    });
+  } catch (err) {
+    console.error(`[detect-plan:label] Anthropic SDK error ${err?.status || ''}:`, err?.message);
+    return res.status(502).json({ error: sdkErrorText(err, 'AI naming failed. Please try again.') });
+  }
+  if (msg.stop_reason === 'refusal') return res.status(200).json({ rooms: [], warning: 'The AI declined to read this plan.' });
+  const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
+  let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ rooms: [] }); }
+  const ids = new Set(list.map((r) => r.id));
+  const out = (parsed?.rooms || []).filter((r) => ids.has(r.id) && typeof r.name === 'string' && r.name.trim())
+    .map((r) => ({ id: r.id, name: r.name.trim().slice(0, 40), type: r.type, printed: !!r.printed }));
+  return res.status(200).json({ rooms: out, model: msg.model });
 }
 
 export default async function handler(req, res) {
@@ -210,8 +329,11 @@ export default async function handler(req, res) {
       const auth = req.headers.authorization || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       if (!token) return res.status(401).json({ error: 'Sign in to use AI detection.' });
-      const { data, error } = await sb.auth.getUser(token);
+      const project = projectForToken(token, { url: SB_URL, anonKey: SB_ANON });
+      if (!project) return res.status(401).json({ error: 'Your session has expired — sign in again.' });
+      const { data, error } = await supabaseFor(project).auth.getUser(token);
       if (error || !data?.user) {
+        if (error) console.error('[detect-plan] session check failed:', error.message);
         return res.status(401).json({ error: 'Your session has expired — sign in again.' });
       }
       identity = `u:${data.user.id}`;
@@ -223,65 +345,38 @@ export default async function handler(req, res) {
     }
 
     // ---- input validation ----
-    const { imageBase64, mediaType = 'image/png', pixelsPerFoot, mode, rooms: traced } = req.body || {};
+    const { imageBase64, mediaType = 'image/jpeg', imageWidth, imageHeight, feetPerPixel, mode } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {
       return res.status(400).json({ error: 'imageBase64 required' });
     }
     if (imageBase64.length > MAX_B64) {
-      return res.status(413).json({ error: 'Image too large (max ~6 MB). Use a smaller or lower-resolution plan.' });
+      return res.status(413).json({ error: 'Plan image too large. Zoom in on the floor plan and try again.' });
     }
     if (!ALLOWED_MEDIA.has(mediaType)) {
       return res.status(400).json({ error: 'Unsupported image type. Use PNG, JPEG, WebP or GIF.' });
     }
-    const ppf = Number.isFinite(+pixelsPerFoot) && +pixelsPerFoot > 0 ? +pixelsPerFoot : null;
+    if (mode === 'label') return await labelRooms(req.body, key, res);
 
-    if (mode === 'label') {
-      const list = Array.isArray(traced) ? traced.slice(0, 150).map((r) => ({
-        id: String(r.id).slice(0, 20), x: Math.round(+r.x || 0), y: Math.round(+r.y || 0), areaSf: Math.round(+r.areaSf || 0),
-      })) : [];
-      if (!list.length) return res.status(400).json({ error: 'rooms required' });
-      const anthropic = new Anthropic({ apiKey: key, timeout: 50_000, maxRetries: 1 });
-      let msg;
-      try {
-        msg = await anthropic.messages.create({
-          model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-          max_tokens: 4096,
-          system: LABEL_SYSTEM,
-          output_config: { format: { type: 'json_schema', schema: LABEL_SCHEMA } },
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
-              { type: 'text', text: `Rooms (pixel centres on this image):\n${JSON.stringify(list)}` },
-            ],
-          }],
-        });
-      } catch (err) {
-        console.error('[detect-plan:label] SDK error', err?.status, err?.message);
-        return res.status(502).json({ error: err?.status === 429 ? 'AI service is busy. Please try again shortly.' : 'AI naming failed. Please try again.' });
-      }
-      const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
-      let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ rooms: [] }); }
-      const ids = new Set(list.map((r) => r.id));
-      const out = (parsed?.rooms || []).filter((r) => ids.has(r.id) && typeof r.name === 'string' && r.name.trim())
-        .map((r) => ({ id: r.id, name: r.name.trim().slice(0, 40), type: r.type, printed: !!r.printed }));
-      return res.status(200).json({ rooms: out });
+    const W = Math.round(+imageWidth), H = Math.round(+imageHeight);
+    if (!(W >= 16 && H >= 16 && W <= MAX_EDGE && H <= MAX_EDGE)) {
+      return res.status(400).json({ error: `imageWidth/imageHeight required (16–${MAX_EDGE} px).` });
     }
+    const fpp = Number.isFinite(+feetPerPixel) && +feetPerPixel > 0 ? +feetPerPixel : null;
 
-    const userText = ppf
-      ? `The plan is rendered at approximately ${ppf} pixels per foot. Extract all rooms.`
-      : `No scale provided. Use visible dimension strings or a scale bar to infer real feet. Extract all rooms.`;
+    const userText = `This image is ${W} × ${H} pixels. Return coordinates in these pixels.` + (fpp
+      ? ` Drawing scale: 1 pixel ≈ ${fpp.toPrecision(4)} ft (about ${(1 / fpp).toFixed(1)} px per foot).`
+      : ' The drawing scale is not known; read printed room sizes where they are shown.');
 
     // ---- Anthropic call: structured outputs + adaptive thinking ----
-    const anthropic = new Anthropic({ apiKey: key, timeout: 50_000, maxRetries: 1 });
+    // Two attempts of ≤140 s each stay inside the 300 s function limit.
+    const anthropic = new Anthropic({ apiKey: key, timeout: 140_000, maxRetries: 1 });
     let msg;
     try {
-      msg = await anthropic.messages.create({
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-        max_tokens: 8192,
+      msg = await askClaude(anthropic, {
+        max_tokens: 16000,
         thinking: { type: 'adaptive' },
+        output_config: { effort: 'high', format: { type: 'json_schema', schema: ROOM_SCHEMA } },
         system: SYSTEM,
-        output_config: { format: { type: 'json_schema', schema: ROOM_SCHEMA } },
         messages: [{
           role: 'user',
           content: [
@@ -291,30 +386,28 @@ export default async function handler(req, res) {
         }],
       });
     } catch (err) {
-      const status = err?.status;
-      console.error(`[detect-plan] Anthropic SDK error ${status || ''}:`, err?.message);
-      const msgOut = status === 429 ? 'AI service is busy. Please try again shortly.'
-        : (status === 401 || status === 403) ? 'AI detection is misconfigured on this server.'
-        : status === 413 ? 'Image too large for the AI service.'
-        : 'AI detection failed. Please try again.';
-      return res.status(502).json({ error: msgOut });
+      console.error(`[detect-plan] Anthropic SDK error ${err?.status || ''}:`, err?.message);
+      return res.status(502).json({ error: sdkErrorText(err, 'AI detection failed. Please try again.') });
     }
 
     if (msg.stop_reason === 'refusal') {
-      return res.status(200).json({ rooms: [], warning: 'The AI declined to analyze this image.' });
+      return res.status(200).json({ rooms: [], imageWidth: W, imageHeight: H, warning: 'The AI declined to analyze this image.' });
+    }
+    if (msg.stop_reason === 'max_tokens') {
+      console.error('[detect-plan] hit max_tokens');
     }
 
-    // Structured outputs guarantee valid schema-shaped JSON in the text block(s),
-    // but parse defensively anyway (thinking blocks are filtered out).
+    // Structured outputs guarantee schema-shaped JSON in the text block(s);
+    // parse defensively anyway (thinking / fallback blocks are filtered out).
     const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
     let parsed;
     try { parsed = JSON.parse(text); }
-    catch { return res.status(200).json({ rooms: [], warning: 'Model returned non-JSON' }); }
+    catch { return res.status(200).json({ rooms: [], imageWidth: W, imageHeight: H, warning: 'The AI returned an unreadable answer. Try again.' }); }
 
     const rooms = Array.isArray(parsed?.rooms)
-      ? parsed.rooms.map(cleanRoom).filter(Boolean).slice(0, 200)
+      ? parsed.rooms.map((r) => cleanRoom(r, W, H)).filter(Boolean).slice(0, 200)
       : [];
-    return res.status(200).json({ rooms });
+    return res.status(200).json({ rooms, imageWidth: W, imageHeight: H, model: msg.model });
   } catch (err) {
     console.error('[detect-plan] error:', err);
     return res.status(500).json({ error: 'Internal server error.' });

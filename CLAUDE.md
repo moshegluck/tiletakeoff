@@ -4,10 +4,8 @@ Owner: Moshe Gluck (Lead Estimator, Artistic Tile Installation — tile & floori
 Terse; wants direct action, not confirmations. Don't invent requirements he didn't state.
 
 ## Branch
-All work for the Trace feature lives on **`claude/trace-engine`** (not merged to `main`).
-If you're on `main`, run `git fetch origin && git checkout claude/trace-engine` before anything else.
-Vercel preview of this branch:
-https://tiletakeoff-git-claude-trace-engine-moshegluck47-8602s-projects.vercel.app
+Trace is merged into **`main`** (live at https://tiletakeoff.vercel.app). Work on a new
+branch from `main` and open a PR; Moshe has said to merge without asking.
 
 ## The idea (Moshe's own concept — keep to it)
 Existing AI takeoff tools (Togal, Kreo, etc.) read the plan image and put measurements on it.
@@ -54,7 +52,15 @@ TileTakeoff works the other way round:
 - `src/state/store.js` trace slice, `commitTrace()`, `applyFinish()` (3D picks → materials)
 - `src/three/house3d.js` walkable house; `houseModel.js` model from store; `finishTextures.js` true-size textures
 - `src/data/finishes.js` floor / wall-tile / paint presets
-- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry)
+- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry).
+  The default mode is **AI Detect** (`DetectModal.jsx`): room outlines read off the plan, reviewed by
+  the user before they're added — a separate, opt-in tool, not the Trace pipeline. Model choice:
+  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored).
+- `src/engine/zones.js` floor design zones (border bands follow the walls, traced inlays); the
+  field = room − holes − bands − inlays. Drawn in 2D (`drawZones`), 3D (`houseModel.zoneSurfaces`)
+  and priced in `estimate.js`.
+- `src/lib/supabasePublic.js` the live Supabase project; the API verifies each session with the
+  project that issued its token, so a stale env var can't lock users out.
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
@@ -68,14 +74,15 @@ TileTakeoff works the other way round:
 ## Known gaps / next
 - Windows aren't detected (wall treated as continuous).
 - Scans: only horizontal/vertical walls; diagonal walls on scans get flagged.
-- AI room naming (`Name rooms with AI`) needs ANTHROPIC_API_KEY on Vercel; untested live.
-- Supabase: deployed env vars point at a deleted project (edsywvqtlnoyqtsamryn); code maps it
-  to the live `tiletakeoff` project (qgvloanrqzuciuhpepjy) in `src/lib/supabase.js` and
-  `api/detect-plan.js`. Clean fix = update VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
+- AI room naming (`Name rooms with AI`) runs on the same model chain as AI Detect; untested live.
+- Supabase: deployed env vars point at a deleted project (edsywvqtlnoyqtsamryn). The build
+  (`vite.config.js`) and `src/lib/supabase.js` swap in the live `tiletakeoff` project
+  (qgvloanrqzuciuhpepjy); the API routes tokens by issuer. Clean fix = update
+  VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
 - Next real step: run Moshe's own messy PDFs and tune on what comes back wrong.
 
 ## Rules of the road
 - Never make the takeoff come from pixels; geometry must go through the coherence engine.
 - Never hide an incoherence: flag it at its location.
 - Add a test for every bug fixed in the engine (see `test/trace.test.js` "review regressions").
-- Commit to `claude/trace-engine`; don't merge to `main` unless Moshe says so.
+- Branch from `main`, open a PR, and merge it once tests, lint, typecheck and build pass.

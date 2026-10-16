@@ -5,6 +5,20 @@
 import { estimateProject } from '../engine/estimate.js';
 import { roomArea, roomWallLf } from '../engine/geometry.js';
 import { round } from '../engine/units.js';
+import { roomRegions } from '../engine/zones.js';
+
+// One row per floor design zone (border band / inlay) across all rooms.
+const ZONE_HEAD = ['Room', 'Design', 'Kind', 'Material', 'Area SF', 'Run LF', 'From Wall FT', 'Width FT'];
+function zoneRows(state) {
+  const rows = [];
+  for (const r of state.rooms) {
+    const reg = roomRegions(r);
+    const matName = (id) => state.materials.find((m) => m.id === id)?.name || '(not estimated)';
+    for (const b of reg.bands) rows.push([r.name, b.zone.name, 'border', matName(b.zone.materialId), round(b.area, 2), round(b.lf, 2), round(b.zone.inset || 0, 3), round(b.zone.width, 3)]);
+    for (const z of reg.inlays) rows.push([r.name, z.zone.name, 'inlay', matName(z.zone.materialId), round(z.area, 2), '', '', '']);
+  }
+  return rows;
+}
 
 function downloadBlob(content, type, filename) {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
@@ -88,6 +102,8 @@ export function exportCSV(state) {
     r.wallHeight ?? 8,
     r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
   ]));
+  const zones = zoneRows(state);
+  if (zones.length) rows.push([], ['Floor design (borders & inlays)'], ZONE_HEAD, ...zones);
   downloadBlob(toCSV(rows), 'text/csv', `${safe(state.name)}_estimate.csv`);
 }
 
@@ -125,6 +141,9 @@ export async function exportXLSX(state) {
       r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
     ]),
   ]);
+
+  const zones = zoneRows(state);
+  if (zones.length) wb.addWorksheet('Floor Design').addRows([ZONE_HEAD, ...zones]);
 
   wb.addWorksheet('Materials').addRows([
     ['Name', 'Type', 'W in', 'H in', 'Grout in', 'Pattern', 'Waste %', 'Price', 'Unit', 'SF/Box'],

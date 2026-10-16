@@ -124,6 +124,16 @@ export function createHouseScene(canvas, { onPick, onRoom, onMode } = {}) {
       floor.userData = { roomId: r.id, surface: 'floor' };
       house.add(floor); pickables.push(floor);
 
+      // floor design zones (border bands, inlays) laid just above the field
+      for (const z of r.zones || []) {
+        const zg = new THREE.ShapeGeometry(shapeOf(z.poly, z.holes)); zg.rotateX(-Math.PI / 2);
+        const zm = new THREE.Mesh(zg, finishMat(z.spec));
+        zm.position.y = z.lift;
+        zm.receiveShadow = true;
+        zm.userData = { roomId: r.id, surface: 'floor' };
+        house.add(zm); pickables.push(zm);
+      }
+
       // same footprint lifted to the ceiling; drawn from below (BackSide)
       const cg = new THREE.ShapeGeometry(shape); cg.rotateX(-Math.PI / 2); cg.translate(0, H, 0);
       const ceil = new THREE.Mesh(cg, ceilMat);

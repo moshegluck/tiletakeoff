@@ -7,6 +7,7 @@ import { presetById, paintById, defaultFinishFor } from '../data/finishes.js';
 import { roomTypeOf } from '../engine/trace/analyze.js';
 import { roomArea } from '../engine/geometry.js';
 import { interiorPoint } from '../engine/trace/vec.js';
+import { roomRegions, zonesOf } from '../engine/zones.js';
 
 const specOf = (p) => (p ? { style: p.style, color: p.color, tw: p.tw, th: p.th, grout: p.grout ?? 0.125, pattern: p.pattern || 'grid' } : null);
 
@@ -19,6 +20,21 @@ export function specFromMaterial(m) {
   };
 }
 
+// Floor design zones (border bands, inlays) as surfaces laid over the
+// room's floor, each in its own material (or its colour if none is picked).
+function zoneSurfaces(r, mats) {
+  if (!zonesOf(r).length) return [];
+  const reg = roomRegions(r);
+  const spec = (z) => {
+    const m = mats.find((x) => x.id === z.materialId);
+    return m ? specFromMaterial(m) : { style: 'stone', color: z.color || '#7a3fa0', tw: 12, th: 12, grout: 0.125, pattern: 'grid' };
+  };
+  return [
+    ...reg.bands.map((b) => ({ id: b.zone.id, poly: b.outer, holes: b.holes, spec: spec(b.zone), lift: 0.01 })),
+    ...reg.inlays.map((z) => ({ id: z.zone.id, poly: z.outer, holes: [], spec: spec(z.zone), lift: 0.015 })),
+  ];
+}
+
 function toRoom(r, mats) {
   const type = r.roomType || roomTypeOf(r.name);
   const fin = { ...defaultFinishFor(type), ...(r.finish || {}) };
@@ -29,6 +45,7 @@ function toRoom(r, mats) {
   return {
     id: r.id, name: r.name, type,
     poly: r.points, holes: r.holes || [],
+    zones: zoneSurfaces(r, mats),
     center: r.labelAt || interiorPoint(r.points),
     area: roomArea(r),
     floor: floorMat ? specFromMaterial(floorMat) : specOf(presetById(fin.floor)) || specOf(presetById('oak-plank')),

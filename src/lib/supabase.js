@@ -5,18 +5,18 @@
 // ============================================================
 
 import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_PROJECT } from './supabasePublic.js';
 
-// The deployed env vars point at a Supabase project that has since been
-// deleted (edsywvqtlnoyqtsamryn) — every sign-in failed with "Load failed".
-// Until the env is updated, route that dead project to the live `tiletakeoff`
-// project. The anon key is public by design (RLS protects the data).
+// The deployed env vars may still name a deleted Supabase project
+// (edsywvqtlnoyqtsamryn); every sign-in then fails with "Load failed". The
+// build (vite.config.js) already swaps a project whose host is gone for the
+// live one; this catches that project even if the build-time check couldn't
+// tell. The anon key is public by design (RLS protects the data).
 const DEAD_REFS = ['edsywvqtlnoyqtsamryn'];
-const LIVE_URL = 'https://qgvloanrqzuciuhpepjy.supabase.co';
-const LIVE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFndmxvYW5ycXp1Y2l1aHBlcGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyMzcyNjcsImV4cCI6MjA5OTgxMzI2N30.Q2zI4tSlW04HjOxHEqO9M7YmSLdF2kgOrHJ3Asiw6x0';
 const envUrl = import.meta.env.VITE_SUPABASE_URL;
 const dead = envUrl && DEAD_REFS.some((r) => envUrl.includes(r));
-const url = dead ? LIVE_URL : envUrl;
-const anon = dead ? LIVE_ANON : import.meta.env.VITE_SUPABASE_ANON_KEY;
+const url = dead ? SUPABASE_PROJECT.url : envUrl;
+const anon = dead ? SUPABASE_PROJECT.anonKey : import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const cloudEnabled = Boolean(url && anon);
 

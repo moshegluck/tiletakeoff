@@ -157,6 +157,49 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .drop:hover{border-color:var(--accent);color:var(--accent);background:#fffaf7}
 .drop b{color:var(--ink)}
 
+/* ── AI DETECT (review rooms over the plan image) ── */
+.modal.det{max-width:760px}
+.det-seg{margin-bottom:10px}
+.det-seg button:disabled{opacity:.45;cursor:not-allowed}
+.det-prev{position:relative;width:min(100%, calc(46vh * var(--ar, 1.4)));aspect-ratio:var(--ar, 1.4);margin:0 auto;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;background:#fff}
+.det-prev img,.det-prev svg{position:absolute;inset:0;width:100%;height:100%;display:block;user-select:none;-webkit-user-select:none}
+.det-ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-2);font-size:12.5px;background:#fbfcfd;padding:12px;text-align:center}
+.det-poly{fill:rgba(122,138,153,.08);stroke:#8a96a3;stroke-width:2;stroke-dasharray:6 5;vector-effect:non-scaling-stroke;cursor:pointer}
+.det-poly.on{fill:rgba(200,82,31,.16);stroke:var(--accent);stroke-dasharray:none}
+.det-poly.hl{fill:rgba(15,47,71,.22);stroke:var(--blueprint);stroke-width:3}
+.det-badge{fill:#8a96a3;cursor:pointer}.det-badge.on{fill:var(--accent)}
+.det-badge-t{fill:#fff;font-weight:700;font-family:var(--sans);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.det-scan{position:absolute;inset:0;background:linear-gradient(180deg,transparent 0%,rgba(200,82,31,.18) 48%,rgba(200,82,31,.32) 50%,transparent 52%);background-size:100% 220%;animation:detScan 2.2s linear infinite;pointer-events:none}
+@keyframes detScan{from{background-position:0 -110%}to{background-position:0 110%}}
+.det-busy{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px;font-size:13px;font-weight:600;color:var(--ink)}
+.det-busy small{flex-basis:100%;font-weight:400;color:var(--ink-2);font-size:12px}
+.spin{width:16px;height:16px;border-radius:50%;border:2.5px solid #f2d3c4;border-top-color:var(--accent);animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.det-scale{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding:9px 11px;border-radius:var(--r-sm);background:#f6f8fa;border:1px solid var(--line-2);font-size:12.5px;color:var(--ink-2)}
+.det-scale b{color:var(--ink)}
+.det-scale.warn{background:#fff8ef;border-color:#f0d9b5;color:#7a5a14}
+.det-scale.ok{background:#eef8f2;border-color:#cfe9da;color:#1d5c3c}
+.det-scale .inp{max-width:260px}
+.det-err{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:9px 11px;border-radius:var(--r-sm);background:#fdecea;border:1px solid #f3c7c2;color:var(--bad);font-size:12.5px;font-weight:500}
+.det-alt{margin-top:10px;border:none;background:none;padding:0;color:var(--ink-2);font-size:12.5px;text-decoration:underline;cursor:pointer}
+.det-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink-2)}
+.det-head button{border:none;background:none;padding:0;color:var(--accent);font-weight:600;font-size:12px;cursor:pointer}
+.det-row.off{opacity:.55}
+.det-row.hl{border-color:var(--blueprint)}
+.det-num{flex:none;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font:700 11px var(--sans);display:grid;place-items:center}
+.det-row.off .det-num{background:#8a96a3}
+.det-row .det-name{flex:1;min-width:90px}
+.det-dim{font:600 12px var(--mono);color:var(--ink-2);white-space:nowrap}
+@media(max-width:768px){
+  .modal-bg{padding:10px;place-items:end center}
+  .modal{max-height:94vh}
+  .modal.det .body{padding:12px 14px 14px}
+  .modal>h3{padding:14px 16px 12px}
+  .modal .foot{padding:10px 14px}
+  .det-prev{width:min(100%, calc(38vh * var(--ar, 1.4)))}
+  .det-row{flex-wrap:wrap}
+}
+
 /* confidence / savings badge */
 .conf{font:600 10.5px var(--mono);padding:2px 7px;border-radius:20px;background:var(--line-2);color:var(--ink-2);white-space:nowrap}
 .conf.hi{background:#e3f5ea;color:var(--ok)}
@@ -177,32 +220,33 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
   .tbtn{padding:7px 8px}
   .unit-sel{padding:6px 6px;font-size:12px}
 
-  /* 2-col main: narrow toolbar + canvas */
-  main{grid-template-columns:48px 1fr;padding-bottom:64px}
+  /* 2-col main: narrow toolbar + canvas; the bottom 60px is the sheet's tab strip */
+  main{grid-template-columns:48px 1fr;padding-bottom:60px}
 
-  /* right panel = bottom drawer: tab bar always peeks, tap a tab to open */
+  /* right panel as a bottom sheet: closed = only its handle + tabs show */
   aside.right{
     position:fixed;
     bottom:0; left:0; right:0;
-    height:72vh; height:72dvh;
+    height:62vh; height:62dvh;
     border-left:none;
     border-top:1px solid var(--line);
     border-radius:14px 14px 0 0;
     box-shadow:0 -6px 30px rgba(16,23,31,.14);
-    transform:translateY(calc(100% - 64px));
+    transform:translateY(calc(100% - 60px));
     transition:transform .25s cubic-bezier(.4,0,.2,1);
     z-index:30;
   }
   aside.right.open{transform:translateY(0)}
 
-  /* pull-handle on the sheet */
-  .sheet-handle{display:block;width:100%;height:18px;border:none;background:transparent;flex:none;position:relative;padding:0}
-  .sheet-handle::after{content:'';position:absolute;left:50%;top:7px;width:40px;height:4px;margin-left:-20px;background:var(--line);border-radius:2px}
+  /* pull-handle on the sheet (tap to open/close) */
+  .sheet-handle{display:block;width:100%;height:18px;border:none;background:transparent;padding:0;flex:none;cursor:pointer}
+  .sheet-handle::after{content:'';display:block;width:36px;height:4px;background:var(--line);border-radius:2px;margin:7px auto 0}
+  /* five tabs: let the strip scroll rather than squash */
   .tabs{overflow-x:auto;flex:none}
   .tab{flex:none;padding:10px 12px}
 
-  /* toolbar: tighter */
-  .toolbar{padding:8px 0}
+  /* toolbar: tighter, scrolls when the tools outgrow the screen */
+  .toolbar{padding:8px 0;overflow-y:auto;min-height:0}
   .tool{width:40px;height:40px}
   .tool .tip{display:none} /* no hover tooltips on touch */
 
@@ -234,7 +278,8 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
   /* bigger tap targets on zoom */
   .zbtn{width:40px;height:40px;font-size:20px}
   .zoomwrap{right:6px;bottom:6px}
-  .hud{bottom:6px;left:6px}
+  .hud{bottom:6px;left:6px;right:54px;flex-wrap:wrap-reverse}
+  .hud-sel{max-width:150px}
 }
 
 /* Desktop: hide mobile nav */

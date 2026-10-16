@@ -3,7 +3,7 @@ import { useStore, setCloudSaver } from '../state/store.js';
 import { cloudEnabled } from '../lib/supabase.js';
 import {
   getUser, onAuthChange, signInWithPassword, signUp, signOut,
-  resetPasswordForEmail, updatePassword,
+  resetPasswordForEmail, updatePassword, resendConfirmation, authErrorMessage,
   listProjects, loadProject, createProject, saveProject, deleteProject,
 } from '../lib/cloud.js';
 import LibraryModal from './LibraryModal.jsx';
@@ -87,21 +87,38 @@ function AuthModal({ onClose, initialMode = 'in' }) {
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
 
   const needsEmail = mode !== 'recovery';
   const needsPw = mode !== 'reset';
   const canSubmit = (!needsEmail || !!email) && (!needsPw || !!pw);
-  const to = (m) => () => { setMode(m); setErr(''); setMsg(''); };
+  const to = (m) => () => { setMode(m); setErr(''); setMsg(''); setUnconfirmed(false); };
 
   async function go() {
     if (!canSubmit) return;
-    setBusy(true); setErr(''); setMsg('');
+    setBusy(true); setErr(''); setMsg(''); setUnconfirmed(false);
     try {
-      if (mode === 'in') { await signInWithPassword(email, pw); onClose(); }
-      else if (mode === 'up') { await signUp(email, pw); onClose(); }
-      else if (mode === 'reset') { await resetPasswordForEmail(email); setMsg('If that email has an account, a reset link is on its way. Check your inbox (and spam).'); }
+      if (mode === 'in') { await signInWithPassword(email.trim(), pw); onClose(); }
+      else if (mode === 'up') {
+        const { session } = await signUp(email.trim(), pw);
+        if (session) { onClose(); return; }
+        // the project requires email confirmation: say so instead of closing
+        setMode('in'); setPw('');
+        setMsg(`Account created. We emailed a confirmation link to ${email.trim()} — open it (check spam), then sign in here.`);
+      }
+      else if (mode === 'reset') { await resetPasswordForEmail(email.trim()); setMsg('If that email has an account, a reset link is on its way. Check your inbox (and spam).'); }
       else if (mode === 'recovery') { await updatePassword(pw); setMsg('Password updated — you’re signed in.'); setTimeout(onClose, 1200); }
-    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+    } catch (e) {
+      setErr(authErrorMessage(e));
+      setUnconfirmed(e?.code === 'email_not_confirmed' || /email not confirmed/i.test(String(e?.message)));
+    } finally { setBusy(false); }
+  }
+
+  async function resend() {
+    setBusy(true); setErr(''); setMsg('');
+    try { await resendConfirmation(email.trim()); setMsg('Confirmation email sent again. Open the link, then sign in.'); setUnconfirmed(false); }
+    catch (e) { setErr(authErrorMessage(e)); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -113,15 +130,16 @@ function AuthModal({ onClose, initialMode = 'in' }) {
           {mode === 'recovery' && <div className="note">Choose a new password for your account.</div>}
           {needsEmail && (
             <div className="field"><label>Email</label>
-              <input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              <input className="inp" type="email" autoComplete="email" autoCapitalize="none" value={email} onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
           )}
           {needsPw && (
             <div className="field"><label>{mode === 'recovery' ? 'New password' : 'Password'}</label>
-              <input className="inp" type="password" value={pw} onChange={(e) => setPw(e.target.value)}
+              <input className="inp" type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} value={pw} onChange={(e) => setPw(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
           )}
           {err && <div className="note" style={{ color: 'var(--bad)' }}>{err}</div>}
+          {unconfirmed && <div className="note"><a style={link} onClick={resend}>Resend confirmation email</a></div>}
           {msg && <div className="note" style={{ color: 'var(--ok)' }}>{msg}</div>}
 
           {mode === 'in' && (
