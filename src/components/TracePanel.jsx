@@ -19,9 +19,6 @@ export default function TracePanel() {
   const runSeq = useRef(0);
   const pending = useRef(false);
 
-  // the scale this panel last took off a sheet by itself (not one the user set)
-  const autoScale = useRef(null);
-
   // read the sheet once a plan is loaded: is there a scale note?
   useEffect(() => {
     let alive = true;
@@ -33,14 +30,12 @@ export default function TracePanel() {
         const { sheetScale } = await readPlan(useStore.getState());
         if (!alive) return;
         setSheet(sheetScale);
-        // the sheet states its scale and none is set yet → just use it. A page
-        // with a different scale (a 1/8" site plan, then a 1/4" floor plan)
-        // replaces one we read off the last page — never one the user set.
+        // the sheet states its scale and none is set yet → just use it (each
+        // page keeps its own scale; a page opened for the first time reads
+        // its sheet in App)
         const st = useStore.getState();
-        const wasAuto = autoScale.current != null && st.scale && Math.abs(st.scale - autoScale.current) < 1e-12;
-        if (sheetScale && (!st.scale || (wasAuto && Math.abs(sheetScale.scale - st.scale) > 1e-12))) {
+        if (sheetScale && !st.scale) {
           st.setScale(sheetScale.scale); st.setArchScale(sheetScale.id);
-          autoScale.current = sheetScale.scale;
           window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Scale read from sheet · ${sheetScale.label}`, ok: true } }));
         }
       } catch (_) { /* reading is best-effort */ }
@@ -54,6 +49,7 @@ export default function TracePanel() {
     // one solve at a time; a fix made mid-solve re-runs right after, never lost
     if (st.traceBusy) { pending.current = true; return; }
     const my = ++runSeq.current;
+    const page = st.pdfPage;
     setErr(''); st.setTraceBusy(true);
     try {
       const cur = st.trace || defaultTrace();
@@ -63,7 +59,8 @@ export default function TracePanel() {
         options: { floorAtDoor: cur.settings.floorAtDoor, maxOpening: cur.settings.maxOpening },
         manual: cur.manual, removed: cur.removed,
       });
-      if (my !== runSeq.current) return;
+      // a newer run, or the user went to another page meanwhile: this result is stale
+      if (my !== runSeq.current || useStore.getState().pdfPage !== page) return;
       // carry over names the user (or AI) already gave rooms in a previous run
       const names = cur.names || {};
       for (const r of result.rooms) { const k = nameKey(r); if (names[k]) { r.name = names[k]; } }
@@ -103,7 +100,9 @@ export default function TracePanel() {
     try {
       const { labelRoomsWithAI } = await import('../lib/aiLabel.js');
       const st = useStore.getState();
+      const page = st.pdfPage;
       const out = await labelRoomsWithAI(st, res.rooms);
+      if (useStore.getState().pdfPage !== page) return;   // went to another page meanwhile
       const names = { ...(st.trace.names || {}) };
       const rooms = res.rooms.map((r) => {
         const n = out[r.id];

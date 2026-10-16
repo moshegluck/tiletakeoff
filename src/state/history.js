@@ -63,5 +63,7 @@ export function createHistory({ limit = 200, coalesceMs = 600, now = () => Date.
       return null;
     },
     counts() { return { undoCount: past.length, redoCount: future.length }; },
+    /** Forget every step (the takeoff on screen was swapped for another page's). */
+    clear() { past.length = 0; future.length = 0; lastAt = -Infinity; inGroup = false; },
   };
 }

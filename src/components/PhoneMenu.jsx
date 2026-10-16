@@ -63,6 +63,7 @@ export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, on
           {item('cube', s.view3d ? 'Back to the 2D plan' : '3D walk-through', () => s.toggle3d())}
         </div>
         <div className="pm-group">
+          {item('down', 'Download marked-up plan (PDF)', () => window.dispatchEvent(new Event('tt:export-marked')))}
           {item('down', 'Export estimate (Excel)', () => exportXLSX(s))}
           {item('down', 'Export estimate (CSV)', () => exportCSV(s))}
           <label className="pm-item pm-select">

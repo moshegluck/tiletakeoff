@@ -45,17 +45,29 @@ const MAX_DIM  = 4096 * 0.9;      // ~3686px
 /**
  * Render one PDF page → { dataUrl, width, height, renderScale }
  */
+/**
+ * The scale a page of this size is rendered at (px per PDF point). The
+ * takeoff's feet ↔ px scale is tied to it, so the marked-up PDF export uses
+ * the same rule to put the takeoff back on the page.
+ * @param {number} w  page width at scale 1 (pt)
+ * @param {number} h  page height at scale 1 (pt)
+ * @param {number} [targetWidth]
+ */
+export function pageRenderScale(w, h, targetWidth = 1400) {
+  let scale = targetWidth / w;
+  if (w * h * scale * scale > MAX_AREA) scale = Math.sqrt(MAX_AREA / (w * h));
+  if (w * scale > MAX_DIM) scale = MAX_DIM / w;
+  if (h * scale > MAX_DIM) scale = MAX_DIM / h;
+  return Math.max(0.3, Math.min(3, scale));
+}
+
+/** The width every plan page is rendered at (app, restore, export). */
+export const PLAN_RENDER_WIDTH = 2000;
+
 export async function renderPage(doc, pageNum, targetWidth = 1400) {
   const page   = await doc.getPage(pageNum);
   const base   = page.getViewport({ scale: 1 });
-
-  let scale = targetWidth / base.width;
-  if (base.width * base.height * scale * scale > MAX_AREA) {
-    scale = Math.sqrt(MAX_AREA / (base.width * base.height));
-  }
-  if (base.width  * scale > MAX_DIM) scale = MAX_DIM / base.width;
-  if (base.height * scale > MAX_DIM) scale = MAX_DIM / base.height;
-  scale = Math.max(0.3, Math.min(3, scale));
+  const scale  = pageRenderScale(base.width, base.height, targetWidth);
 
   const viewport = page.getViewport({ scale });
   const W = Math.ceil(viewport.width);

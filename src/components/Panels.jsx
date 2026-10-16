@@ -1,5 +1,5 @@
 import React, { useMemo, lazy, Suspense } from 'react';
-import { useStore, useProject, ROOM_COLORS, ZONE_COLORS } from '../state/store.js';
+import { useStore, useProject, ROOM_COLORS, ZONE_COLORS, allRooms, wholeProject, otherPages } from '../state/store.js';
 import { rectPoly, roomArea, roomWallLf } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
 import { formatLength, formatArea, parseLength } from '../engine/units.js';
@@ -26,11 +26,32 @@ export function Panels() {
   return <EstimatePanel />;
 }
 
+/* ---------------- Other pages ---------------- */
+// The lists show the page on screen; this says what the plan's other pages
+// hold and goes there (App renders the page).
+function OtherPages({ what }) {
+  const s = useProject();
+  const pages = otherPages(s).filter((p) => p[what] > 0);
+  if (!pages.length || !s.pdfDoc) return null;
+  const noun = what === 'rooms' ? 'room' : 'markup';
+  return (
+    <div className="other-pages">
+      <span>Page {s.pdfPage || 1} shown · also on</span>
+      {pages.map((p) => (
+        <button key={p.page} onClick={() => window.dispatchEvent(new CustomEvent('tt:page', { detail: p.page }))}>
+          pg {p.page} · {p[what]} {noun}{p[what] > 1 ? 's' : ''}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ---------------- Rooms ---------------- */
 function RoomsPanel() {
   const s = useProject();
   return (
     <div className="panel">
+      <OtherPages what="rooms" />
       {!s.scale && (
         <div className="empty"><b>Set the scale first</b>Use the Ruler tool, drag along a known dimension, type its real length. Then draw rooms.</div>
       )}
@@ -332,7 +353,10 @@ function MaterialsPanel() {
 function MaterialCard({ m }) {
   const s = useProject();
   const open = s.selection.type === 'material' && s.selection.id === m.id;
-  const est = useMemo(() => estimateMaterial(m, s.rooms), [m, s.rooms]);
+  // every page's rooms use the material
+  const est = useMemo(() => estimateMaterial(m, allRooms(s)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [m, s.rooms, s.pageData]);
   return (
     <div className={'card' + (open ? ' sel' : '')}>
       <div className="card-head" onClick={() => { s.select('material', m.id); if (m.type === 'floor') s.setGridMaterial(m.id); }}>
@@ -432,6 +456,7 @@ function MarkupsPanel() {
   const sum = summarizeMarkups(s.markups);
   return (
     <div className="panel">
+      <OtherPages what="markups" />
       {!s.scale && <div className="empty"><b>Set the scale first</b>Markup measurements need a calibrated scale. Use the Ruler tool.</div>}
       {s.markups.length === 0 && s.scale && (
         <div className="empty">
@@ -518,9 +543,10 @@ const wasteMixed = (est, m) => (est.usedRooms || []).some((u) => u.pattern && u.
 function EstimatePanel() {
   const s = useProject();
   // the cut optimizer can be heavy: recompute only when the inputs change
-  const e = useMemo(() => estimateProject(s),
+  // the whole job: every page's rooms
+  const e = useMemo(() => estimateProject(wholeProject(s)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.rooms, s.materials, s.taxRate, s.laborRatePerSf]);
+    [s.rooms, s.pageData, s.materials, s.taxRate, s.laborRatePerSf]);
   if (!s.materials.length || !s.scale) {
     return <div className="panel"><div className="empty"><b>Nothing to estimate yet</b>{!s.scale ? 'Set the scale, draw rooms,' : 'Add a material,'} then assign materials to rooms.</div></div>;
   }
@@ -601,15 +627,16 @@ function EstimatePanel() {
       </div>
 
       <div className="row" style={{ display: 'flex', gap: 8 }}>
+        <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-marked'))}>Marked PDF</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportCSV(s)}>CSV</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportXLSX(s)}>Excel</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportJSON(s)}>JSON</button>
       </div>
       <button className="ghost-add" style={{ marginTop: 8 }} onClick={() => {
         const fmt = (ft) => fmtLen(ft, s.unitSystem);
-        const sheets = buildProjectCutSheets(s, fmt);
+        const sheets = buildProjectCutSheets(wholeProject(s), fmt);
         if (!sheets.length) { window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Assign a floor material to rooms first' } })); return; }
-        openCutSheet(s, sheets);
+        openCutSheet(wholeProject(s), sheets);
       }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}><path d="M6 2h9l5 5v15H6zM15 2v5h5M9 13h6M9 17h6M9 9h2" /></svg>
         Installer cut sheet
