@@ -194,6 +194,16 @@ export function roomRegions(room) {
     inlays.push({ zone: z, outer: z.points, holes: [], area: polygonArea(z.points), layout: inlayLayout(z) });
   }
 
+  // Traced rooms carry holes (columns, chases): no tile there.
+  for (const h of room.holes || []) {
+    if (!Array.isArray(h) || h.length < 3) continue;
+    const c = centroid(h);
+    const f = field.find((r) => pointInRegion(c.x, c.y, r));
+    if (f) { f.holes.push(h); continue; }
+    const b = bands.find((r) => pointInRegion(c.x, c.y, r));
+    if (b) { b.holes.push(h); b.area = regionArea(b); }
+  }
+
   for (const f of field) f.area = regionArea(f);
   const fieldArea = field.reduce((s, f) => s + f.area, 0);
   return { field, bands, inlays, fieldArea, warnings };

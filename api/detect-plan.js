@@ -4,8 +4,10 @@
 // they are looking at, re-rendered at high resolution) and asks Claude
 // (vision) for every room's outline IN THE PIXELS OF THAT IMAGE, plus any
 // printed room size. The browser maps those pixels back onto the plan, so
-// rooms land exactly over the drawing. The ANTHROPIC_API_KEY lives in an
-// env var and never reaches the browser.
+// rooms land exactly over the drawing. With `mode: 'label'` (Trace) the
+// rooms are already measured by the trace engine and the model only reads
+// the name printed at each one. The ANTHROPIC_API_KEY lives in an env var
+// and never reaches the browser.
 //
 // Model: Claude Opus 5.5 by default. ANTHROPIC_MODEL may name another model
 // that reads plans at full resolution (see src/lib/planModels.js); an older
@@ -80,6 +82,35 @@ const ROOM_SCHEMA = {
           dim_w_ft: { type: 'number' },
           dim_h_ft: { type: 'number' },
           confidence: { type: 'number' },
+        },
+      },
+    },
+  },
+};
+
+// ---- room naming (trace mode) ----
+// The geometry comes from the trace engine; the model only READS the plan:
+// for each traced room centre it returns the label printed there.
+const LABEL_SYSTEM = `You read architectural floor plans. You are given a plan image and a list of
+rooms that were already measured by a geometry engine; each has an id and the pixel position of
+its centre on this image. For each room, read the room name printed inside that space on the plan
+(e.g. "MASTER BATH", "W.I.C.", "KITCHEN"). If no name is printed, give the most likely name from
+the fixtures you can see (toilet/tub → bath, rod/shelf → closet, range/sink run → kitchen).
+Also classify each as one of: bath, closet, kitchen, laundry, bedroom, living, dining, hall,
+garage, outdoor, mech, room. Never invent rooms; return exactly the ids you were given.`;
+
+const LABEL_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['rooms'],
+  properties: {
+    rooms: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['id', 'name', 'type', 'printed'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['bath', 'closet', 'kitchen', 'laundry', 'bedroom', 'living', 'dining', 'hall', 'garage', 'outdoor', 'mech', 'room'] },
+          printed: { type: 'boolean' },
         },
       },
     },
@@ -235,6 +266,56 @@ async function askClaude(anthropic, params) {
   }
 }
 
+// What to tell the user when the Anthropic call fails (never the upstream body).
+function sdkErrorText(err, fallback) {
+  const status = err?.status;
+  return status === 429 || status === 529 ? 'The AI service is busy. Please try again in a minute.'
+    : (status === 401 || status === 403) ? 'AI detection is misconfigured on this server (API key).'
+    : status === 404 ? 'AI detection is misconfigured on this server (model).'
+    : status === 413 ? 'Plan image too large for the AI service. Zoom in and try again.'
+    : err instanceof Anthropic.APIConnectionTimeoutError ? 'The AI took too long on this plan. Zoom in on part of it and try again.'
+    : fallback;
+}
+
+// Trace mode: the geometry comes from the trace engine; the model only reads
+// the name printed at each traced room's centre (pixels of this image).
+async function labelRooms(body, key, res) {
+  const traced = body?.rooms;
+  const list = Array.isArray(traced) ? traced.slice(0, 150).map((r) => ({
+    id: String(r.id).slice(0, 20), x: Math.round(+r.x || 0), y: Math.round(+r.y || 0), areaSf: Math.round(+r.areaSf || 0),
+  })) : [];
+  if (!list.length) return res.status(400).json({ error: 'rooms required' });
+  const W = Math.round(+body.imageWidth), H = Math.round(+body.imageHeight);
+  const size = W > 0 && H > 0 ? `This image is ${W} × ${H} pixels. ` : '';
+  const anthropic = new Anthropic({ apiKey: key, timeout: 90_000, maxRetries: 1 });
+  let msg;
+  try {
+    msg = await askClaude(anthropic, {
+      max_tokens: 8000,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'medium', format: { type: 'json_schema', schema: LABEL_SCHEMA } },
+      system: LABEL_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: body.mediaType || 'image/jpeg', data: body.imageBase64 } },
+          { type: 'text', text: `${size}Rooms (pixel centres on this image):\n${JSON.stringify(list)}` },
+        ],
+      }],
+    });
+  } catch (err) {
+    console.error(`[detect-plan:label] Anthropic SDK error ${err?.status || ''}:`, err?.message);
+    return res.status(502).json({ error: sdkErrorText(err, 'AI naming failed. Please try again.') });
+  }
+  if (msg.stop_reason === 'refusal') return res.status(200).json({ rooms: [], warning: 'The AI declined to read this plan.' });
+  const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
+  let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ rooms: [] }); }
+  const ids = new Set(list.map((r) => r.id));
+  const out = (parsed?.rooms || []).filter((r) => ids.has(r.id) && typeof r.name === 'string' && r.name.trim())
+    .map((r) => ({ id: r.id, name: r.name.trim().slice(0, 40), type: r.type, printed: !!r.printed }));
+  return res.status(200).json({ rooms: out, model: msg.model });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
@@ -264,7 +345,7 @@ export default async function handler(req, res) {
     }
 
     // ---- input validation ----
-    const { imageBase64, mediaType = 'image/jpeg', imageWidth, imageHeight, feetPerPixel } = req.body || {};
+    const { imageBase64, mediaType = 'image/jpeg', imageWidth, imageHeight, feetPerPixel, mode } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {
       return res.status(400).json({ error: 'imageBase64 required' });
     }
@@ -274,6 +355,8 @@ export default async function handler(req, res) {
     if (!ALLOWED_MEDIA.has(mediaType)) {
       return res.status(400).json({ error: 'Unsupported image type. Use PNG, JPEG, WebP or GIF.' });
     }
+    if (mode === 'label') return await labelRooms(req.body, key, res);
+
     const W = Math.round(+imageWidth), H = Math.round(+imageHeight);
     if (!(W >= 16 && H >= 16 && W <= MAX_EDGE && H <= MAX_EDGE)) {
       return res.status(400).json({ error: `imageWidth/imageHeight required (16–${MAX_EDGE} px).` });
@@ -303,15 +386,8 @@ export default async function handler(req, res) {
         }],
       });
     } catch (err) {
-      const status = err?.status;
-      console.error(`[detect-plan] Anthropic SDK error ${status || ''}:`, err?.message);
-      const msgOut = status === 429 || status === 529 ? 'The AI service is busy. Please try again in a minute.'
-        : (status === 401 || status === 403) ? 'AI detection is misconfigured on this server (API key).'
-        : status === 404 ? 'AI detection is misconfigured on this server (model).'
-        : status === 413 ? 'Plan image too large for the AI service. Zoom in and try again.'
-        : err instanceof Anthropic.APIConnectionTimeoutError ? 'The AI took too long on this plan. Zoom in on part of it and try again.'
-        : 'AI detection failed. Please try again.';
-      return res.status(502).json({ error: msgOut });
+      console.error(`[detect-plan] Anthropic SDK error ${err?.status || ''}:`, err?.message);
+      return res.status(502).json({ error: sdkErrorText(err, 'AI detection failed. Please try again.') });
     }
 
     if (msg.stop_reason === 'refusal') {

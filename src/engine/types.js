@@ -39,6 +39,12 @@
  * @property {string[]} assigned       material ids applied to this room
  * @property {number} [wallHeight]     ft, for wall-tile coverage proxy
  * @property {LayoutSpec} [layout]
+ * @property {Point[][]} [holes]       traced: walled-off areas inside the room (ft)
+ * @property {number} [wallLf]         traced: wall LF net of openings, incl. returns
+ * @property {number} [spurLf]         traced: LF of partitions dead-ending in the room
+ * @property {{width?: number}[]} [openings] traced: doors / openings on the room's walls
+ * @property {number} [doorHeight]     ft, door head height for wall tile above openings
+ * @property {{wallTileHeight?: number}} [finish] design picks (floor / paint / wall tile)
  * @property {Zone[]} [zones]          floor design zones (borders/inlays)
  */
 

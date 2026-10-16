@@ -9,7 +9,7 @@
 //               a small safety waste on top. More accurate, less padding.
 // ============================================================
 
-import { polygonArea, polygonPerimeter } from './geometry.js';
+import { roomArea, roomWallLf } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
 import { roomRegions } from './zones.js';
 
@@ -27,13 +27,21 @@ export function materialArea(material, rooms) {
   for (const r of rooms) {
     if (material.type === 'wall') {
       if (!r.assigned?.includes(material.id)) continue;
-      // wall coverage proxy: perimeter * wall height (default 8 ft)
-      const per = polygonPerimeter(r.points);
-      const h = r.wallHeight ?? 8;
-      netSf += per * h;
-      usedRooms.push({ name: r.name, sf: per * h });
+      // wall coverage: wall LF (traced: net of openings, incl. returns) × wall height
+      const per = roomWallLf(r);
+      // tile height chosen in design (wainscot / shower) else full wall height
+      const th = r.finish?.wallTileHeight;
+      const h = th == null ? (r.wallHeight ?? 8) : th;
+      // traced wall LF is net of openings; tile that runs higher than the door
+      // head also covers the wall above each opening
+      const dh = r.doorHeight ?? 6 + 8 / 12;
+      const above = (r.openings || []).reduce((a, o) => a + (o.width || 0) * Math.max(0, h - dh), 0);
+      netSf += per * h + above;
+      usedRooms.push({ name: r.name, sf: per * h + above });
       continue;
     }
+    // floor: the room's field (outline minus holes, bands and inlays) and
+    // any design zones picked in this material
     const onField = r.assigned?.includes(material.id);
     const onZone = (r.zones || []).some((z) => z.materialId === material.id);
     if (!onField && !onZone) continue;
@@ -117,7 +125,7 @@ export function estimateProject(state) {
   const materialSubtotal = lines.reduce((s, l) => s + l.cost, 0);
 
   // labor: optional per-sf rate over total floor area
-  const floorSf = state.rooms.reduce((s, r) => s + polygonArea(r.points), 0);
+  const floorSf = state.rooms.reduce((s, r) => s + roomArea(r), 0);
   const laborRate = state.laborRatePerSf ?? 0;
   const labor = floorSf * laborRate;
 

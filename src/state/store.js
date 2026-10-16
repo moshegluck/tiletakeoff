@@ -34,9 +34,18 @@ function blankProject() {
     planWidth: 0,          // pixel width of loaded plan image
     planHeight: 0,         // pixel height of loaded plan image
     planDpi: 0,            // px per paper-inch of the plan (72 * pdf renderScale); 0 = unknown
+    trace: null,           // reconstructed wall model: { result, settings, manual, removed, region, source, committedAt }
     cloudId: null,         // supabase project id when saved to cloud
     createdAt: Date.now(),
     updatedAt: Date.now(),
+  };
+}
+
+export function defaultTrace() {
+  return {
+    result: null,
+    settings: { ceilingHeight: 8, doorHeight: 6 + 8 / 12, floorAtDoor: 'center', maxOpening: 16, defaultWallIn: 4.5 },
+    manual: [], removed: [], edits: [], region: null, source: null, committedAt: null,
   };
 }
 
@@ -60,17 +69,39 @@ export function setCloudSaver(fn) { cloudSaver = fn; }
 function localSnapshot(s) {
   return {
     id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
-    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups,
+    archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: slimTrace(s.trace),
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
     createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
   };
 }
 
+// Keep what the overlay, 3D and re-trace need; drop the solver's debug output.
+function slimTrace(tr) {
+  if (!tr?.result) return tr;
+  const r = tr.result;
+  return {
+    ...tr,
+    result: {
+      ...r, log: [], voids: [],
+      repairs: (r.repairs || []).slice(0, 400),
+      rooms: r.rooms.map(({ centerPoly: _c, edgeIds: _e, labels: _l, ...x }) => x),
+    },
+  };
+}
+
+let warnedQuota = false;
 function persist(get) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); } catch (_) {}
+    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); warnedQuota = false; }
+    catch (_) {
+      // never fail silently: a project that stops saving is worse than a warning
+      if (!warnedQuota && typeof window !== 'undefined') {
+        warnedQuota = true;
+        window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'This project is too large to keep in browser storage — sign in to save it to the cloud, or export it.' } }));
+      }
+    }
   }, 350);
   // cloud save on a slower debounce to limit writes
   if (cloudSaver) {
@@ -93,6 +124,9 @@ export const useStore = create((set, get) => ({
   pdfDoc: null,        // loaded pdf.js doc (runtime only)
   pdfPages: 0,
   pdfPage: 1,
+  showTrace: true,
+  traceBusy: false,
+  traceFocus: null,      // { type: 'flag' | 'room', id }
 
   // ---- generic ----
   setName: (name) => { set({ name }); persist(get); },
@@ -159,7 +193,7 @@ export const useStore = create((set, get) => ({
       ...blankProject(),
       id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system,
       scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
-      rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [],
+      rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select',
@@ -189,7 +223,16 @@ export const useStore = create((set, get) => ({
     return room.id;
   },
   addRect: (x, y, w, h, name) => get().addRoom(rectPoly(x, y, w, h), name),
-  updateRoom: (id, patch) => { set({ rooms: get().rooms.map((r) => r.id === id ? { ...r, ...patch } : r) }); persist(get); },
+  updateRoom: (id, patch) => {
+    set({ rooms: get().rooms.map((r) => {
+      if (r.id !== id) return r;
+      const next = { ...r, ...patch };
+      // a traced room whose outline is hand-edited no longer matches the traced wall LF
+      if (patch.points && r.traceId && !('wallLf' in patch)) { next.wallLf = undefined; next.spurLf = 0; next.edited = true; }
+      return next;
+    }) });
+    persist(get);
+  },
   setRoomLayout: (id, patch) => {
     set({ rooms: get().rooms.map((r) => r.id === id ? { ...r, layout: { ...r.layout, ...patch } } : r) });
     persist(get);
@@ -213,6 +256,129 @@ export const useStore = create((set, get) => ({
     persist(get);
   },
 
+  // ---- trace (reconstructed wall model) ----
+  setTrace: (patch) => { set({ trace: { ...defaultTrace(), ...(get().trace || {}), ...patch } }); persist(get); },
+  clearTrace: () => { set({ trace: null, traceFocus: null }); persist(get); },
+  setShowTrace: (v) => set({ showTrace: v ?? !get().showTrace }),
+  setTraceBusy: (b) => set({ traceBusy: b }),
+  setTraceFocus: (f) => set({ traceFocus: f }),
+  setTraceSettings: (patch) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    tr.settings = { ...tr.settings, ...patch };
+    // ceiling height drives every traced room's wall height
+    const rooms = ('ceilingHeight' in patch || 'doorHeight' in patch)
+      ? get().rooms.map((r) => (r.traceId ? {
+        ...r,
+        ...('ceilingHeight' in patch ? { wallHeight: patch.ceilingHeight } : {}),
+        ...('doorHeight' in patch ? { doorHeight: patch.doorHeight } : {}),
+      } : r))
+      : get().rooms;
+    set({ trace: tr, rooms }); persist(get);
+  },
+  addTraceWall: (a, b, t) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    set({ trace: { ...tr, manual: [...tr.manual, { a, b, t }], edits: [...(tr.edits || []), 'manual'] } }); persist(get);
+  },
+  eraseTraceWall: (a, b) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    set({ trace: { ...tr, removed: [...tr.removed, { a, b }], edits: [...(tr.edits || []), 'removed'] } }); persist(get);
+  },
+  undoTraceEdit: () => {
+    const tr = get().trace; if (!tr) return;
+    const last = tr.edits?.[tr.edits.length - 1];
+    if (!last) return;
+    const edits = tr.edits.slice(0, -1);
+    if (last === 'manual') set({ trace: { ...tr, manual: tr.manual.slice(0, -1), edits } });
+    else set({ trace: { ...tr, removed: tr.removed.slice(0, -1), edits } });
+    persist(get);
+  },
+  /** Turn the traced rooms into takeoff rooms (keeps hand-drawn rooms and prior material picks). */
+  commitTrace: () => {
+    const tr = get().trace; const res = tr?.result; if (!res) return 0;
+    const keep = get().rooms.filter((r) => !r.traceId);
+    // Match each traced room to the previously committed room it replaces: same
+    // name AND nearest centre (two BEDROOMs must never collapse into one id).
+    const prevRooms = get().rooms.filter((r) => r.traceId);
+    const used = new Set();
+    const matchPrev = (t) => {
+      let best = null, bd = Infinity;
+      for (const r of prevRooms) {
+        if (used.has(r.id)) continue;
+        const c = r.labelAt || r.points[0];
+        const d = Math.hypot(c.x - t.center.x, c.y - t.center.y);
+        const sameName = r.traceName === t.name;
+        if ((sameName && d < 25) || d < 2) { const score = d - (sameName ? 1000 : 0); if (score < bd) { bd = score; best = r; } }
+      }
+      if (best) used.add(best.id);
+      return best;
+    };
+    const floor = get().materials.find((m) => m.type === 'floor');
+    const H = tr.settings?.ceilingHeight ?? 8;
+    const DH = tr.settings?.doorHeight ?? 6 + 8 / 12;
+    const rooms = res.rooms.map((t, i) => {
+      const p = matchPrev(t);
+      return {
+        id: p?.id || nanoid(),
+        name: p?.name || t.name,
+        color: p?.color || ROOM_COLORS[(keep.length + i) % ROOM_COLORS.length],
+        points: t.poly, holes: t.holes || [],
+        assigned: p?.assigned || (floor ? [floor.id] : []),
+        wallHeight: H,
+        layout: p?.layout || { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } },
+        finish: p?.finish,
+        zones: p?.zones,
+        traceId: t.id, traceName: t.name, roomType: t.type,
+        wallLf: t.wallLf, spurLf: t.spurLf, openings: t.openings, labelAt: t.center, doorHeight: DH,
+      };
+    });
+    set({ rooms: [...keep, ...rooms], trace: { ...tr, committedAt: Date.now() }, tab: 'rooms', selection: { type: null, id: null }, selRooms: [] });
+    persist(get);
+    return rooms.length;
+  },
+
+  // ---- design (3D) — finishes tie back to estimating materials ----
+  /**
+   * patch: { floorPreset, floorMaterialId, paint, wallTilePreset, wallMaterialId, wallTileHeight }
+   */
+  applyFinish: (roomId, patch) => {
+    let mats = get().materials;
+    const ensure = (preset, type) => {
+      let m = mats.find((x) => x.presetId === preset.id && x.type === type);
+      if (!m) {
+        m = {
+          id: nanoid(), name: preset.name, type, color: preset.color,
+          tw: preset.tw, th: preset.th, grout: preset.grout ?? 0.125, pattern: preset.pattern || 'grid',
+          waste: WASTE_BY_PATTERN[preset.pattern] ?? 10, price: preset.price ?? 0, priceUnit: 'sf', sfPerBox: 15,
+          faceCoverage: preset.faceCoverage ?? 1, costMode: 'waste', optimizeWholeJob: false, cutSafetyPct: 5,
+          presetId: preset.id, finishStyle: preset.style,
+        };
+        mats = [...mats, m];
+      }
+      return m;
+    };
+    const rooms = get().rooms.map((r) => {
+      if (r.id !== roomId) return r;
+      const fin = { ...(r.finish || {}) };
+      let assigned = r.assigned.slice();
+      const typeOf = (id) => mats.find((m) => m.id === id)?.type;
+      const setOnly = (type, id) => { assigned = assigned.filter((x) => typeOf(x) !== type); if (id) assigned.push(id); };
+      if (patch.floorPreset) { const m = ensure(patch.floorPreset, 'floor'); setOnly('floor', m.id); fin.floor = patch.floorPreset.id; }
+      if (patch.floorMaterialId) setOnly('floor', patch.floorMaterialId);
+      if (patch.paint) fin.paint = patch.paint;
+      if (patch.wallTilePreset) {
+        const m = ensure(patch.wallTilePreset, 'wall'); setOnly('wall', m.id); fin.wallTile = patch.wallTilePreset.id;
+        if (fin.wallTileHeight === undefined || fin.wallTileHeight === 0) fin.wallTileHeight = 4;
+      }
+      if (patch.wallMaterialId) { setOnly('wall', patch.wallMaterialId); if (!fin.wallTileHeight) fin.wallTileHeight = 4; }
+      if ('wallTileHeight' in patch) {
+        fin.wallTileHeight = patch.wallTileHeight;
+        if (patch.wallTileHeight === 0) { setOnly('wall', null); fin.wallTile = null; }
+      }
+      return { ...r, finish: fin, assigned };
+    });
+    set({ materials: mats, rooms });
+    persist(get);
+  },
   // ---- floor design zones (borders / inlays inside a room) ----
   // Zones are floor-only design details, not walls: a border band derived
   // from the room's walls, or an inlay traced on the floor. Their area is
@@ -347,3 +513,6 @@ export const useStore = create((set, get) => ({
 }));
 
 export { ROOM_COLORS, ZONE_COLORS, MAT_FLOOR, MAT_WALL };
+
+// test hook for end-to-end checks (dev server only)
+if (import.meta.env?.DEV && typeof window !== 'undefined') window.__store = useStore;

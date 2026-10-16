@@ -1,0 +1,88 @@
+# TileTakeoff — read this first
+
+Owner: Moshe Gluck (Lead Estimator, Artistic Tile Installation — tile & flooring, NY/NJ).
+Terse; wants direct action, not confirmations. Don't invent requirements he didn't state.
+
+## Branch
+Trace is merged into **`main`** (live at https://tiletakeoff.vercel.app). Work on a new
+branch from `main` and open a PR; Moshe has said to merge without asking.
+
+## The idea (Moshe's own concept — keep to it)
+Existing AI takeoff tools (Togal, Kreo, etc.) read the plan image and put measurements on it.
+Lengths come out right, but **topology** is wrong: rooms don't close, areas get cut wrong,
+the tracer walks the same wall twice, and wall LF in bathrooms with returns ("in and out")
+is wrong — especially on messy PDFs.
+
+TileTakeoff works the other way round:
+1. **Trace, don't read.** Rebuild the walls as one connected model, like a snake that has to
+   flow and come back to where it started. It may never go around the same area twice.
+   If it tangles, that is a signal the geometry is wrong — not something to paper over.
+2. **The sketch is the source of truth.** Every takeoff number (floor SF, wall LF, openings)
+   comes from the reconstructed model, never from the PDF pixels. The model is drawn back
+   over the plan so you can see it's right.
+3. **Coherence = validation.** Every room must be a closed loop (planar graph, face tracing).
+   Anything that doesn't close becomes a **located flag** for the human — short and specific,
+   never a silent wrong number.
+4. **Doors make sense in context.** A 10' opening between kitchen and living is fine; a 5'
+   "door" into a single bathroom is flagged. Closets may be wide (bifold/double). Door widths
+   come from the door schedule when there is one, otherwise from the swing arcs (a swing
+   radius = leaf width — a free ruler that also cross-checks the scale).
+5. **Both tracing styles are fine:** room-by-room loops or one continuous run.
+6. **3D from the model.** Given ceiling height (and door height), the model becomes a real,
+   **walkable, realistic** house you can design in — NOT a box/"square bubble". Finish picks
+   in 3D become priced materials in the estimate.
+
+## Where things are
+- `src/engine/trace/` — the engine (pure JS, unit-tested)
+  - `walls.js` pairs parallel face lines into wall bodies; merges doubled traces; rejects
+    evenly spaced hatch / tile patterns (4+ equal spacings)
+  - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures),
+    bridges doors/openings (swing arcs as evidence), builds the planar graph, traces faces
+  - `analyze.js` rooms (offset to finished faces; floor to door centre by default), wall LF
+    net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
+    holes, labels → names/types, door-in-context checks, scale check from door swings,
+    sheet-border / title-block removal (by page extent), all flags
+  - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
+  - `arcs.js` door-swing recognition from Bézier curves
+- `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list)
+- `src/lib/rasterWalls.js` scanned plans: blob filter, auto-deskew, H/V stroke detection
+- `src/lib/planEvidence.js`, `traceClient.js`, `traceWorker.js` read plan → feet → solve in a Worker
+- `src/components/TracePanel.jsx` Trace tab (scale pickup, verdict, flags, rooms, fix tools)
+- `src/components/canvasRender.js` `drawTrace()` overlay; `Canvas2D.jsx` tools `tr_wall`/`tr_erase`/`tr_region`
+- `src/state/store.js` trace slice, `commitTrace()`, `applyFinish()` (3D picks → materials)
+- `src/three/house3d.js` walkable house; `houseModel.js` model from store; `finishTextures.js` true-size textures
+- `src/data/finishes.js` floor / wall-tile / paint presets
+- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry).
+  The default mode is **AI Detect** (`DetectModal.jsx`): room outlines read off the plan, reviewed by
+  the user before they're added — a separate, opt-in tool, not the Trace pipeline. Model choice:
+  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored).
+- `src/engine/zones.js` floor design zones (border bands follow the walls, traced inlays); the
+  field = room − holes − bands − inlays. Drawn in 2D (`drawZones`), 3D (`houseModel.zoneSurfaces`)
+  and priced in `estimate.js`.
+- `src/lib/supabasePublic.js` the live Supabase project; the API verifies each session with the
+  project that issued its token, so a stale env var can't lock users out.
+- `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
+
+## Verified state
+- `npm test` → 128 passing (engine, raster, design↔estimate, review regressions).
+- Sample sheet: 7 rooms, 1,047.3 SF vector vs 1,046.5 SF from the crooked scan; scale read
+  off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
+- 10k-line sheet traces in ~0.5 s (spatial indexes everywhere).
+- Phone: right panel is a bottom drawer (tabs open it; loading a PDF opens Trace).
+- pdf.js is imported from the **legacy** build on purpose (5.7 modern build breaks older browsers).
+
+## Known gaps / next
+- Windows aren't detected (wall treated as continuous).
+- Scans: only horizontal/vertical walls; diagonal walls on scans get flagged.
+- AI room naming (`Name rooms with AI`) runs on the same model chain as AI Detect; untested live.
+- Supabase: deployed env vars point at a deleted project (edsywvqtlnoyqtsamryn). The build
+  (`vite.config.js`) and `src/lib/supabase.js` swap in the live `tiletakeoff` project
+  (qgvloanrqzuciuhpepjy); the API routes tokens by issuer. Clean fix = update
+  VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
+- Next real step: run Moshe's own messy PDFs and tune on what comes back wrong.
+
+## Rules of the road
+- Never make the takeoff come from pixels; geometry must go through the coherence engine.
+- Never hide an incoherence: flag it at its location.
+- Add a test for every bug fixed in the engine (see `test/trace.test.js` "review regressions").
+- Branch from `main`, open a PR, and merge it once tests, lint, typecheck and build pass.

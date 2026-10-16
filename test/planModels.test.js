@@ -101,3 +101,36 @@ describe('api/detect-plan model choice', () => {
     expect(calls).toHaveLength(2);
   });
 });
+
+describe('api/detect-plan label mode (Trace room names)', () => {
+  beforeEach(() => { calls.length = 0; queue = []; vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {}); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  async function label(reqBody) {
+    vi.resetModules();
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    process.env.ANTHROPIC_MODEL = 'claude-sonnet-4-5';
+    const { default: handler } = await import('../api/detect-plan.js');
+    const res = { code: 0, payload: null, status(c) { this.code = c; return this; }, json(j) { this.payload = j; return this; } };
+    await handler({ method: 'POST', headers: {}, socket: {}, body: reqBody }, res);
+    delete process.env.ANTHROPIC_MODEL;
+    return res;
+  }
+
+  it('reads names for the traced rooms on the default model, without image size', async () => {
+    queue.push({ model: DEFAULT_MODEL, stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ rooms: [
+      { id: 'r1', name: ' MASTER BATH ', type: 'bath', printed: true },
+      { id: 'zz', name: 'GHOST', type: 'room', printed: false },
+    ] }) }] });
+    const res = await label({ mode: 'label', imageBase64: 'aGVsbG8=', mediaType: 'image/jpeg', rooms: [{ id: 'r1', x: 100, y: 80, areaSf: 54 }] });
+    expect(res.code).toBe(200);
+    expect(res.payload.rooms).toEqual([{ id: 'r1', name: 'MASTER BATH', type: 'bath', printed: true }]);
+    expect(calls).toEqual([{ kind: 'beta', model: DEFAULT_MODEL }]);
+  });
+
+  it('needs the rooms to name', async () => {
+    const res = await label({ mode: 'label', imageBase64: 'aGVsbG8=', mediaType: 'image/jpeg', rooms: [] });
+    expect(res.code).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+});
