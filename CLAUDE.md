@@ -113,7 +113,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 363 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 364 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
   room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
@@ -125,8 +125,9 @@ TileTakeoff works the other way round:
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
   no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
-  51 rooms; plan check 15 of 55 printed areas agree (was 4; e.g. FITNESS 935 vs 932, DOG WASH 229 vs
-  228, OFFICE 2/3, 3 bedrooms, 3 baths, 2 living rooms), 19 flagged off, 88/92 swings confirm the scale.
+  70 rooms; plan check 23 of 55 printed areas agree (was 4: bedrooms, bathrooms, offices 1–3, FITNESS
+  937 vs 932, PODCAST, WOMENS, STAIR B, 3 living rooms), 19 flagged off, 88/92 swings confirm the
+  scale. White fill-only edges (wipeouts / text masks, 3,900 on this sheet) are not drawing.
   Patriot and the sample sheet trace as before. `test/traceMill.test.js` = its cases.
 - Sample sheet: 7 rooms, 1,047.3 SF vector vs 1,046.5 SF from the crooked scan; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
