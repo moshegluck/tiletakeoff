@@ -204,7 +204,7 @@ function ProjectsDrawer({ onClose }) {
         <div className="body">
           {err && <div className="note" style={{ color: 'var(--bad)' }}>{err}</div>}
           {!rows && <div className="note">Loading…</div>}
-          {rows && rows.length === 0 && <div className="note">No saved projects yet. Your current work auto-saves once you’re signed in.</div>}
+          {rows && rows.length === 0 && <div className="note">No saved projects yet. This takeoff saves to your account as soon as you change anything in it.</div>}
           {rows && rows.map((p) => (
             <div className="det-row" key={p.id} style={{ cursor: 'pointer' }} onClick={() => open(p.id)}>
               <div style={{ flex: 1 }}>
