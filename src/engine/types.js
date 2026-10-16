@@ -167,9 +167,10 @@
  * @property {number} cost
  * @property {?CutResult} cutInfo
  * @property {CostMode} costMode
- * @property {{name:string,sf:number,lf?:number}[]} [usedRooms]
+ * @property {{name:string,sf:number,lf?:number,pattern?:string}[]} [usedRooms]
  * @property {number} [tileSf]
  * @property {number} [wasteMul]
+ * @property {number} [wastePct]    effective waste %, weighted by each room's pattern
  */
 
 /**

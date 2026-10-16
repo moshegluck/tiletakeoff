@@ -85,7 +85,7 @@ export function exportCSV(state) {
   ];
   e.lines.forEach((l) => rows.push([
     l.material.name, l.material.type, `${l.material.tw}x${l.material.th}`,
-    l.material.pattern, round(l.netSf, 2), l.material.waste, round(l.grossSf, 2),
+    l.material.pattern, round(l.netSf, 2), round(l.wastePct ?? l.material.waste, 1), round(l.grossSf, 2),
     l.tiles, l.qty % 1 ? round(l.qty, 2) : l.qty, l.unit, round(l.unitCost, 2), round(l.cost, 2),
   ]));
   rows.push([]);
@@ -122,7 +122,7 @@ export async function exportXLSX(state) {
     ['Material', 'Type', 'Tile (in)', 'Pattern', 'Net SF', 'Waste %', 'Gross SF', 'Tiles', 'Order Qty', 'Unit', 'Unit Cost', 'Line Cost'],
     ...e.lines.map((l) => [
       l.material.name, l.material.type, `${l.material.tw}x${l.material.th}`, l.material.pattern,
-      round(l.netSf, 2), l.material.waste, round(l.grossSf, 2), l.tiles,
+      round(l.netSf, 2), round(l.wastePct ?? l.material.waste, 1), round(l.grossSf, 2), l.tiles,
       l.qty % 1 ? round(l.qty, 2) : l.qty, l.unit, round(l.unitCost, 2), round(l.cost, 2),
     ]),
     [],

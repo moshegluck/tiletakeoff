@@ -8,6 +8,7 @@
 import { supabase, cloudEnabled } from './supabase.js';
 import { estimateProject } from '../engine/estimate.js';
 import { polygonArea } from '../engine/geometry.js';
+import { slimTrace } from '../state/slimTrace.js';
 
 // ---- auth ----
 export async function getUser() {
@@ -103,6 +104,7 @@ function toDoc(state) {
   return {
     scale: state.scale, archScale: state.archScale,
     rooms: state.rooms, materials: state.materials, markups: state.markups,
+    trace: slimTrace(state.trace), layoutsV2: true,
     taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
     view: state.view, planImage: keepImage ? state.planImage : null,
   };
@@ -173,9 +175,22 @@ export async function addTile(tile) {
   if (!cloudEnabled) throw new Error('Cloud not configured');
   const user = await getUser();
   if (!user) throw new Error('Not signed in');
-  const num = (v) => (Number.isFinite(+v) ? +v : null);
-  const row = {
-    owner: user.id,
+  const { data, error } = await supabase.from('tile_library').insert({ owner: user.id, ...tileRow(tile) }).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateTile(id, tile) {
+  if (!cloudEnabled) throw new Error('Cloud not configured');
+  const { data, error } = await supabase.from('tile_library').update(tileRow(tile)).eq('id', id).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+// a library tile as a tile_library row (sizes in inches)
+function tileRow(tile) {
+  const num = (v) => (Number.isFinite(+v) && v !== '' && v != null ? +v : null);
+  return {
     name: (tile.name || 'Tile').slice(0, 120),
     tw_in: num(tile.tw_in) ?? 12,
     th_in: num(tile.th_in) ?? 12,
@@ -187,10 +202,14 @@ export async function addTile(tile) {
     price: num(tile.price),
     price_unit: tile.price_unit || 'sf',
     sf_per_box: num(tile.sf_per_box),
+    kind: tile.kind === 'wall' ? 'wall' : 'floor',
+    pattern: tile.pattern || 'grid',
+    angle_deg: num(tile.angle_deg) ?? 0,
+    grout_in: num(tile.grout_in) ?? 0.125,
+    color: tile.color || null,
+    finish_style: tile.finish_style || null,
+    waste_pct: num(tile.waste_pct),
   };
-  const { data, error } = await supabase.from('tile_library').insert(row).select('*').single();
-  if (error) throw error;
-  return data;
 }
 
 export async function deleteTile(id) {

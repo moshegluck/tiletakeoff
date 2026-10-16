@@ -4,11 +4,14 @@ import { rectPoly, roomArea, roomWallLf } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
 import { formatLength, formatArea, parseLength } from '../engine/units.js';
 import { PATTERNS } from '../engine/layouts.js';
+import { roomPattern, patternLabel } from '../engine/patterns.js';
 import { TILE_CATALOG, GROUT_JOINTS } from '../data/tileCatalog.js';
 import { exportCSV, exportXLSX, exportJSON } from '../lib/export.js';
 import { buildProjectCutSheets, openCutSheet } from '../engine/cutSheet.js';
 import { formatLength as fmtLen } from '../engine/units.js';
 import TracePanel from './TracePanel.jsx';
+import PatternSwatch from './PatternSwatch.jsx';
+import { materialItem, saveMine } from '../lib/library.js';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
 import { roomRegions, zonesOf, isAxisRect } from '../engine/zones.js';
 
@@ -49,12 +52,25 @@ function RoomsPanel() {
   );
 }
 
+// open the tile library (App hosts it) aimed at rooms / zones / one tile
+const openLibrary = (detail) => window.dispatchEvent(new CustomEvent('tt:library', { detail }));
+async function saveToLibrary(m) {
+  try {
+    const saved = await saveMine(materialItem(m));
+    window.dispatchEvent(new CustomEvent('tt:toast', { detail: { ok: true, msg: saved.source === 'mine' ? `Saved “${m.name}” to your library` : `Saved “${m.name}” to this device’s library` } }));
+  } catch (e) {
+    window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not save: ' + e.message } }));
+  }
+}
+
 function RoomCard({ room: r }) {
   const s = useProject();
   const open = s.selection.type === 'room' && s.selection.id === r.id;
   const area = s.scale ? roomArea(r) : 0;
   const isRect = r.points.length === 4;
   const b = bounds(r.points);
+  // the floor tile in this room (its pattern is the room's default)
+  const floorTile = s.materials.find((m) => m.type !== 'wall' && r.assigned.includes(m.id)) || null;
 
   return (
     <div className={'card' + (open ? ' sel' : '')}>
@@ -94,11 +110,12 @@ function RoomCard({ room: r }) {
           </div>
 
           <div className="field"><label>Layout pattern (floor)</label>
-            <select className="inp" value={r.layout?.pattern || 'grid'} onChange={(e) => s.setRoomLayout(r.id, { pattern: e.target.value })}>
+            <select className="inp" value={r.layout?.pattern || ''} onChange={(e) => s.setRoomLayout(r.id, { pattern: e.target.value || undefined })}>
+              <option value="">Same as the tile — {patternLabel(floorTile?.pattern || 'grid')}</option>
               {PATTERNS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
           </div>
-          {(r.layout?.pattern === 'grid' || r.layout?.pattern?.startsWith('brick')) && (
+          {PATTERNS.find((p) => p.id === roomPattern(r, floorTile))?.hasAngle && (
             <div className="field"><label>Rotation (°)</label>
               <input className="inp mono" type="number" step="5" value={r.layout?.angleDeg || 0}
                 onChange={(e) => s.setRoomLayout(r.id, { angleDeg: +e.target.value || 0 })} />
@@ -126,6 +143,9 @@ function RoomCard({ room: r }) {
                   <span className="dot" style={{ background: m.color }} />{m.name}</button>;
               })}
             </div>
+            <button className="ghost-add" style={{ marginTop: 8 }} onClick={() => openLibrary({ rooms: [r.id] })}>
+              Choose tile &amp; pattern from the library…
+            </button>
           </div>
 
           <FloorDesign room={r} />
@@ -202,6 +222,7 @@ function ZoneCard({ room: r, zone: z, reg, floorMats }) {
               {floorMats.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.tw}×{m.th}&quot;)</option>)}
             </select>
             {!z.materialId && <div className="note" style={{ marginTop: 4 }}>Pick a floor material — until then this area is removed from the field but not ordered.</div>}
+            <button className="linkbtn" onClick={() => openLibrary({ zones: [{ roomId: r.id, zoneId: z.id }] })}>Pick from the library…</button>
           </div>
 
           {z.kind === 'border' && (
@@ -303,6 +324,7 @@ function MaterialsPanel() {
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => s.addMaterial('floor')}>+ Floor tile</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => s.addMaterial('wall')}>+ Wall tile</button>
       </div>
+      <button className="ghost-add" onClick={() => openLibrary({})}>+ From the library (finishes, sizes, My tiles)</button>
     </div>
   );
 }
@@ -350,12 +372,20 @@ function MaterialCard({ m }) {
             </div>
           </div>
 
-          <div className="field"><label>Pattern & grout joint</label>
-            <select className="inp" value={m.pattern} onChange={(e) => s.updateMaterial(m.id, { pattern: e.target.value })}>
-              {PATTERNS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
+          <div className="field"><label>Pattern{m.type !== 'wall' ? ' (rooms follow it unless set otherwise)' : ''} & grout joint</label>
+            <div className="pat-pick">
+              {PATTERNS.map((p) => (
+                <button key={p.id} className={'pat-opt' + ((m.pattern || 'grid') === p.id ? ' on' : '')} title={p.label}
+                  onClick={() => s.updateMaterial(m.id, { pattern: p.id })}>
+                  <PatternSwatch tw={m.tw} th={m.th} grout={m.grout} pattern={p.id} color={m.color} size={38} />
+                  <span>{p.label.replace(/\s*\(.*\)/, '').replace('Brick / running', 'Running')}</span>
+                </button>
+              ))}
+            </div>
             <select className="inp" style={{ marginTop: 7 }} value={m.grout} onChange={(e) => s.updateMaterial(m.id, { grout: +e.target.value })}>
+              <option value={0}>No joint (butted planks)</option>
               {GROUT_JOINTS.map((j) => <option key={j.id} value={j.in}>{j.label}</option>)}
+              {+m.grout > 0 && !GROUT_JOINTS.some((j) => j.in === +m.grout) && <option value={m.grout}>{m.grout}″</option>}
             </select>
           </div>
 
@@ -379,9 +409,13 @@ function MaterialCard({ m }) {
 
           <div className="field"><label>This material</label>
             <div className="est-row" style={{ padding: '5px 0' }}><span>Net area</span><b>{est.netSf.toFixed(1)} sf</b></div>
-            <div className="est-row" style={{ padding: '5px 0' }}><span>+{m.waste}% waste</span><b>{est.grossSf.toFixed(1)} sf</b></div>
+            <div className="est-row" style={{ padding: '5px 0' }}><span>+{pct(est.wastePct ?? m.waste)}% waste{wasteMixed(est, m) ? ' (by room pattern)' : ''}</span><b>{est.grossSf.toFixed(1)} sf</b></div>
             <div className="est-row" style={{ padding: '5px 0' }}><span>Tiles</span><b>{est.tiles}</b></div>
             <div className="est-row hi" style={{ padding: '6px 8px', borderRadius: 5 }}><span>Cost</span><b>{money(est.cost)}</b></div>
+          </div>
+          <div className="row" style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="ghost-add" style={{ margin: 0 }} onClick={() => openLibrary({ itemKey: `mat:${m.id}` })}>Lay in rooms…</button>
+            <button className="ghost-add" style={{ margin: 0 }} onClick={() => saveToLibrary(m)}>Save to My tiles</button>
           </div>
           {m.type === 'floor' && (
             <button className="ghost-add" style={{ marginTop: 8 }} onClick={() => { s.setGridMaterial(m.id); s.setTool('grid'); }}>Show tile grid on canvas</button>
@@ -475,6 +509,11 @@ function MarkupCard({ mk }) {
   );
 }
 
+// waste % as shown: whole numbers stay whole, mixes show one decimal
+const pct = (v) => (+v).toFixed(1).replace(/\.0$/, '');
+// true when some room lays this tile in another pattern, so the waste is a blend
+const wasteMixed = (est, m) => (est.usedRooms || []).some((u) => u.pattern && u.pattern !== 'border' && u.pattern !== (m.pattern || 'grid'));
+
 /* ---------------- Estimate ---------------- */
 function EstimatePanel() {
   const s = useProject();
@@ -517,7 +556,7 @@ function EstimatePanel() {
 
             {l.costMode === 'waste' && (
               <>
-                <div className="est-row"><span>With {m.waste}% waste</span><b>{l.grossSf.toFixed(1)} sf</b></div>
+                <div className="est-row"><span>With {pct(l.wastePct ?? m.waste)}% waste{wasteMixed(l, m) ? ' (by room pattern)' : ''}</span><b>{l.grossSf.toFixed(1)} sf</b></div>
                 <div className="est-row"><span>Tiles ({m.tw}×{m.th}&quot;)</span><b>{l.tiles}</b></div>
               </>
             )}

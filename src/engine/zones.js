@@ -237,9 +237,12 @@ function polyHitsRect(poly, x0, y0, x1, y1) {
  */
 export function classifyTileRegion(tx, ty, tw, th, region) {
   let cls = /** @type {'full'|'cut'|'out'} */ (classifyTile(tx, ty, tw, th, region.outer));
-  if (cls === 'out' || !region.holes?.length) return cls;
   const eps = Math.min(tw, th) * 0.02;
   const x0 = tx + eps, y0 = ty + eps, x1 = tx + tw - eps, y1 = ty + th - eps;
+  // no corner and not the centre inside, yet a wall crosses the tile: a room
+  // corner pokes into it (common with angled layouts) — that tile is cut
+  if (cls === 'out') return polyHitsRect(region.outer, x0, y0, x1, y1) ? 'cut' : 'out';
+  if (!region.holes?.length) return cls;
   for (const hole of region.holes) {
     if (polyHitsRect(hole, x0, y0, x1, y1)) { cls = 'cut'; continue; }
     if (pointInPolygon((x0 + x1) / 2, (y0 + y1) / 2, hole)) return 'out';
@@ -259,7 +262,8 @@ export function classifyTileRegion(tx, ty, tw, th, region) {
 export function fragmentInRegion(tile, region) {
   const tx = tile.cx - tile.w / 2, ty = tile.cy - tile.h / 2;
   const rect = rectPoly(tx, ty, tile.w, tile.h);
-  const clipped = clipPolygon(rect, region.outer);
+  // the room may be concave, the tile is not: clip the room by the tile
+  const clipped = clipPolygon(region.outer, rect);
   if (clipped.length < 3) return null;
   let area = polygonArea(clipped);
   const b = bounds(clipped);

@@ -139,12 +139,24 @@ export function analyzeCuts(rooms, material, opts = {}) {
       angleDeg: sf.layout?.angleDeg || 0,
       origin: sf.layout?.origin || { x: 0, y: 0 },
     });
-    for (const t of tiles) {
-      const cls = classifyTileRegion(t.cx - t.w / 2, t.cy - t.h / 2, t.w, t.h, sf.region);
+    const frames = new Map();
+    for (const t0 of tiles) {
+      // classify in the tile's own frame, so a rotated tile (diagonal,
+      // herringbone, any layout angle) is judged by its true outline and its
+      // cut is measured along its own edges, as the cutter sees it
+      const { region, t } = inTileFrame(t0, sf.region, frames);
+      const cls = classifyTileRegion(t.cx - t.w / 2, t.cy - t.h / 2, t.w, t.h, region);
       if (cls === 'full') fullCount++;
       else if (cls === 'cut') {
-        const frag = fragmentInRegion(t, sf.region);
-        if (frag && frag.area > EPS) needs.push({ ...frag, room: sf.name });
+        const frag = fragmentInRegion(t, region);
+        if (frag && frag.area > EPS) {
+          // The same tile is laid both ways in herringbone / basketweave (a
+          // laid tile's w may be the material's th). Express the piece in the
+          // material tile's own orientation, or cutting it from a fresh tile
+          // would leave offcuts bigger than the tile.
+          const swapped = Math.abs(t.w - twFt) + Math.abs(t.h - thFt) > Math.abs(t.w - thFt) + Math.abs(t.h - twFt);
+          needs.push({ ...frag, ...(swapped ? { w: frag.h, h: frag.w } : {}), room: sf.name });
+        }
       }
     }
   }
@@ -180,10 +192,29 @@ export function analyzeCuts(rooms, material, opts = {}) {
     mode,
     assignments: result.assignments, // for the cut sheet
     note: surfaces.some((sf) => ANGLED.has(sf.pattern))
-      ? 'Angled/herringbone fragments modeled as bounding rectangles (conservative on reuse).'
+      ? 'Angled cuts are sized by their bounding rectangle along the tile (conservative on reuse).'
       : null,
     border,
     surfaces: summary,
+  };
+}
+
+// A tile and the region in the tile's frame: the region rotated by −rot about
+// (0,0) and the tile's centre with it, so the tile is axis-aligned. Each
+// distinct angle's rotated region is computed once per surface.
+function inTileFrame(tile, region, frames) {
+  if (!tile.rot) return { region, t: tile };
+  const key = tile.rot.toFixed(9);
+  let f = frames.get(key);
+  if (!f) {
+    const c = Math.cos(tile.rot), s = Math.sin(tile.rot);
+    const rot = (p) => ({ x: p.x * c + p.y * s, y: -p.x * s + p.y * c });
+    f = { c, s, region: { outer: region.outer.map(rot), holes: (region.holes || []).map((h) => h.map(rot)) } };
+    frames.set(key, f);
+  }
+  return {
+    region: f.region,
+    t: { cx: tile.cx * f.c + tile.cy * f.s, cy: -tile.cx * f.s + tile.cy * f.c, w: tile.w, h: tile.h, rot: 0 },
   };
 }
 

@@ -13,6 +13,7 @@ import ScaleControl from './components/ScaleControl.jsx';
 import { openPlanFile } from './lib/planLoad.js';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
+const Library = lazy(() => import('./components/Library.jsx'));
 
 const TOOLS = [
   { id: 'select', key: 'V', label: 'Select / Move', icon: 'M3 3l7.5 18 2.5-7.5L20.5 11z' },
@@ -34,6 +35,13 @@ const TOOLS = [
 export default function App() {
   const s = useProject();
   const [detect, setDetect] = useState(false);
+  // tile library: null = closed, else its target ({ rooms, zones, itemKey })
+  const [lib, setLib] = useState(null);
+  useEffect(() => {
+    const open = (e) => setLib(e.detail || {});
+    window.addEventListener('tt:library', open);
+    return () => window.removeEventListener('tt:library', open);
+  }, []);
   const [toast, setToast] = useState(null);
   // phones: the right panel is a bottom sheet; tabs open/close it
   const [sheet, setSheet] = useState(false);
@@ -150,6 +158,9 @@ export default function App() {
           {Object.values(UNIT_SYSTEMS).map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
         </select>
         <div className="spacer" />
+        <button className="tbtn" onClick={() => setLib({})} title="Tiles, sizes and patterns — lay them in rooms">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" /><rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" /></svg><span className="tbtn-label">Library</span>
+        </button>
         <AccountBar />
         <label className="tbtn" style={{ cursor: 'pointer' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2h9l5 5v15H6zM15 2v5h5" /><path d="M9 13h6M9 17h4" /></svg>PDF
@@ -207,6 +218,7 @@ export default function App() {
       </main>
 
       {detect && <DetectModal onClose={() => setDetect(false)} />}
+      {lib && <Suspense fallback={null}><Library target={lib} onClose={() => setLib(null)} /></Suspense>}
       {toast && <div className={'toast show' + (toast.ok ? ' ok' : '')}>{toast.ok && <b>✓</b>} {toast.msg}</div>}
     </div>
   );

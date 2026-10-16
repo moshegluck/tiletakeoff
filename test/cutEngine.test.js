@@ -100,3 +100,42 @@ describe('cutEngine: analyzeProject', () => {
     expect(p.totals.naive).toBeGreaterThanOrEqual(p.totals.optimized);
   });
 });
+
+describe('cut engine: patterns order about the floor area in tiles', () => {
+  // 10 × 10 ft room; whatever the pattern, the tiles bought must cover the
+  // floor (≥ area / tile area) without a runaway count
+  // an L-shaped room so angled tiles meet a concave corner too
+  const L = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 6, y: 6 }, { x: 6, y: 10 }, { x: 0, y: 10 }];
+  const SQ = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+  const cases = [
+    ['grid', 12, 12, 0, SQ, 100], ['grid', 12, 12, 30, SQ, 100], ['brick_50', 12, 24, 15, SQ, 100],
+    ['herringbone', 4, 24, 0, SQ, 100], ['herringbone', 3, 12, 0, SQ, 100], ['herringbone', 24, 4, 20, L, 84],
+    ['basketweave', 4, 8, 0, SQ, 100], ['basketweave', 4, 8, 45, L, 84], ['diagonal', 12, 12, 0, L, 84],
+  ];
+  for (const [pattern, tw, th, angleDeg, points, area] of cases) {
+    it(`${pattern} ${tw}×${th} at ${angleDeg}° covers the floor with real tiles`, () => {
+      const m = { id: 'm', name: 'T', type: 'floor', tw, th, grout: 0, pattern, waste: 10 };
+      const room = { id: 'r', name: 'R', points, assigned: ['m'], layout: { pattern, angleDeg } };
+      for (const mode of ['practical', 'optimize']) {
+        const res = analyzeCuts([room], m, { mode });
+        const minTiles = area / ((tw / 12) * (th / 12));
+        // tiles bought can never hold less area than the floor they cover
+        expect(res.totalTiles).toBeGreaterThanOrEqual(Math.ceil(minTiles - 1e-9));
+        expect(res.totalTiles).toBeLessThan(minTiles * 1.4);
+      }
+    });
+  }
+});
+
+describe('cut engine: legacy check', () => {
+  const roomP = (pattern) => ({ id: 'r', name: 'R', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }], assigned: ['m'], layout: { pattern } });
+  for (const [pattern, tw, th] of [['grid', 12, 12], ['brick_50', 12, 24]]) {
+    it(pattern, () => {
+      const m = { id: 'm', name: 'T', type: 'floor', tw, th, grout: 0, pattern, waste: 10 };
+      const res = analyzeCuts([roomP(pattern)], m, { mode: 'practical' });
+      const minTiles = 100 / ((tw / 12) * (th / 12));
+      expect(res.totalTiles).toBeGreaterThanOrEqual(Math.floor(minTiles));
+      expect(res.totalTiles).toBeLessThan(minTiles * 1.35);
+    });
+  }
+});

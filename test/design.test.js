@@ -101,3 +101,25 @@ describe('review regressions — takeoff side', () => {
     expect(e.lines.find((l) => l.material.type === 'wall').netSf).toBeCloseTo(33.5 * 8 + 2.5 * (8 - (6 + 8 / 12)), 6);
   });
 });
+
+describe('rooms follow their tile\'s pattern', () => {
+  beforeEach(() => { useStore.getState().newProject(); });
+  it('a new room has no pattern of its own', () => {
+    const st = useStore.getState();
+    st.addRoom(sq(0, 0, 10, 10));
+    expect(useStore.getState().rooms[0].layout.pattern).toBeUndefined();
+  });
+  it('an old saved project is upgraded once on load', () => {
+    // saved before the upgrade: no layoutsV2 key at all
+    useStore.getState().loadSnapshot({ rooms: [{ id: 'r', name: 'R', points: sq(0, 0, 5, 5), assigned: [], layout: { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } } }] });
+    const st = useStore.getState();
+    expect(st.rooms[0].layout.pattern).toBeUndefined();
+    expect(st.layoutsV2).toBe(true);
+  });
+});
+describe('rooms follow their tile\'s pattern (already upgraded)', () => {
+  it('a project saved after the upgrade keeps an explicit straight grid', () => {
+    useStore.getState().loadSnapshot({ layoutsV2: true, rooms: [{ id: 'r', name: 'R', points: sq(0, 0, 5, 5), assigned: [], layout: { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } } }] });
+    expect(useStore.getState().rooms[0].layout.pattern).toBe('grid');
+  });
+});

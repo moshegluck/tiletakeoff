@@ -12,6 +12,7 @@
 import { roomArea, roomWallLf } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
 import { roomRegions } from './zones.js';
+import { roomPattern, wasteFor } from './patterns.js';
 
 /**
  * Net area a material covers across rooms. A floor material assigned to a
@@ -19,7 +20,7 @@ import { roomRegions } from './zones.js';
  * a floor material picked on a design zone covers that zone.
  * @param {import('./types.js').Material} material
  * @param {import('./types.js').Room[]} rooms
- * @returns {{ netSf: number, usedRooms: {name:string,sf:number,lf?:number}[] }}
+ * @returns {{ netSf: number, usedRooms: {name:string,sf:number,lf?:number,pattern?:string}[] }}
  */
 export function materialArea(material, rooms) {
   let netSf = 0;
@@ -48,17 +49,17 @@ export function materialArea(material, rooms) {
     const reg = roomRegions(r);
     if (onField) {
       netSf += reg.fieldArea;
-      usedRooms.push({ name: r.name, sf: reg.fieldArea });
+      usedRooms.push({ name: r.name, sf: reg.fieldArea, pattern: roomPattern(r, material) });
     }
     for (const b of reg.bands) {
       if (b.zone.materialId !== material.id) continue;
       netSf += b.area;
-      usedRooms.push({ name: `${r.name} · ${b.zone.name}`, sf: b.area, lf: b.lf });
+      usedRooms.push({ name: `${r.name} · ${b.zone.name}`, sf: b.area, lf: b.lf, pattern: 'border' });
     }
     for (const z of reg.inlays) {
       if (z.zone.materialId !== material.id) continue;
       netSf += z.area;
-      usedRooms.push({ name: `${r.name} · ${z.zone.name}`, sf: z.area });
+      usedRooms.push({ name: `${r.name} · ${z.zone.name}`, sf: z.area, pattern: z.zone.layout?.pattern || material.pattern || 'grid' });
     }
   }
   return { netSf, usedRooms };
@@ -73,8 +74,10 @@ export function materialArea(material, rooms) {
 export function estimateMaterial(material, rooms) {
   const { netSf, usedRooms } = materialArea(material, rooms);
   const tileSf = (material.tw / 12) * (material.th / 12) * (material.faceCoverage ?? 1);
-  const wasteMul = 1 + (material.waste ?? 0) / 100;
-  const grossSf = netSf * wasteMul;
+  // waste follows the pattern each room lays this tile in
+  const grossSf = usedRooms.reduce((a, u) => a + u.sf * (1 + wasteFor(material, u.pattern) / 100), 0);
+  const wasteMul = netSf > 0 ? grossSf / netSf : 1 + (material.waste ?? 0) / 100;
+  const wastePct = (wasteMul - 1) * 100;
   const wasteTiles = tileSf > 0 ? Math.ceil(grossSf / tileSf) : 0;
 
   // cut-engine accounting (only meaningful for floor tile in a real layout)
@@ -111,7 +114,7 @@ export function estimateMaterial(material, rooms) {
   const cost = qty * unitCost;
   return {
     material, netSf, grossSf, tiles, wasteTiles, qty, unit, unitCost, cost,
-    usedRooms, tileSf, wasteMul, cutInfo, costMode: useCuts ? 'cuts' : 'waste',
+    usedRooms, tileSf, wasteMul, wastePct, cutInfo, costMode: useCuts ? 'cuts' : 'waste',
   };
 }
 

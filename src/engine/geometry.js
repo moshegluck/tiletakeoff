@@ -91,13 +91,13 @@ export const rectPoly = (x, y, w, h) => ([
   { x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h },
 ]);
 
-// ---- Sutherland–Hodgman: clip subject polygon by convex-ish room ----
-// Returns the clipped polygon (possibly empty). Used to find the EXACT
-// portion of a tile that lands inside the room, so we can size the cut.
-// Note: SH assumes a convex clip window; for non-convex rooms we clip
-// against the room's edges sequentially, which is exact for convex rooms
-// and a close approximation for mildly concave ones (good enough for the
-// offcut sizing the cut engine needs; the visual fill still clips precisely).
+// ---- Sutherland–Hodgman: clip a subject polygon by a CONVEX window ----
+// Returns the clipped polygon (possibly empty). The window must be convex:
+// each window edge acts as an infinite half-plane, so a concave window (an
+// L-shaped room) would cut away valid floor. The subject may be any shape:
+// the result then has the exact intersection area (separate parts joined by
+// zero-width bridges along the window's edge). So to find the part of a tile
+// inside a room, clip the ROOM by the TILE, never the tile by the room.
 export function clipPolygon(subject, clip) {
   let output = subject.slice();
   const n = clip.length;
@@ -140,8 +140,8 @@ function intersect(p, q, a, b) {
   return { x: (b2 * c1 - b1 * c2) / d, y: (a1 * c2 - a2 * c1) / d };
 }
 
-// Exact area of a tile rect that falls inside the room polygon.
+// Exact area of a tile rect that falls inside the room polygon (any shape).
 export function clippedTileArea(tx, ty, tw, th, poly) {
-  const clipped = clipPolygon(rectPoly(tx, ty, tw, th), poly);
+  const clipped = clipPolygon(poly, rectPoly(tx, ty, tw, th));
   return clipped.length >= 3 ? polygonArea(clipped) : 0;
 }

@@ -17,9 +17,14 @@ export const PATTERNS = [
   { id: 'basketweave', label: 'Basketweave',         hasOffset: false, hasAngle: true },
 ];
 
-// Generate placements covering the polygon bounds (oversized so the
-// renderer can clip). tileW/tileH are in feet and INCLUDE the grout
-// joint already (caller adds joint).
+// Every pattern is laid out in its own frame — tiles placed around (0,0),
+// unrotated — and then the whole lattice is rotated by the layout angle and
+// moved to the origin. (Rotating each tile about its own centre on an
+// unrotated lattice leaves gaps and overlaps.) A pattern may carry its own
+// base angle: diagonal is a grid at 45°, herringbone is laid with planks at
+// ±45° so the zigzag runs along the room.
+const BASE_ANGLE = { diagonal: 45, herringbone: -45 };
+
 /**
  * Generate tile placements covering a room polygon (oversized; the
  * renderer clips). tileW/tileH are in FEET incl. grout.
@@ -29,78 +34,102 @@ export const PATTERNS = [
  */
 export function generateLayout(poly, opts) {
   const { pattern = 'grid', tileW, tileH, angleDeg = 0, origin = { x: 0, y: 0 } } = opts;
+  if (!(tileW > 0 && tileH > 0) || !poly?.length) return [];
+  const ang = (((BASE_ANGLE[pattern] || 0) + (angleDeg || 0)) * Math.PI) / 180;
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  // the room's bounds in the pattern frame, padded by two tiles
   const b = bounds(poly);
-  // pad bounds by 2 tiles each side
   const pad = Math.max(tileW, tileH) * 2;
-  const region = { minx: b.minx - pad, miny: b.miny - pad, maxx: b.maxx + pad, maxy: b.maxy + pad };
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const [x, y] of [[b.minx, b.miny], [b.maxx, b.miny], [b.maxx, b.maxy], [b.minx, b.maxy]]) {
+    const dx = x - origin.x, dy = y - origin.y;
+    const lx = dx * cos + dy * sin, ly = -dx * sin + dy * cos;   // rotate by −ang
+    minx = Math.min(minx, lx); miny = Math.min(miny, ly); maxx = Math.max(maxx, lx); maxy = Math.max(maxy, ly);
+  }
+  const region = { minx: minx - pad, miny: miny - pad, maxx: maxx + pad, maxy: maxy + pad };
 
+  let local;
   switch (pattern) {
-    case 'herringbone': return herringbone(region, tileW, tileH, origin);
-    case 'diagonal':    return grid(region, tileW, tileH, origin, 45);
-    case 'basketweave': return basketweave(region, tileW, tileH, origin);
-    case 'brick_50':    return grid(region, tileW, tileH, origin, angleDeg, 0.5);
-    case 'brick_33':    return grid(region, tileW, tileH, origin, angleDeg, 1 / 3);
+    case 'herringbone': local = herringbone(region, tileW, tileH); break;
+    case 'basketweave': local = basketweave(region, tileW, tileH); break;
+    case 'brick_50':    local = grid(region, tileW, tileH, 0.5); break;
+    case 'brick_33':    local = grid(region, tileW, tileH, 1 / 3); break;
+    case 'diagonal':
     case 'grid':
-    default:            return grid(region, tileW, tileH, origin, angleDeg, 0);
+    default:            local = grid(region, tileW, tileH, 0);
   }
+  if (!ang) return local.map((t) => ({ ...t, cx: t.cx + origin.x, cy: t.cy + origin.y }));
+  return local.map((t) => ({
+    cx: origin.x + t.cx * cos - t.cy * sin,
+    cy: origin.y + t.cx * sin + t.cy * cos,
+    w: t.w, h: t.h, rot: (t.rot || 0) + ang,
+  }));
 }
 
-function grid(region, tw, th, origin, angleDeg = 0, rowOffset = 0) {
+// Straight lattice with a tile edge on (0,0); every other row shifted by
+// rowOffset × tile width for running bond.
+function grid(region, tw, th, rowOffset = 0) {
   const tiles = [];
-  const rot = (angleDeg * Math.PI) / 180;
-  // Anchor the grid so a tile edge falls on (origin.x, origin.y). Walking out
-  // from that anchor (rather than from a padded region edge) keeps tiles that
-  // sit flush with the room boundary classified as full, not spuriously cut.
-  const startX = origin.x - Math.ceil((origin.x - region.minx) / tw) * tw;
-  const startY = origin.y - Math.ceil((origin.y - region.miny) / th) * th;
-  const cols = Math.ceil((region.maxx - startX) / tw) + 1;
-  const rows = Math.ceil((region.maxy - startY) / th) + 1;
-  for (let r = 0; r < rows; r++) {
-    const off = (rowOffset && r % 2) ? rowOffset * tw : 0;
-    for (let c = -1; c <= cols; c++) {
-      const x = startX + c * tw + off;
-      const y = startY + r * th;
-      tiles.push({ cx: x + tw / 2, cy: y + th / 2, w: tw, h: th, rot });
+  const r0 = Math.floor(region.miny / th), r1 = Math.ceil(region.maxy / th);
+  const c0 = Math.floor(region.minx / tw) - 1, c1 = Math.ceil(region.maxx / tw);
+  for (let r = r0; r <= r1; r++) {
+    const off = rowOffset ? (((r % 2) + 2) % 2) * rowOffset * tw : 0;
+    for (let c = c0; c <= c1; c++) {
+      const x = c * tw + off, y = r * th;
+      tiles.push({ cx: x + tw / 2, cy: y + th / 2, w: tw, h: th, rot: 0 });
     }
   }
   return tiles;
 }
 
-function herringbone(region, tw, th, _origin) {
-  // classic herringbone: planks alternate 0/90°, interlocking
+// Herringbone: planks L×S, alternately horizontal and vertical, each end
+// butting the side of its neighbour. One horizontal and one vertical plank
+// repeat on the lattice  o = i·(S, S) + j·(L, −L):
+//   horizontal  [o.x, o.x+L] × [o.y, o.y+S]
+//   vertical    [o.x, o.x+S] × [o.y+S, o.y+S+L]
+// which covers the plane exactly, for any L > S.
+function herringbone(region, tw, th) {
   const tiles = [];
-  const long = Math.max(tw, th), short = Math.min(tw, th);
-  const step = long + short;
-  const cols = Math.ceil((region.maxx - region.minx) / step) + 3;
-  const rows = Math.ceil((region.maxy - region.miny) / step) + 3;
-  for (let r = -1; r < rows; r++) {
-    for (let c = -1; c < cols; c++) {
-      const bx = region.minx + c * step + (r % 2 ? step / 2 : 0);
-      const by = region.miny + r * step;
-      // horizontal plank
-      tiles.push({ cx: bx + long / 2, cy: by + short / 2, w: long, h: short, rot: 0 });
-      // vertical plank tucked into the L
-      tiles.push({ cx: bx + long + short / 2, cy: by + short + long / 2, w: short, h: long, rot: 0 });
+  const L = Math.max(tw, th), S = Math.min(tw, th);
+  if (L - S < 1e-9) return grid(region, tw, th, 0);   // square tiles: no herringbone
+  // lattice indices that reach the region's corners: i = (x+y)/2S, j = (x−y)/2L
+  let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+  for (const [x, y] of [[region.minx, region.miny], [region.maxx, region.miny], [region.maxx, region.maxy], [region.minx, region.maxy]]) {
+    const i = (x + y) / (2 * S), j = (x - y) / (2 * L);
+    i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+  }
+  const m = Math.ceil(L / S) + 2;
+  for (let i = Math.floor(i0) - m; i <= Math.ceil(i1) + m; i++) {
+    for (let j = Math.floor(j0) - 2; j <= Math.ceil(j1) + 2; j++) {
+      const ox = i * S + j * L, oy = i * S - j * L;
+      if (ox > region.maxx || ox + L < region.minx || oy > region.maxy || oy + S + L < region.miny) continue;
+      tiles.push({ cx: ox + L / 2, cy: oy + S / 2, w: L, h: S, rot: 0 });
+      tiles.push({ cx: ox + S / 2, cy: oy + S + L / 2, w: S, h: L, rot: 0 });
     }
   }
   return tiles;
 }
 
-function basketweave(region, tw, th, _origin) {
+// Basketweave: square blocks of n = L/S whole tiles laid side by side,
+// alternating horizontal and vertical like a checkerboard (4×8, 3×6, 2×4…).
+// Square tiles have no weave, so they lay as a grid. The weave is only
+// exact when L is a whole multiple of S; other ratios are approximated by
+// round(L/S) tiles per L×L block.
+function basketweave(region, tw, th) {
+  const L = Math.max(tw, th), S = Math.min(tw, th);
+  const n = Math.max(1, Math.round(L / S));
+  if (n === 1) return grid(region, tw, th, 0);
+  const s = L / n;                       // tile thickness inside an L×L block
   const tiles = [];
-  const unit = tw * 2; // 2 tiles per weave block (assumes square-ish)
-  const cols = Math.ceil((region.maxx - region.minx) / unit) + 2;
-  const rows = Math.ceil((region.maxy - region.miny) / unit) + 2;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x = region.minx + c * unit, y = region.miny + r * unit;
-      const horiz = (r + c) % 2 === 0;
-      if (horiz) {
-        tiles.push({ cx: x + tw / 2, cy: y + th / 4, w: tw, h: th / 2, rot: 0 });
-        tiles.push({ cx: x + tw / 2, cy: y + (th * 3) / 4, w: tw, h: th / 2, rot: 0 });
-      } else {
-        tiles.push({ cx: x + tw / 4, cy: y + th / 2, w: tw / 2, h: th, rot: 0 });
-        tiles.push({ cx: x + (tw * 3) / 4, cy: y + th / 2, w: tw / 2, h: th, rot: 0 });
+  const c0 = Math.floor(region.minx / L), c1 = Math.ceil(region.maxx / L);
+  const r0 = Math.floor(region.miny / L), r1 = Math.ceil(region.maxy / L);
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const x = c * L, y = r * L;
+      const horiz = (((r + c) % 2) + 2) % 2 === 0;
+      for (let k = 0; k < n; k++) {
+        if (horiz) tiles.push({ cx: x + L / 2, cy: y + s * k + s / 2, w: L, h: s, rot: 0 });
+        else tiles.push({ cx: x + s * k + s / 2, cy: y + L / 2, w: s, h: L, rot: 0 });
       }
     }
   }

@@ -9,7 +9,8 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Sharp at any zoom** — the part of the PDF on screen is re-rendered from the vector drawing at screen resolution whenever the view settles (up to 3200%); smooth wheel / trackpad / pinch zoom about the cursor, two-finger touch pan & zoom on tablets and phones, Ctrl + / − / 0 to zoom and fit.
 - **Markups (Bluebeam-style)** — Length, Area, Box, and Count measurement tools with per-markup unit cost, line cost, notes, and a measurement log that totals by type. Hotkeys M / A / B / C.
 - **All measurement types** — feet-inches (fractions), decimal feet, inches, meters, cm, mm. Switch any time; everything re-renders.
-- **Tile layouts** — straight grid, running brick (50% / 33%), herringbone, diagonal 45°, basketweave, with rotation. Full vs. cut tiles shaded on canvas.
+- **Tile layouts** — straight grid, running brick (50% / 33%), herringbone, diagonal 45°, basketweave, at any rotation. Every pattern is true geometry (the whole lattice rotates; herringbone and basketweave tile the floor exactly), and the same layout drives the canvas, the 3D floor and the cut count. A room lays its tile in the tile's pattern unless the room sets its own, and waste follows the pattern each room uses.
+- **Tile library** — named finishes, standard sizes, your saved tiles (in your account when signed in, else on this device) and the project's materials, each with a true-geometry pattern preview. Pick a tile, choose its pattern, rotation, grout, colour and price, tick rooms or floor design zones, and lay it: it becomes one priced material and replaces the room's tile of that kind. Open it from the header, a room, a design zone or a material.
 - **Floor design (borders & inlays)** — the room outline is the walls; floor designs live inside it as zones with their own material. A **border band** is defined by distance-from-wall + width and is derived from the wall polygon (no tracing; follows L-shapes and re-flows when the room changes; stack bands for layered borders/listellos). An **inlay** (medallion, rug inset, feature panel) is traced (D) or boxed (I) on the plan's floor lines, snapping to room/inlay corners and walls, with its own pattern anchored to its corner or center. Zones are carved out of the field, so field + borders + inlays always add back up to the room. Border tile is counted the way it's installed — wall runs of strips, full courses plus one rip course.
 - **Cut-redistribution engine** — sizes every cut piece via exact polygon clipping, tracks offcuts, and reuses them on other cuts (with chained reuse and grain-lock for planks). Two modes: practical first-fit and whole-job best-fit optimize. Reports real tiles ordered vs. naive waste %, with the tiles saved.
 - **Installer cut sheet** — per-room summary, consolidated batch cut list, and a tile-by-tile cutting plan showing which offcut feeds which cut. Print-ready.
@@ -157,9 +158,8 @@ reusable (e.g. a future Supabase/multi-user backend can call it directly).
 
 ## Roadmap (not yet built)
 
-- Pattern-accurate herringbone/pinwheel/versailles fragment geometry (current cut model treats angled fragments as bounding rectangles — conservative, and flagged in the estimate)
+- Pinwheel / hopscotch / versailles patterns (angled cuts are sized by their bounding rectangle along the tile — conservative on reuse)
 - Per-wall border control (skip a band along cabinets/thresholds) and inlay frames
-- Shared tile_library UI (schema is already in the migration)
 - Markup ↔ Excel live link (Quantity-Link style)
 - Seam diagrams for sheet goods
 - Bluebeam-style markups list with per-item cost columns and legend
