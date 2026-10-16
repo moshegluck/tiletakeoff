@@ -107,7 +107,7 @@ function toDoc(state) {
     rooms: state.rooms, materials: state.materials, markups: state.markups,
     trace: slimTrace(state.trace), layoutsV2: true, planFile: state.planFile || null,
     pageData: slimPages(state.pageData), pdfPage: state.pdfPage || 1,
-    taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
+    taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf, job: state.job,
     view: state.view, planImage: keepImage ? state.planImage : null,
   };
 }

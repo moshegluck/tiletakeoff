@@ -52,7 +52,7 @@ export function exportJSON(state) {
     markups: state.markups,
     // the takeoff on the plan's other pages
     pageData: slimPages(state.pageData), pdfPage: state.pdfPage || 1,
-    taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
+    taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf, job: state.job,
     exportedAt: new Date().toISOString(),
   };
   downloadBlob(JSON.stringify(snap, null, 2), 'application/json', `${safe(state.name)}.json`);
