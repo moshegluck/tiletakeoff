@@ -17,6 +17,10 @@ const TOOL_CURSOR = {
   zone_poly: 'crosshair', zone_rect: 'crosshair',
 };
 
+// Tools whose points snap to the plan's own lines (corners, line ends, edges).
+const SNAP_TOOLS = new Set(['room', 'polygon', 'ruler', 'mk_length', 'mk_area', 'mk_rect', 'mk_ellipse', 'mk_arrow', 'zone_rect', 'zone_poly']);
+const SNAP_REACH = 10; // screen px
+
 // Point-by-point drafts: a traced room or a traced floor design (inlay).
 const isPolyDraft = (d) => d?.kind === 'poly' || d?.kind === 'zpoly';
 const INCH = 1 / 12;
@@ -68,6 +72,48 @@ export default function Canvas2D() {
   const detailRef = useRef(null);
   if (!detailRef.current) detailRef.current = createPlanDetail(() => schedule());
   useEffect(() => () => detailRef.current.clear(), []);
+
+  // ---------- snap to the drawing (engine/snapIndex.js) ----------
+  // Built from the plan's lines (vector PDF, or strokes found on a scan) the
+  // first time a drawing tool is used on a plan; shared with Trace's cache.
+  const snapIdx = useRef({ key: null, index: null, loading: false });
+  const ensureSnapIndex = useCallback(async () => {
+    const st = useStore.getState();
+    if (!st.planImage) { snapIdx.current = { key: null, index: null, loading: false }; return; }
+    const key = `${st.planImage}|${st.pdfPage}`;
+    if (snapIdx.current.key === key && (snapIdx.current.index || snapIdx.current.loading)) return;
+    snapIdx.current = { key, index: null, loading: true };
+    try {
+      const [{ gatherEvidence }, { buildSnapIndex }] = await Promise.all([import('../lib/planEvidence.js'), import('../engine/snapIndex.js')]);
+      const ev = await gatherEvidence({
+        doc: st.pdfDoc, pageNum: st.pdfPage || 1, renderScale: st.planDpi > 0 ? st.planDpi / 72 : 1,
+        planImage: st.planImage, pxPerFtHint: st.scale ? 1 / st.scale : undefined,
+      });
+      if (snapIdx.current.key === key) snapIdx.current = { key, index: buildSnapIndex(ev.lines), loading: false };
+    } catch (err) {
+      console.warn('snapping unavailable for this plan:', err?.message);
+      if (snapIdx.current.key === key) snapIdx.current = { key, index: null, loading: false };
+    }
+  }, []);
+  useEffect(() => {
+    if (!s.planImage) return;
+    if (SNAP_TOOLS.has(s.tool) || s.tool === 'select') {
+      // off the critical path: let the tool switch paint first
+      const t = setTimeout(() => { ensureSnapIndex(); }, 120);
+      return () => clearTimeout(t);
+    }
+  }, [s.tool, s.planImage, s.pdfPage, ensureSnapIndex]);
+  // The plan point under the cursor, snapped when the tool wants it (Alt
+  // turns snapping off while held). → underlay px + kind, or null.
+  function planSnap(sp, e) {
+    const st = useStore.getState();
+    if (!st.snapOn || e.altKey || !snapIdx.current.index) return null;
+    const d = drag.current;
+    const wants = SNAP_TOOLS.has(st.tool) || (st.tool === 'select' && d && (d.mode === 'vertex' || d.mode === 'zvertex'));
+    if (!wants) return null;
+    const v = st.view, mx = (sp.x - v.x) / v.zoom, my = (sp.y - v.y) / v.zoom;
+    return snapIdx.current.index.query(mx, my, SNAP_REACH / v.zoom);
+  }
 
   // ---------- view: animated zoom / fit ----------
   const anim = useRef(0);
@@ -311,7 +357,8 @@ export default function Canvas2D() {
 
   function onDown(e) {
     cvRef.current.setPointerCapture(e.pointerId);
-    const sp = evPt(e), mp = toModel(sp.x, sp.y);
+    const sp = evPt(e), hit = e.button === 0 ? planSnap(sp, e) : null;
+    const mp = hit ? { x: hit.x, y: hit.y } : toModel(sp.x, sp.y);
     const mfx = px2ft(mp.x), mfy = px2ft(mp.y);
     down.current = { sp, mp };
 
@@ -350,7 +397,7 @@ export default function Canvas2D() {
     if (s.tool === 'tr_region') { trDraft.current = { kind: 'region', p0: mp, p1: mp }; schedule(); return; }
     if (s.tool === 'ruler') { ruler.current = { p1: mp, p2: mp }; return; }
     if (s.tool === 'room') {
-      draft.current = { kind: 'rect', ox: mfx, oy: mfy, points: rectPoly(mfx, mfy, 0, 0) };
+      draft.current = { kind: 'rect', ox: mfx, oy: mfy, points: rectPoly(mfx, mfy, 0, 0), snapped: !!hit };
       return;
     }
     if (s.tool === 'zone_rect') {
@@ -470,8 +517,15 @@ export default function Canvas2D() {
   }
 
   function onMove(e) {
-    const sp = evPt(e), mp = toModel(sp.x, sp.y);
+    const sp = evPt(e), hit = planSnap(sp, e);
+    const mp = hit ? { x: hit.x, y: hit.y } : toModel(sp.x, sp.y);
     const mfx = px2ft(mp.x), mfy = px2ft(mp.y);
+    // show where a click would land
+    const marker = hit ? { x: hit.x, y: hit.y, kind: hit.kind, px: true } : null;
+    if (marker || hoverSnap.current?.px) {
+      const h = hoverSnap.current;
+      if (!marker !== !h || (marker && (h.x !== marker.x || h.y !== marker.y))) { hoverSnap.current = marker; schedule(); }
+    }
 
     if (s.tool === 'tr_wall' && trDraft.current?.a && scale) {
       let p = traceSnap({ x: mfx, y: mfy }, sp);
@@ -485,7 +539,7 @@ export default function Canvas2D() {
     if (ruler.current && down.current) { ruler.current.p2 = e.shiftKey ? axisLock(ruler.current.p1, mp) : mp; schedule(); return; }
     if (draft.current?.kind === 'rect' && down.current) {
       let x = draft.current.ox, y = draft.current.oy, w = mfx - x, h = mfy - y;
-      if (scale) { w = snap(w, .5); h = snap(h, .5); }
+      if (scale && !hit && !draft.current.snapped) { w = snap(w, .5); h = snap(h, .5); }
       const x0 = Math.min(x, x + w), y0 = Math.min(y, y + h);
       draft.current.points = rectPoly(x0, y0, Math.abs(w), Math.abs(h));
       schedule(); return;
@@ -505,8 +559,7 @@ export default function Canvas2D() {
     }
     if ((s.tool === 'zone_poly' || s.tool === 'zone_rect') && !draft.current) {
       const { p, snapped } = snapDesign(sp, { x: mfx, y: mfy }, null, false);
-      const next = snapped ? p : null;
-      if (next || hoverSnap.current) { hoverSnap.current = next; schedule(); }
+      if (snapped) { hoverSnap.current = p; schedule(); }
       return;
     }
     if (draft.current?.kind === 'poly') { draft.current.hover = { x: mfx, y: mfy }; schedule(); return; }

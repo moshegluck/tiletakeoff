@@ -268,6 +268,10 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
           <button className={'chip toggle' + (s.showGrid ? ' on' : '')} onClick={s.toggleGrid}
             title="Show or hide the foot grid">▦ Grid</button>
         )}
+        {s.planImage && (
+          <button className={'chip toggle' + (s.snapOn ? ' on' : '')} onClick={s.toggleSnap}
+            title="Snap points to the plan's corners, line ends and edges (hold Alt to place freely)">⌖ Snap</button>
+        )}
         {totalSf > 0 && <span className="chip">{totalSf.toFixed(1)} sf total</span>}
         {pdfBusy && <span className="chip">rendering PDF…</span>}
       </div>

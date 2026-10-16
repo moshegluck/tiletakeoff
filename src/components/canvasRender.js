@@ -55,11 +55,22 @@ export function renderScene(ctx, W, H, rc) {
   if (rc.mkDraft) drawMkDraft(ctx, rc);
   if (rc.ruler) drawRuler(ctx, rc);
   if (rc.marquee) drawMarquee(ctx, rc.marquee);
-  if (rc.hoverSnap) {
-    const p = rc.toScreen(rc.ft2px(rc.hoverSnap.x), rc.ft2px(rc.hoverSnap.y));
-    ctx.save(); ctx.strokeStyle = '#1d7a4d'; ctx.lineWidth = 2;
-    ctx.strokeRect(p.x - 6, p.y - 6, 12, 12); ctx.restore();
-  }
+  if (rc.hoverSnap) drawSnapMarker(ctx, rc, rc.hoverSnap);
+}
+
+// Where a click lands: a square on a line end, an × on a corner where two
+// lines cross, a diamond on a line. Plan snaps are in underlay px, design
+// snaps in feet.
+function drawSnapMarker(ctx, rc, h) {
+  const p = h.px ? rc.toScreen(h.x, h.y) : rc.toScreen(rc.ft2px(h.x), rc.ft2px(h.y));
+  ctx.save();
+  ctx.strokeStyle = '#1d7a4d'; ctx.lineWidth = 2; ctx.fillStyle = 'rgba(29,122,77,.12)';
+  ctx.beginPath();
+  if (h.kind === 'edge') { ctx.moveTo(p.x, p.y - 7); ctx.lineTo(p.x + 7, p.y); ctx.lineTo(p.x, p.y + 7); ctx.lineTo(p.x - 7, p.y); ctx.closePath(); }
+  else ctx.rect(p.x - 6, p.y - 6, 12, 12);
+  ctx.fill(); ctx.stroke();
+  if (h.kind === 'corner') { ctx.beginPath(); ctx.moveTo(p.x - 4, p.y - 4); ctx.lineTo(p.x + 4, p.y + 4); ctx.moveTo(p.x + 4, p.y - 4); ctx.lineTo(p.x - 4, p.y + 4); ctx.stroke(); }
+  ctx.restore();
 }
 
 // Rubber-band selection rectangle (screen coords) for multi-select.
