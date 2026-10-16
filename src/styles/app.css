@@ -147,6 +147,9 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .est-row{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line-2);font-size:13px}
 .est-row:last-child{border:none}
 .est-row .val{font:600 13px var(--mono);color:var(--ink)}
+.est-block h4{display:flex;align-items:center;gap:8px}
+.est-block h4 .sw{width:12px;height:12px;border-radius:3px;flex:none}
+.est-block h4 .cost{margin-left:auto;font:600 14px var(--mono)}
 .est-sect{font:700 11px var(--sans);text-transform:uppercase;letter-spacing:.8px;color:var(--ink-2);margin:14px 0 4px;opacity:.6}
 
 /* ── TOAST ── */

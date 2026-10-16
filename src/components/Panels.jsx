@@ -696,6 +696,7 @@ function EstimatePanel() {
 
       <div className="row" style={{ display: 'flex', gap: 8 }}>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-marked'))}>Marked PDF</button>
+        <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-qty'))}>Qty List</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportCSV(s)}>CSV</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportXLSX(s)}>Excel</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportJSON(s)}>JSON</button>

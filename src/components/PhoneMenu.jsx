@@ -64,6 +64,7 @@ export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, on
         </div>
         <div className="pm-group">
           {item('down', 'Download marked-up plan (PDF)', () => window.dispatchEvent(new Event('tt:export-marked')))}
+          {item('down', 'Tile Quantity List (Excel)', () => window.dispatchEvent(new Event('tt:export-qty')))}
           {item('down', 'Export estimate (Excel)', () => exportXLSX(s))}
           {item('down', 'Export estimate (CSV)', () => exportCSV(s))}
           <label className="pm-item pm-select">
