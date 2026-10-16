@@ -199,3 +199,17 @@ describe('trace — the sheet checks the trace', () => {
     expect(res.survey.notes.join(' ')).toMatch(/Read as: every pen can draw a wall/);
   });
 });
+
+describe('trace — what is drawing', () => {
+  it('a white fill with no stroke (a wipeout behind text) is not drawing', async () => {
+    const { evidenceToFeet } = await import('../src/lib/planEvidence.js');
+    const rect = (x, y, w, h, extra) => [
+      { a: { x, y }, b: { x: x + w, y }, ...extra }, { a: { x: x + w, y }, b: { x: x + w, y: y + h }, ...extra },
+      { a: { x: x + w, y: y + h }, b: { x, y: y + h }, ...extra }, { a: { x, y: y + h }, b: { x, y }, ...extra },
+    ];
+    const ev = { lines: [...rect(0, 0, 100, 12, { w: 2, filled: true, col: '#ffffff' }), ...rect(0, 50, 100, 12, { w: 2, col: '#000000' })], curves: [], texts: [] };
+    const out = evidenceToFeet(ev, 1 / 36, null);
+    expect(out.lines.length).toBe(4);
+    expect(out.lines.every((l) => l.a.y >= 50 / 36 - 1e-9)).toBe(true);
+  });
+});

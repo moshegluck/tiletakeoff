@@ -89,7 +89,8 @@ export function evidenceToFeet(ev, scale, region = null) {
   const P = (p) => ({ x: p.x * k, y: p.y * k });
   const layered = hasWallLayers(ev.lines);
   // wl: drawn on a wall layer (a sheet that names them) — the architect's own walls
-  const lines = wallCandidates(ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region)))
+  // (a white fill's edge with no stroke is a wipeout / text mask, not drawing)
+  const lines = wallCandidates(ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region) && !(l.filled && l.col === '#ffffff')))
     .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall', ann: chromatic(l.col) }));
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
   const arcs = [];
