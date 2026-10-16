@@ -126,6 +126,8 @@ export default function Canvas2D() {
         // but we also call schedule() directly so RAF fires even if view didn't change
         schedule();
       };
+      // a plan restored on reload comes back where you left it
+      if (useStore.getState().keepView) { useStore.setState({ keepView: false }); schedule(); return; }
       fitToImage();
       setTimeout(fitToImage, 150);
       setTimeout(fitToImage, 500);

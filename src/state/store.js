@@ -41,6 +41,7 @@ function blankProject() {
     planDpi: 0,            // px per paper-inch of the plan (72 * pdf renderScale); 0 = unknown
     trace: null,           // reconstructed wall model: { result, settings, manual, removed, region, source, committedAt }
     cloudId: null,         // supabase project id when saved to cloud
+    planFile: null,        // the plan file kept in the cloud: { path, name, type, kind, page, size, at }
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -86,7 +87,7 @@ function localSnapshot(s) {
     layoutsV2: true,
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
-    createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
+    createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId, planFile: s.planFile || null,
   };
 }
 
@@ -153,6 +154,9 @@ export const useStore = create((set, get) => ({
   },
   setPdf: (doc, pages) => set({ pdfDoc: doc, pdfPages: pages, pdfPage: 1 }),
   setPdfPage: (n) => set({ pdfPage: n }),
+  // a restored plan keeps the saved view instead of fitting (Canvas2D)
+  keepView: false,
+  keepViewOnce: () => set({ keepView: true }),
   clearPdf: () => set({ pdfDoc: null, pdfPages: 0, pdfPage: 1 }),
   setTool: (tool) => set({ tool }),
   setTab: (tab) => set({ tab }),
@@ -189,12 +193,13 @@ export const useStore = create((set, get) => ({
   newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select' }); persist(get); },
   loadSnapshot: (snap) => { set({ ...fromSaved(snap), selZone: null }); persist(get); },
   setCloudId: (cloudId) => { set({ cloudId }); persist(get); },
+  setPlanFile: (planFile) => { set({ planFile }); persist(get); },
   // load a project row fetched from Supabase into the working store
   loadCloudDoc: (row) => {
     const doc = row.doc || {};
     set({
       ...blankProject(),
-      id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system,
+      id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system, planFile: doc.planFile || null,
       scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
       rooms: doc.layoutsV2 ? (doc.rooms || []) : migrateRoomLayouts(doc.rooms), layoutsV2: true,
       materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,

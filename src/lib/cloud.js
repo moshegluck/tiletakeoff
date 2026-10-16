@@ -104,7 +104,7 @@ function toDoc(state) {
   return {
     scale: state.scale, archScale: state.archScale,
     rooms: state.rooms, materials: state.materials, markups: state.markups,
-    trace: slimTrace(state.trace), layoutsV2: true,
+    trace: slimTrace(state.trace), layoutsV2: true, planFile: state.planFile || null,
     taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
     view: state.view, planImage: keepImage ? state.planImage : null,
   };
@@ -160,6 +160,36 @@ export async function deleteProject(id) {
   if (!cloudEnabled) return;
   const { error } = await supabase.from('projects').delete().eq('id', id);
   if (error) throw error;
+  // its plan file goes with it
+  const user = await getUser().catch(() => null);
+  if (user) await supabase.storage.from(PLAN_BUCKET).remove([`${user.id}/${id}`]).catch(() => {});
+}
+
+// ---- plan files: the PDF / image a project is drawn on, one per project,
+// in the private "plans" bucket under the user's own folder (RLS) ----
+const PLAN_BUCKET = 'plans';
+
+/**
+ * Upload a project's plan file (replacing any earlier one).
+ * @returns {Promise<{path:string,name:string,type:string,kind:string,page:number,size:number,at:number} | null>}
+ *   what the project records about it, or null when not signed in
+ */
+export async function uploadPlanFile(projectId, blob, meta) {
+  if (!cloudEnabled || !projectId || !blob) return null;
+  const user = await getUser();
+  if (!user) return null;
+  const path = `${user.id}/${projectId}`;
+  const type = meta.type || blob.type || (meta.kind === 'pdf' ? 'application/pdf' : 'image/png');
+  const { error } = await supabase.storage.from(PLAN_BUCKET).upload(path, blob, { upsert: true, contentType: type, cacheControl: '3600' });
+  if (error) throw error;
+  return { path, name: meta.name || 'plan', type, kind: meta.kind, page: meta.page || 1, size: blob.size, at: Date.now() };
+}
+
+/** @returns {Promise<Blob>} */
+export async function downloadPlanFile(path) {
+  const { data, error } = await supabase.storage.from(PLAN_BUCKET).download(path);
+  if (error) throw error;
+  return data;
 }
 
 // ---- tile library (shared across a user's projects; RLS-scoped per user) ----
