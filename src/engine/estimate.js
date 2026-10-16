@@ -9,10 +9,11 @@
 //               a small safety waste on top. More accurate, less padding.
 // ============================================================
 
-import { roomArea, roomWallLf } from './geometry.js';
+import { roomArea } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
 import { roomRegions } from './zones.js';
 import { roomPattern, wasteFor } from './patterns.js';
+import { floorTakeoff, wallTakeoff, wallTileHeight, roundUp } from './takeoffRules.js';
 
 /**
  * Net area a material covers across rooms. A floor material assigned to a
@@ -28,17 +29,12 @@ export function materialArea(material, rooms) {
   for (const r of rooms) {
     if (material.type === 'wall') {
       if (!r.assigned?.includes(material.id)) continue;
-      // wall coverage: wall LF (traced: net of openings, incl. returns) × wall height
-      const per = roomWallLf(r);
-      // tile height chosen in design (wainscot / shower) else full wall height
-      const th = r.finish?.wallTileHeight;
-      const h = th == null ? (r.wallHeight ?? 8) : th;
-      // traced wall LF is net of openings; tile that runs higher than the door
-      // head also covers the wall above each opening
-      const dh = r.doorHeight ?? 6 + 8 / 12;
-      const above = (r.openings || []).reduce((a, o) => a + (o.width || 0) * Math.max(0, h - dh), 0);
-      netSf += per * h + above;
-      usedRooms.push({ name: r.name, sf: per * h + above });
+      // perimeter × tiled height − 14 SF a door (8 at 4'), − 10 a tub, windows
+      // not deducted, rounded up (takeoffRules.js); the height is the design
+      // pick (wainscot / shower) else the full wall
+      const w = wallTakeoff(r, wallTileHeight(r));
+      netSf += w.sf;
+      usedRooms.push({ name: r.name, sf: w.sf, text: w.text });
       continue;
     }
     // floor: the room's field (outline minus holes, bands and inlays) and
@@ -48,18 +44,20 @@ export function materialArea(material, rooms) {
     if (!onField && !onZone) continue;
     const reg = roomRegions(r);
     if (onField) {
-      netSf += reg.fieldArea;
-      usedRooms.push({ name: r.name, sf: reg.fieldArea, pattern: roomPattern(r, material) });
+      // the field less shower footprints and 10 SF a tub, rounded up
+      const f = floorTakeoff(r, reg.fieldArea);
+      netSf += f.sf;
+      usedRooms.push({ name: r.name, sf: f.sf, pattern: roomPattern(r, material), text: f.text });
     }
     for (const b of reg.bands) {
       if (b.zone.materialId !== material.id) continue;
-      netSf += b.area;
-      usedRooms.push({ name: `${r.name} · ${b.zone.name}`, sf: b.area, lf: b.lf, pattern: 'border' });
+      netSf += roundUp(b.area);
+      usedRooms.push({ name: `${r.name} · ${b.zone.name}`, sf: roundUp(b.area), lf: b.lf, pattern: 'border' });
     }
     for (const z of reg.inlays) {
       if (z.zone.materialId !== material.id) continue;
-      netSf += z.area;
-      usedRooms.push({ name: `${r.name} · ${z.zone.name}`, sf: z.area, pattern: z.zone.layout?.pattern || material.pattern || 'grid' });
+      netSf += roundUp(z.area);
+      usedRooms.push({ name: `${r.name} · ${z.zone.name}`, sf: roundUp(z.area), pattern: z.zone.layout?.pattern || material.pattern || 'grid' });
     }
   }
   return { netSf, usedRooms };
