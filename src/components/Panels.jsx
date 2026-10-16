@@ -14,7 +14,7 @@ import PatternSwatch from './PatternSwatch.jsx';
 import { materialItem, saveMine } from '../lib/library.js';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
 import { roomRegions, zonesOf, isAxisRect } from '../engine/zones.js';
-import { roomFixtures, floorTakeoff, wallTakeoff, wallTileHeight, parseShowers, showersText } from '../engine/takeoffRules.js';
+import { roomFixtures, floorTakeoff, wallParts, wetRun, wallTileHeight, parseShowers, showersText, parseWindows, windowsText } from '../engine/takeoffRules.js';
 
 const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -194,14 +194,19 @@ function RoomTakeoff({ room: r }) {
   const [shText, setShText] = React.useState(showersText(fx.showers));
   React.useEffect(() => { setShText(showersText(roomFixtures(r).showers)); }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const setFx = (patch) => s.updateRoom(r.id, { fixtures: { ...(r.fixtures || {}), ...patch } });
-  const wallMat = s.materials.find((m) => m.type === 'wall' && r.assigned.includes(m.id));
+  const wallMats = r.assigned.map((id) => s.materials.find((m) => m.id === id)).filter((m) => m && m.type === 'wall');
+  const wallMat = wallMats[0];
+  const [winText, setWinText] = React.useState(windowsText(fx.windows));
+  React.useEffect(() => { setWinText(windowsText(roomFixtures(r).windows)); }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const th = r.finish?.wallTileHeight;
   const ceiling = r.wallHeight ?? 8;
   const mode = th == null || th >= ceiling ? 'full' : Math.abs(th - 4) < 1e-6 ? 'half' : 'custom';
   const traced = Number.isFinite(r.wallLf);
   if (!s.scale) return null;
   const floor = floorTakeoff(r);
-  const walls = wallMat ? wallTakeoff(r, wallTileHeight(r)) : null;
+  const parts = wallParts(r, wallMats.map((m) => m.id), wallTileHeight(r));
+  const wet = wetRun(r);
+  const matName = (id) => s.materials.find((m) => m.id === id)?.name || 'tile';
   return (
     <div className="field"><label>Takeoff</label>
       <div className="row" style={{ gap: 6 }}>
@@ -213,6 +218,25 @@ function RoomTakeoff({ room: r }) {
           title="Doors in this room's walls (traced rooms count their own)"
           onChange={(e) => setFx({ doors: Math.max(0, Math.floor(+e.target.value || 0)) })} /></label>}
       </div>
+      {wallMat && (
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <label className="mini" title="Niches (1 per tub and per shower unless set)">Niches<input className="inp mono" type="number" min="0" step="1"
+            value={fx.nichesSet ? fx.niches : ''} placeholder={String(fx.niches)}
+            onChange={(e) => setFx({ niches: e.target.value === '' ? null : Math.max(0, Math.floor(+e.target.value || 0)) })} /></label>
+          <label className="mini">Seats<input className="inp mono" type="number" min="0" step="1" value={fx.seats}
+            onChange={(e) => setFx({ seats: Math.max(0, Math.floor(+e.target.value || 0)) })} /></label>
+          <label className="mini" style={{ flex: 2 }} title="Windows in tiled walls, W x H — a cut charge each (never deducted); the size sets the miter">Windows (W x H)<input className="inp mono" placeholder="5.75x6.25" value={winText}
+            onChange={(e) => setWinText(e.target.value)} onBlur={() => { const w = parseWindows(winText); setFx({ windows: w }); setWinText(windowsText(w)); }} /></label>
+        </div>
+      )}
+      {wallMats.length === 2 && wet.lf > 0 && (
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <label className="mini" style={{ flex: 1 }} title="The shower / tub walls' tile covers the wet run (W + 2·D a shower, 10 LF a tub); the other tile the rest of the walls">{wet.shower ? 'Shower' : 'Tub'} walls in
+            <select className="inp" value={parts[0]?.materialId || ''} onChange={(e) => s.applyFinish(r.id, { wetWallMaterialId: e.target.value })}>
+              {wallMats.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select></label>
+        </div>
+      )}
       {wallMat && (
         <div className="row" style={{ gap: 6, marginTop: 6 }}>
           <select className="inp" value={mode} onChange={(e) => {
@@ -231,8 +255,9 @@ function RoomTakeoff({ room: r }) {
       <div className="takeoff-math">
         <div><b>Floor</b> {floor.text}</div>
         {floor.showers.map((x, i) => <div key={i}><b>Shower floor</b> {showersText([x])} = {x.sf} SF</div>)}
-        {walls && <div><b>Walls</b> {walls.text}</div>}
-        {!walls && <div className="dim">Assign a wall tile to take off its walls.</div>}
+        {parts.length === 1 && <div><b>Walls</b> {parts[0].text}</div>}
+        {parts.length > 1 && parts.map((w) => <div key={w.materialId}><b>{w.part === 'all' ? 'Walls' : w.label}</b> ({matName(w.materialId)}) {w.text}{w.overlap ? ' — each wall tile on the whole wall' : ''}</div>)}
+        {!parts.length && <div className="dim">Assign a wall tile to take off its walls.</div>}
       </div>
     </div>
   );
@@ -416,9 +441,9 @@ function MaterialCard({ m }) {
   const s = useProject();
   const open = s.selection.type === 'material' && s.selection.id === m.id;
   // every page's rooms use the material
-  const est = useMemo(() => estimateMaterial(m, allRooms(s)),
+  const est = useMemo(() => estimateMaterial(m, allRooms(s), s.materials),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [m, s.rooms, s.pageData]);
+    [m, s.rooms, s.pageData, s.materials]);
   return (
     <div className={'card' + (open ? ' sel' : '')}>
       <div className="card-head" onClick={() => { s.select('material', m.id); if (m.type === 'floor') s.setGridMaterial(m.id); }}>
@@ -706,6 +731,7 @@ function EstimatePanel() {
       <div className="row" style={{ display: 'flex', gap: 8 }}>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-marked'))}>Marked PDF</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-qty'))}>Qty List</button>
+        <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-proposal'))}>Proposal</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportCSV(s)}>CSV</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportXLSX(s)}>Excel</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportJSON(s)}>JSON</button>

@@ -21,21 +21,45 @@ export const STD_DOOR_LF = 2;     // a standard door comes off as 2 LF …
 export const DOOR_HEAD = 7;       // … × 7' (= 14 SF), or × the tile height below that
 export const WIDE_OPENING = 4;    // wider than this (or a double door): its own width
 export const TUB_SF = 10;
+export const TUB_RUN_LF = 10;     // a standard 5x2.5 tub's wall run: back + both ends
 
 /** Round up to whole SF (floating noise never adds a foot). */
 export const roundUp = (x) => Math.max(0, Math.ceil(x - 1e-6));
 const n1 = (x) => String(+x.toFixed(2));
 
+const count = (v) => Math.max(0, Math.floor(+v || 0));
+
 /**
- * A room's tubs, showers and (for rooms with no traced doors) door count.
+ * A room's fixtures: tubs, showers, (for rooms with no traced doors) door
+ * count, niches (1 per tub and per shower unless set), shower seats, and
+ * windows as W x H when given (the cut is priced with its size, and its
+ * perimeter is the window's miter).
  * @param {object} r room
- * @returns {{ tubs: number, showers: {w:number, d:number}[], doors: number }}
+ * @returns {{ tubs:number, showers:{w:number,d:number}[], doors:number, niches:number, nichesSet:boolean, seats:number, windows:{w:number,h:number}[] }}
  */
 export function roomFixtures(r) {
   const f = r.fixtures || {};
   const showers = (Array.isArray(f.showers) ? f.showers : [])
     .filter((s) => s && +s.w > 0 && +s.d > 0).map((s) => ({ w: +s.w, d: +s.d }));
-  return { tubs: Math.max(0, Math.floor(+f.tubs || 0)), showers, doors: Math.max(0, Math.floor(+f.doors || 0)) };
+  const windows = (Array.isArray(f.windows) ? f.windows : [])
+    .filter((s) => s && +s.w > 0 && +s.h > 0).map((s) => ({ w: +s.w, h: +s.h }));
+  const tubs = count(f.tubs);
+  const nichesSet = f.niches != null && f.niches !== '';
+  return {
+    tubs, showers, doors: count(f.doors), windows, seats: count(f.seats),
+    niches: nichesSet ? count(f.niches) : tubs + showers.length, nichesSet,
+  };
+}
+
+/**
+ * The windows in a room's walls: the sizes given on the room (W x H), else
+ * the windows the trace found (width only).
+ * @returns {{ w:number, h:number|null }[]}
+ */
+export function roomWindows(r) {
+  const fx = roomFixtures(r);
+  if (fx.windows.length) return fx.windows;
+  return (r.openings || []).filter((o) => o.type === 'window').map((o) => ({ w: o.width || 0, h: null }));
 }
 
 /**
@@ -59,6 +83,10 @@ export function parseShowers(text) {
 
 /** "5x2.75, 4x3" — the notation back. */
 export const showersText = (showers) => showers.map((s) => `${n1(s.w)}x${n1(s.d)}`).join(', ');
+
+/** Windows as Moshe notes them, W x H: "5.75x6.25, 6x7.25". */
+export const parseWindows = (text) => parseShowers(text).map((s) => ({ w: s.w, h: s.d }));
+export const windowsText = (wins) => wins.map((s) => `${n1(s.w)}x${s.h ? n1(s.h) : '?'}`).join(', ');
 
 /**
  * Floor takeoff of a room (or its field, when design zones take part of it).
@@ -90,7 +118,7 @@ export function wallTakeoff(r, height) {
   const fx = roomFixtures(r);
   const traced = Number.isFinite(r.wallLf);
   const ways = traced ? (r.openings || []).filter((o) => o.type !== 'window') : [];
-  const windows = traced ? (r.openings || []).filter((o) => o.type === 'window') : [];
+  const windows = roomWindows(r);
   // the whole perimeter: a traced room's wall LF has its doorways taken out — put them back
   const lf = roomWallLf(r) + ways.reduce((a, o) => a + (o.width || 0), 0);
   const h = Math.max(0, height);
@@ -122,3 +150,59 @@ export function wallTileHeight(r) {
   const th = r.finish?.wallTileHeight;
   return th == null ? (r.wallHeight ?? 8) : th;
 }
+
+/**
+ * The wall run a room's showers and tubs take (the "wet walls"): a shower's
+ * back wall and both depths (W + 2·D — the entry side is glass), 10 LF a tub.
+ */
+export function wetRun(r) {
+  const fx = roomFixtures(r);
+  const lf = fx.showers.reduce((a, s) => a + s.w + 2 * s.d, 0) + fx.tubs * TUB_RUN_LF;
+  const parts = [...fx.showers.map((s) => `${n1(s.w)} + 2×${n1(s.d)}`), ...(fx.tubs ? [`${fx.tubs * TUB_RUN_LF} (tub${fx.tubs > 1 ? ` ×${fx.tubs}` : ''})`] : [])];
+  return { lf, text: parts.join(' + '), shower: fx.showers.length > 0, tub: fx.tubs > 0 };
+}
+
+/**
+ * The wall tile lines of a room (Willow Tree #41765). One wall tile covers
+ * the whole wall. A second wall tile in a room with a shower or tub is the
+ * shower / tub walls' tile (`finish.wetWallMaterialId`, else the second one
+ * picked): it covers the wet run × the tiled height; the rest of the walls
+ * carry the doors and the 10 SF tub deduction. Each line carries its
+ * arithmetic. More wall tiles than that each list the whole wall, marked
+ * `overlap` — nothing says how they share it.
+ * @param {object} r room
+ * @param {string[]} wallIds the room's wall tile materials, in the order picked
+ * @param {number} [height] tiled height
+ * @returns {{ materialId:string, part:'all'|'wet'|'rest', label:string, sf:number, text:string, overlap?:boolean }[]}
+ */
+export function wallParts(r, wallIds, height = wallTileHeight(r)) {
+  const ids = [...new Set((wallIds || []).filter(Boolean))];
+  if (!ids.length) return [];
+  const whole = wallTakeoff(r, height);
+  const wet = wetRun(r);
+  if (ids.length !== 2 || !(wet.lf > 0)) {
+    return ids.map((id) => ({ materialId: id, part: 'all', label: 'Walls', sf: whole.sf, text: whole.text, overlap: ids.length > 1 }));
+  }
+  const wetId = ids.includes(r.finish?.wetWallMaterialId) ? r.finish.wetWallMaterialId : ids[1];
+  const restId = ids.find((id) => id !== wetId);
+  const h = whole.height;
+  const wetLf = Math.min(wet.lf, whole.lf);
+  const wetGross = wetLf * h;
+  const restLf = whole.lf - wetLf;
+  const restGross = restLf * h;
+  const ded = whole.doors.reduce((a, d) => a + d.sf, 0) + whole.tub;
+  const restNet = Math.max(0, restGross - ded);
+  const dedText = [
+    ...whole.doors.map((d) => `− ${n1(d.sf)} (${d.wide ? `${n1(d.width)}' opening` : 'door'})`),
+    ...(whole.tub ? [`− ${whole.tub} (tub)`] : []),
+  ];
+  const label = wet.shower && wet.tub ? 'Shower & tub walls' : wet.shower ? 'Shower walls' : 'Tub walls';
+  return [
+    { materialId: wetId, part: 'wet', label, sf: roundUp(wetGross), text: `${wet.text} = ${n1(wetLf)} LF × ${n1(h)}' = ${n1(wetGross)} → ${roundUp(wetGross)} SF` },
+    {
+      materialId: restId, part: 'rest', label: 'Rest of walls', sf: roundUp(restNet),
+      text: `(${n1(whole.lf)} − ${n1(wetLf)}) LF × ${n1(h)}' = ${n1(restGross)}${dedText.length ? ' ' + dedText.join(' ') : ''} = ${n1(restNet)} → ${roundUp(restNet)} SF`,
+    },
+  ];
+}
+

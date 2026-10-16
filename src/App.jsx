@@ -166,6 +166,24 @@ export default function App() {
     return () => window.removeEventListener('tt:export-qty', run);
   }, []);
 
+  // Artistic's priced proposal (QuickBooks-style lines at the rate card)
+  useEffect(() => {
+    const run = async () => {
+      const toast = (msg, ok) => window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg, ok } }));
+      try {
+        const { downloadProposal } = await import('./lib/proposal.js');
+        const q = await downloadProposal(useStore.getState());
+        const money = `$${q.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const open = q.flags.length ? ` · ${q.flags.length} line${q.flags.length > 1 ? 's' : ''} need a look (no rate / size): ${q.flags.slice(0, 3).join('; ')}${q.flags.length > 3 ? '…' : ''}` : '';
+        toast(`Proposal ready · ${money} · floor ${q.floorSf} SF · walls ${q.wallSf} SF${open}`, true);
+      } catch (e) {
+        toast('Could not build the proposal: ' + (e?.message || e));
+      }
+    };
+    window.addEventListener('tt:export-proposal', run);
+    return () => window.removeEventListener('tt:export-proposal', run);
+  }, []);
+
   // a list's "also on pg N" button
   useEffect(() => {
     const go = (e) => { const n = +e.detail; if (n >= 1 && n <= (useStore.getState().pdfPages || 1)) loadPdfPage(n); };
@@ -375,6 +393,9 @@ function ExportMenu() {
           </button>
           <button role="menuitem" onClick={go(() => window.dispatchEvent(new Event('tt:export-qty')))}>
             <b>Tile Quantity List (Excel)</b><span>The ordering sheet: each tiled surface, waste, totals</span>
+          </button>
+          <button role="menuitem" onClick={go(() => window.dispatchEvent(new Event('tt:export-proposal')))}>
+            <b>Proposal (Excel)</b><span>Priced lines at the Artistic rate card, ready for QuickBooks</span>
           </button>
           <button role="menuitem" onClick={go(() => import('./lib/export.js').then((m) => m.exportXLSX(useStore.getState())))}>
             <b>Estimate (Excel)</b><span>Estimate, rooms by page, markups, materials</span>

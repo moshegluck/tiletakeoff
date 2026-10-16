@@ -13,7 +13,7 @@ import { roomArea } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
 import { roomRegions } from './zones.js';
 import { roomPattern, wasteFor } from './patterns.js';
-import { floorTakeoff, wallTakeoff, wallTileHeight, roundUp } from './takeoffRules.js';
+import { floorTakeoff, wallParts, wallTileHeight, roundUp } from './takeoffRules.js';
 
 /**
  * Net area a material covers across rooms. A floor material assigned to a
@@ -23,18 +23,21 @@ import { floorTakeoff, wallTakeoff, wallTileHeight, roundUp } from './takeoffRul
  * @param {import('./types.js').Room[]} rooms
  * @returns {{ netSf: number, usedRooms: {name:string,sf:number,lf?:number,pattern?:string}[] }}
  */
-export function materialArea(material, rooms) {
+export function materialArea(material, rooms, materials = null) {
   let netSf = 0;
   const usedRooms = [];
+  const isWall = (id) => (materials ? materials.find((m) => m.id === id)?.type === 'wall' : id === material.id);
   for (const r of rooms) {
     if (material.type === 'wall') {
       if (!r.assigned?.includes(material.id)) continue;
       // perimeter × tiled height − 14 SF a door (8 at 4'), − 10 a tub, windows
       // not deducted, rounded up (takeoffRules.js); the height is the design
-      // pick (wainscot / shower) else the full wall
-      const w = wallTakeoff(r, wallTileHeight(r));
+      // pick (wainscot / shower) else the full wall. A second wall tile in a
+      // bath is the shower / tub walls' — each covers its own part
+      const w = wallParts(r, r.assigned.filter(isWall), wallTileHeight(r)).find((x) => x.materialId === material.id);
+      if (!w) continue;
       netSf += w.sf;
-      usedRooms.push({ name: r.name, sf: w.sf, text: w.text });
+      usedRooms.push({ name: w.part === 'all' ? r.name : `${r.name} · ${w.label.toLowerCase()}`, sf: w.sf, text: w.text });
       continue;
     }
     // floor: the room's field (outline minus holes, bands and inlays) and
@@ -69,8 +72,8 @@ export function materialArea(material, rooms) {
  * @param {import('./types.js').Room[]} rooms
  * @returns {import('./types.js').EstimateLine}
  */
-export function estimateMaterial(material, rooms) {
-  const { netSf, usedRooms } = materialArea(material, rooms);
+export function estimateMaterial(material, rooms, materials = null) {
+  const { netSf, usedRooms } = materialArea(material, rooms, materials);
   const tileSf = (material.tw / 12) * (material.th / 12) * (material.faceCoverage ?? 1);
   // waste follows the pattern each room lays this tile in
   const grossSf = usedRooms.reduce((a, u) => a + u.sf * (1 + wasteFor(material, u.pattern) / 100), 0);
@@ -122,7 +125,7 @@ export function estimateMaterial(material, rooms) {
  * @returns {import('./types.js').ProjectEstimate}
  */
 export function estimateProject(state) {
-  const lines = state.materials.map((m) => estimateMaterial(m, state.rooms));
+  const lines = state.materials.map((m) => estimateMaterial(m, state.rooms, state.materials));
   const materialSubtotal = lines.reduce((s, l) => s + l.cost, 0);
 
   // labor: optional per-sf rate over total floor area

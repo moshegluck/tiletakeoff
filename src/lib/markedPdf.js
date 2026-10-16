@@ -14,7 +14,7 @@
 // ============================================================
 
 import { centroid, roomArea, polygonArea } from '../engine/geometry.js';
-import { floorTakeoff, wallTakeoff, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
+import { floorTakeoff, wallTakeoff, wallParts, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
 import { roomTypeOf } from '../engine/trace/analyze.js';
 import { formatLength, formatArea, ARCH_SCALES } from '../engine/units.js';
 import { markupValue, markupUnit, markupCost, isMeasured, MARKUP_TYPES } from '../engine/markups.js';
@@ -65,6 +65,10 @@ export function roomMarks(r, ctx) {
   const floor = floorTiled ? floorTakeoff(r) : null;
   const h = wallTiled ? wallTileHeight(r) : 0;
   const walls = wallTiled ? wallTakeoff(r, h) : null;
+  // a bath's second wall tile covers the shower / tub walls, the first the rest
+  const parts = wallTiled ? wallParts(r, (r.assigned || []).filter((id) => ctx.wallIds.has(id)), h) : [];
+  const split = parts.length === 2 && parts[0].part === 'wet';
+  const wallSf = !walls ? 0 : split ? parts[0].sf + parts[1].sf : walls.sf;
   const ceiling = r.wallHeight ?? 8;
   const full = wallTiled && h >= ceiling - 1e-6;
   // room dims as Moshe writes them (9.25x5) when the room is a rectangle
@@ -76,7 +80,7 @@ export function roomMarks(r, ctx) {
   const paren = [dims, ...fx.showers.map((x) => `sf${n2(x.w)}x${n2(x.d)}`), fx.tubs ? (fx.tubs > 1 ? `${fx.tubs} tubs` : 'tub') : ''].filter(Boolean).join(' ');
   const header = `${r.name}${(type === 'bath' || fx.showers.length || fx.tubs) && paren ? ` (${paren})` : ''}${scope ? ` ${scope}` : ''}`;
   return {
-    type, color: HIGHLIGHT[type] || HIGHLIGHT.room, floor, walls, wallTiled, full, height: h, fx, dims, header,
+    type, color: HIGHLIGHT[type] || HIGHLIGHT.room, floor, walls, wallSf, wallParts: split ? parts : null, wallTiled, full, height: h, fx, dims, header,
     windows: walls ? walls.windows : 0, tiled: floorTiled || wallTiled,
   };
 }
@@ -107,9 +111,11 @@ export function summarize(st) {
       for (const x of mk.floor ? mk.floor.showers : mk.fx.showers.map((s) => ({ ...s, sf: roundUp(s.w * s.d) }))) {
         lines.push({ label: `Shower floor ${n2(x.w)}x${n2(x.d)}`, qty: x.sf, unit: 'SF', math: '1 EA' });
       }
-      if (mk.walls) lines.push({ label: mk.full ? 'Walls - fully tiled' : `Walls - ${ft(mk.height)} tile`, qty: mk.walls.sf, unit: 'SF', math: mk.walls.text.replace(/ · .*$/, '') });
+      const scope = mk.full ? 'fully tiled' : `${ft(mk.height)} tile`;
+      if (mk.wallParts) for (const w of mk.wallParts) lines.push({ label: `${w.label} - ${scope}`, qty: w.sf, unit: 'SF', math: w.text });
+      else if (mk.walls) lines.push({ label: `Walls - ${scope}`, qty: mk.walls.sf, unit: 'SF', math: mk.walls.text.replace(/ · .*$/, '') });
       if (mk.windows) lines.push({ label: 'Window cut', qty: mk.windows, unit: 'EA', math: 'never deducted' });
-      rooms.push({ name: r.name, header: mk.header, type: mk.type, lines, floorSf: mk.floor?.sf || 0, wallSf: mk.walls?.sf || 0 });
+      rooms.push({ name: r.name, header: mk.header, type: mk.type, lines, floorSf: mk.floor?.sf || 0, wallSf: mk.wallSf });
     }
     const markups = p.markups.filter((m) => isMeasured(m.type)).map((m) => ({
       name: m.name || MARKUP_TYPES[m.type]?.label || m.type, type: m.type,
@@ -196,7 +202,7 @@ function drawOverlay(ctx, p, f2c, pt, unit, mctx) {
     for (const x of mk.fx.showers) lines.push({ text: `SH ${n2(x.w)}x${n2(x.d)}`, size: 6.5 * pt, min: 4.5 * pt, font: F(700), color: RED });
     if (mk.fx.tubs) lines.push({ text: mk.fx.tubs > 1 ? `${mk.fx.tubs} TUBS` : 'TUB', size: 6.5 * pt, min: 4.5 * pt, font: F(700), color: RED });
     if (mk.wallTiled) lines.push({ text: mk.full ? `${ft(r.wallHeight ?? 8)} CEILING FULLY TILED` : `${ft(mk.height)} TILE`, size: 5.5 * pt, min: 4 * pt, wrap: true, font: F(700), color: mk.full ? BLUE : MAGENTA });
-    if (mk.walls) lines.push({ text: `WALLS ${mk.walls.sf} SF`, size: 6 * pt, min: 4 * pt, font: F(700), color: mk.full ? BLUE : MAGENTA });
+    if (mk.walls) lines.push({ text: `WALLS ${mk.wallSf} SF`, size: 6 * pt, min: 4 * pt, font: F(700), color: mk.full ? BLUE : MAGENTA });
     const measure = (text, size, i) => { ctx.font = lines[i].font.replace('{}', String(size)); return ctx.measureText(text).width; };
     const fit = fitLabelLines(lines, x1 - x0, y1 - y0, measure);
     const c = P(r.labelAt || centroid(r.points));

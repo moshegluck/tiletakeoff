@@ -474,6 +474,8 @@ export const useStore = create((rawSet, get) => {
         if (fin.wallTileHeight === undefined || fin.wallTileHeight === 0) fin.wallTileHeight = 4;
       }
       if (patch.wallMaterialId) { setOnly('wall', patch.wallMaterialId); if (!fin.wallTileHeight) fin.wallTileHeight = 4; }
+      // which wall tile covers a bath's shower / tub walls (the other: the rest)
+      if ('wetWallMaterialId' in patch) fin.wetWallMaterialId = patch.wetWallMaterialId;
       if ('wallTileHeight' in patch) {
         fin.wallTileHeight = patch.wallTileHeight;
         if (patch.wallTileHeight === 0) { setOnly('wall', null); fin.wallTile = null; }

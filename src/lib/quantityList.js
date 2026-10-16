@@ -17,7 +17,7 @@
 // no tile picked → NA. Labor (niches, window cuts…) is not in it.
 // ============================================================
 
-import { floorTakeoff, wallTakeoff, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
+import { floorTakeoff, wallParts, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
 import { roomRegions } from '../engine/zones.js';
 import { roomPattern } from '../engine/patterns.js';
 import { roomTypeOf } from '../engine/trace/analyze.js';
@@ -120,11 +120,15 @@ export function quantityList(st) {
       for (const s of fx.showers) {
         lines.push({ loc: `Shower Floor (${n2(s.w)}x${n2(s.d)})`, item: 'NA', unit: 'SF', count: roundUp(s.w * s.d), waste: artisticWaste('shower', null, type), math: `${n2(s.w)} × ${n2(s.d)} = ${n2(s.w * s.d)}`, kind: 'shower' });
       }
-      for (const m of (r.assigned || []).map(mat).filter((x) => x && x.type === 'wall')) {
+      const wallMats = (r.assigned || []).map(mat).filter((x) => x && x.type === 'wall');
+      if (wallMats.length) {
         const h = wallTileHeight(r);
-        const w = wallTakeoff(r, h);
         const full = h >= (r.wallHeight ?? 8) - 1e-6;
-        lines.push({ loc: full ? 'Wall' : `Wall — ${ftTxt(h)} high`, item: itemText(m), unit: 'SF', count: w.sf, waste: artisticWaste('wall', m, type, roomPattern(r, m)), math: w.text.replace(/ · .*$/, ''), kind: 'wall' });
+        for (const w of wallParts(r, wallMats.map((m) => m.id), h)) {
+          const m = mat(w.materialId);
+          const what = w.part === 'all' ? 'Wall' : w.part === 'wet' ? w.label : 'Rest of Walls';
+          lines.push({ loc: full ? what : `${what} — ${ftTxt(h)} high`, item: itemText(m), unit: 'SF', count: w.sf, waste: artisticWaste('wall', m, type, roomPattern(r, m)), math: w.text.replace(/ · .*$/, ''), kind: 'wall' });
+        }
       }
       if (!lines.length) continue;
       // the room header as the proposal writes it: dims, shower, ceiling, scope
