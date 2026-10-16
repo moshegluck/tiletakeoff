@@ -104,7 +104,10 @@ export function offsetLoop(loop, nodes, distOf) {
  * @param {object} ctx { texts, arcs, schedule, options }
  */
 export function analyzeGraph(g, ctx = {}) {
-  const { texts = [], arcs = [], schedule = null } = ctx;
+  const { arcs = [], schedule = null } = ctx;
+  // a sheet can carry the same word twice (the PDF's text layer and its
+  // drawing operators): one label at one spot
+  const texts = (ctx.texts || []).filter((t, i, all) => !all.slice(0, i).some((u) => u.str === t.str && Math.abs(u.x - t.x) < 0.3 && Math.abs(u.y - t.y) < 0.3));
   const opt = { floorAtDoor: 'center', ...ctx.options };
   const flags = [];
   let fid = 0;
