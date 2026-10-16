@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useStore, useProject, setCloudSaver } from '../state/store.js';
 import { cloudEnabled } from '../lib/supabase.js';
+import { movePlan } from '../lib/planStore.js';
+import { uploadKeptPlan } from '../lib/planLoad.js';
 import {
   getUser, onAuthChange, signInWithPassword, signUp, signOut,
   resetPasswordForEmail, updatePassword, resendConfirmation, authErrorMessage,
@@ -39,7 +41,10 @@ export default function AccountBar() {
         if (state.cloudId) await saveProject(state.cloudId, state);
         else {
           const id = await createProject(state);
+          // the plan file follows the project to its cloud id, and up to the cloud
+          await movePlan(state.cloudId || state.id, id).catch(() => {});
           useStore.getState().setCloudId(id);
+          uploadKeptPlan(id).catch(() => {});
         }
       } catch (e) { console.warn('cloud save failed', e.message); }
     });

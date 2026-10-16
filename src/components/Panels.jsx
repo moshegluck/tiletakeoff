@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, lazy, Suspense } from 'react';
 import { useStore, useProject, ROOM_COLORS, ZONE_COLORS } from '../state/store.js';
 import { rectPoly, roomArea, roomWallLf } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
@@ -9,7 +9,7 @@ import { TILE_CATALOG, GROUT_JOINTS } from '../data/tileCatalog.js';
 import { exportCSV, exportXLSX, exportJSON } from '../lib/export.js';
 import { buildProjectCutSheets, openCutSheet } from '../engine/cutSheet.js';
 import { formatLength as fmtLen } from '../engine/units.js';
-import TracePanel from './TracePanel.jsx';
+const TracePanel = lazy(() => import('./TracePanel.jsx'));
 import PatternSwatch from './PatternSwatch.jsx';
 import { materialItem, saveMine } from '../lib/library.js';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
@@ -19,7 +19,7 @@ const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFraction
 
 export function Panels() {
   const tab = useStore((s) => s.tab);
-  if (tab === 'trace') return <TracePanel />;
+  if (tab === 'trace') return <Suspense fallback={<div className="panel"><div className="note">Loading…</div></div>}><TracePanel /></Suspense>;
   if (tab === 'rooms') return <RoomsPanel />;
   if (tab === 'materials') return <MaterialsPanel />;
   if (tab === 'markups') return <MarkupsPanel />;

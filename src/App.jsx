@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useStore, useProject } from './state/store.js';
 import Canvas2D from './components/Canvas2D.jsx';
 import { Panels } from './components/Panels.jsx';
-import DetectModal from './components/DetectModal.jsx';
 import AccountBar from './components/AccountBar.jsx';
 import { UNIT_SYSTEMS } from './engine/units.js';
 import { exportCSV } from './lib/export.js';
@@ -10,10 +9,12 @@ import { onAuthEvent } from './lib/cloud.js';
 import { roomArea } from './engine/geometry.js';
 import Landing from './components/Landing.jsx';
 import ScaleControl from './components/ScaleControl.jsx';
-import { openPlanFile } from './lib/planLoad.js';
+import { openPlanFile, restorePlan, planKey } from './lib/planLoad.js';
+import { setPlanPage } from './lib/planStore.js';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
 const Library = lazy(() => import('./components/Library.jsx'));
+const DetectModal = lazy(() => import('./components/DetectModal.jsx'));
 
 const TOOLS = [
   { id: 'select', key: 'V', label: 'Select / Move', icon: 'M3 3l7.5 18 2.5-7.5L20.5 11z' },
@@ -62,6 +63,16 @@ export default function App() {
     setSheet(true);
   }, [s.tab]);
   const [pdfBusy, setPdfBusy] = useState(false);
+  // the plan file is kept per project (lib/planStore.js): bring it back on
+  // reload and whenever another project is opened
+  const projectKey = planKey(s);
+  useEffect(() => {
+    let live = true;
+    restorePlan()
+      .then((ok) => { if (ok && live) window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Plan restored', ok: true } })); })
+      .catch((e) => console.warn('plan restore failed:', e?.message));
+    return () => { live = false; };
+  }, [projectKey]);
   const [landing, setLanding] = useState(() => {
     try { return localStorage.getItem('tt.entered') !== '1'; } catch (_) { return true; }
   });
@@ -76,6 +87,9 @@ export default function App() {
       s.setPlanImage(out.dataUrl, out.width, out.height);
       s.setPlanDpi(72 * out.renderScale);
       s.setPdfPage(page);
+      setPlanPage(planKey(useStore.getState()), page).catch(() => {});
+      const pf = useStore.getState().planFile;
+      if (pf && pf.page !== page) useStore.getState().setPlanFile({ ...pf, page });
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (e) {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'PDF render failed: ' + e.message } }));
@@ -217,7 +231,7 @@ export default function App() {
         </aside>
       </main>
 
-      {detect && <DetectModal onClose={() => setDetect(false)} />}
+      {detect && <Suspense fallback={null}><DetectModal onClose={() => setDetect(false)} /></Suspense>}
       {lib && <Suspense fallback={null}><Library target={lib} onClose={() => setLib(null)} /></Suspense>}
       {toast && <div className={'toast show' + (toast.ok ? ' ok' : '')}>{toast.ok && <b>✓</b>} {toast.msg}</div>}
     </div>
