@@ -11,6 +11,7 @@ import { WASTE_BY_PATTERN } from '../data/tileCatalog.js';
 import { migrateRoomLayouts } from '../engine/patterns.js';
 import { slimTrace } from './slimTrace.js';
 import { materialFields } from '../lib/library.js';
+import { createHistory } from './history.js';
 
 const KEY = 'tiletakeoff.project.v1';
 
@@ -112,8 +113,46 @@ function persist(get) {
   }
 }
 
-export const useStore = create((set, get) => ({
+const history = createHistory();
+
+export const useStore = create((rawSet, get) => {
+  // every change goes through here so undo / redo can record it
+  const set = (partial, replace) => {
+    const before = get();
+    rawSet(partial, replace);
+    if (history.note(before, get())) rawSet(history.counts());
+  };
+  // after undo / redo, drop selections of things that no longer exist
+  const tidySelection = (st) => {
+    const rooms = new Set(st.rooms.map((r) => r.id));
+    const ok = (sel) => !sel.type || (sel.type === 'room' ? rooms.has(sel.id)
+      : sel.type === 'material' ? st.materials.some((m) => m.id === sel.id)
+        : sel.type === 'markup' ? st.markups.some((m) => m.id === sel.id) : true);
+    return {
+      selection: ok(st.selection) ? st.selection : { type: null, id: null },
+      selRooms: st.selRooms.filter((id) => rooms.has(id)),
+      selZone: st.selZone && st.rooms.some((r) => (r.zones || []).some((z) => z.id === st.selZone)) ? st.selZone : null,
+    };
+  };
+  const travel = (step) => {
+    const to = step(get());
+    if (!to) return false;
+    rawSet({ ...to, ...history.counts() });
+    rawSet(tidySelection(get()));
+    persist(get);
+    return true;
+  };
+  return {
   ...loadProject(),
+
+  // ---- undo / redo (state/history.js) ----
+  undoCount: 0,
+  redoCount: 0,
+  undo: () => travel((cur) => history.undo(cur)),
+  redo: () => travel((cur) => history.redo(cur)),
+  // a gesture on the plan (a drag) is one step
+  historyBegin: () => history.begin(),
+  historyEnd: () => history.end(),
 
   // runtime-only UI state (not persisted)
   tool: 'select',
@@ -555,7 +594,8 @@ export const useStore = create((set, get) => ({
     set({ markups: get().markups.filter((m) => m.id !== id), selection: sel.id === id ? { type: null, id: null } : sel });
     persist(get);
   },
-}));
+};
+});
 
 export { ROOM_COLORS, ZONE_COLORS, MAT_FLOOR, MAT_WALL };
 
