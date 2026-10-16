@@ -325,6 +325,33 @@ describe('trace — bathrooms and closets of the mill units', () => {
     expect(errors(res)).toEqual([]);
   });
 
+  it("a 28\" brick wall runs through where walls meet it from each side 1'-6\" apart; a doorway's jambs don't close", () => {
+    const T = 28 * IN, t = 4 * IN;
+    const base = [
+      ...box(30, 20, 6 * IN).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 0, y: 10 }, b: { x: 10.5, y: 10 }, t: T },
+      { a: { x: 12, y: 10 }, b: { x: 30, y: 10 }, t: T },
+    ];
+    // a storage room's wall comes down onto the brick at x 12, a stair hall's up at x 10.5
+    const crossing = runTrace({ bodies: [...base, { a: { x: 12, y: 0 }, b: { x: 12, y: 10 - T / 2 }, t }, { a: { x: 10.5, y: 10 + T / 2 }, b: { x: 10.5, y: 20 }, t: 12 * IN }] });
+    expect(crossing.rooms.length).toBe(4);
+    // both walls from the same side: the gap between them stays open to bridge
+    const doorway = runTrace({ bodies: [...base, { a: { x: 12, y: 0 }, b: { x: 12, y: 10 - T / 2 }, t }, { a: { x: 10.5, y: 0 }, b: { x: 10.5, y: 10 - T / 2 }, t }] });
+    expect(doorway.walls.some((w) => w.a.y === w.b.y && Math.abs(w.a.y - 10) < 0.01 && Math.min(w.a.x, w.b.x) >= 10.4 && Math.max(w.a.x, w.b.x) <= 12.1 && Math.abs(w.a.x - w.b.x) > 1)).toBe(false);
+  });
+
+  it('a room behind a narrow unmarked gap is a room, not an alcove of the room it opens into', () => {
+    // a 15x10 stair hall reached from the storage room through a 2' slot
+    const t = 6 * IN;
+    const bodies = [
+      ...box(30, 10, t).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 15, y: 0 }, b: { x: 15, y: 4 }, t },
+      { a: { x: 15, y: 6 }, b: { x: 15, y: 10 }, t },
+    ];
+    const res = runTrace({ bodies, texts: [{ str: 'STORAGE', x: 7, y: 5 }] });
+    expect(res.rooms.length).toBe(2);
+  });
+
   it('a closet door drawn part open, between jamb returns too short to read as walls, closes the closet', () => {
     // a 5x3 closet off a 12' room: its front wall stops 2'-7" short of the
     // north wall's face (the 4" jamb returns are too short to pair); a 1'-8"

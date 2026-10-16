@@ -66,7 +66,7 @@ export function joinWalls(inSegs, options = {}, log = []) {
   for (const e of ends) {
     for (const j of near(e.p, opt.snapTol)) {
       if (j === e.bi || dist(segs[j].a, segs[j].b) < e.t / 2) continue;
-      if (touches(e.p, segs[j], opt.snapTol)) { e.joined = true; break; }
+      if (touches(e.p, segs[j], opt.snapTol)) { e.joined = true; e.with = j; break; }
     }
   }
 
@@ -99,6 +99,7 @@ export function joinWalls(inSegs, options = {}, log = []) {
     const moved = dist(c.e1.p, c.X) + dist(c.e2.p, c.X);
     c.e1.p = { ...c.X }; c.e2.p = { ...c.X };
     c.e1.joined = c.e2.joined = true;
+    c.e1.with = c.e2.bi; c.e2.with = c.e1.bi;
     if (moved > opt.snapTol) log.push({ kind: 'corner', at: { ...c.X }, note: `Corner closed (${(moved * 12).toFixed(1)}" extended)` });
   }
 
@@ -126,7 +127,7 @@ export function joinWalls(inSegs, options = {}, log = []) {
     }
     if (best) {
       const moved = Math.abs(best.s);
-      e.p = { ...best.pt }; e.joined = true;
+      e.p = { ...best.pt }; e.joined = true; e.with = best.j;
       // met just past the other wall's end (its corner fills out beyond its
       // centreline end): that wall runs on to the meeting point
       const o = segs[best.j];
@@ -136,6 +137,11 @@ export function joinWalls(inSegs, options = {}, log = []) {
     }
   }
 
+  // which side of e's wall line the wall w runs off to (its far end)
+  const side = (e, w) => {
+    const far = dist(w.a, e.p) > dist(w.b, e.p) ? w.a : w.b;
+    return Math.sign(cross(e.dir, sub(far, e.p)));
+  };
   // ---- an offset crossing: walls meet a wall from each side a few inches
   // apart, so its pieces each turn a corner or tee into a different one —
   // it still runs straight through between them ----
@@ -147,7 +153,10 @@ export function joinWalls(inSegs, options = {}, log = []) {
       for (const e2 of endByBody(bj)) {
         if (!e2.joined || e2.through || e1.through) continue;
         const g = collinearGap(e1, e2);
-        if (!g || g.gap <= opt.snapTol || g.gap > Math.min(opt.draftGap, Math.max(e1.t, e2.t) + opt.snapTol)) continue;
+        if (!g || g.gap <= opt.snapTol || g.gap > Math.max(e1.t, e2.t) + opt.snapTol) continue;
+        // past a drafting gap (a thick brick wall's), only between walls that
+        // come in from opposite sides — a doorway's jambs don't
+        if (g.gap > opt.draftGap && !(e1.with != null && e2.with != null && side(e1, segs[e1.with]) * side(e1, segs[e2.with]) < 0)) continue;
         extra.push({ a: { ...e1.p }, b: { ...e2.p }, t: Math.min(e1.t, e2.t), conf: 0.6, kind: 'wall', src: 'repair' });
         e1.through = e2.through = true;
       }
