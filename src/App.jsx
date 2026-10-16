@@ -149,6 +149,22 @@ export default function App() {
     return () => window.removeEventListener('tt:export-marked', run);
   }, []);
 
+  // Artistic's Tile Quantity List (the ordering spreadsheet)
+  useEffect(() => {
+    const run = async () => {
+      const toast = (msg, ok) => window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg, ok } }));
+      try {
+        const { downloadQuantityList } = await import('./lib/quantityList.js');
+        const q = await downloadQuantityList(useStore.getState());
+        toast(`Tile Quantity List ready · floor ${q.floorSf} SF · walls ${q.wallSf} SF${q.showerSf ? ` · shower floors ${q.showerSf} SF` : ''}${q.lf ? ` · ${q.lf} LF` : ''}`, true);
+      } catch (e) {
+        toast('Could not build the quantity list: ' + (e?.message || e));
+      }
+    };
+    window.addEventListener('tt:export-qty', run);
+    return () => window.removeEventListener('tt:export-qty', run);
+  }, []);
+
   // a list's "also on pg N" button
   useEffect(() => {
     const go = (e) => { const n = +e.detail; if (n >= 1 && n <= (useStore.getState().pdfPages || 1)) loadPdfPage(n); };
@@ -355,6 +371,9 @@ function ExportMenu() {
         <div className="export-pop" role="menu">
           <button role="menuitem" onClick={go(() => window.dispatchEvent(new Event('tt:export-marked')))}>
             <b>Marked-up plan (PDF)</b><span>Every page with its takeoff drawn on it, plus a summary</span>
+          </button>
+          <button role="menuitem" onClick={go(() => window.dispatchEvent(new Event('tt:export-qty')))}>
+            <b>Tile Quantity List (Excel)</b><span>The ordering sheet: each tiled surface, waste, totals</span>
           </button>
           <button role="menuitem" onClick={go(() => import('./lib/export.js').then((m) => m.exportXLSX(useStore.getState())))}>
             <b>Estimate (Excel)</b><span>Estimate, rooms by page, markups, materials</span>

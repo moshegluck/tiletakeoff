@@ -65,8 +65,21 @@ TileTakeoff works the other way round:
 - `src/state/pages.js` each plan page keeps its own takeoff: the store holds the page on screen
   (rooms / markups / trace / scale) and parks the others in `pageData[page]`; `switchPage()` swaps.
   The estimate, exports and cloud save use `wholeProject()` (every page).
-- `src/lib/markedPdf.js` Export → Marked-up plan (PDF): the original vector pages with the takeoff
-  overlaid (rooms, SF, wall LF, doors / openings / windows, markups) + a summary page.
+- `src/engine/takeoffRules.js` Artistic's takeoff rules (from Moshe's `marked-plan-takeoff-artistic`
+  skill), used by the estimate, room cards, marked PDF and quantity list: floor = room − shower
+  footprints − 10 SF a tub; walls = full perimeter × tiled height − 14 SF a standard door (2 LF × 7',
+  8 SF at 4'), wide openings (> 4' / double door) at their width, − 10 SF a tub; windows never
+  deducted (window cut EA); every quantity rounds UP. Each result carries its arithmetic as text.
+  Per room: `fixtures` { tubs, showers [{w,d}], doors (untraced rooms) }, `finish.wallTileHeight`.
+- `src/lib/markedPdf.js` Export → Marked-up plan (PDF) in Moshe's markup language: floor-tiled rooms
+  highlighted by type (yellow bath, green hall, purple living/kitchen, cyan laundry/mech, orange
+  closet), red SF callouts, blue = walls fully tiled, magenta = partway, red bath dims / SH / TUB /
+  ceiling note, window cuts, legend; summary page reads like the proposal (room header
+  `NAME (9.25x5 sf5x2.75) 10' ceiling - fully tiled`, each line with its arithmetic).
+- `src/lib/quantityList.js` Export → Tile Quantity List (Excel), Artistic's ordering sheet (maroon /
+  lavender / purple bands, logo `public/artistic-logo.png`): page → room → surface, Count before
+  waste (arithmetic as a cell note), Truman waste defaults, Total = ROUNDUP(Count × (1+Waste), 0),
+  On Order blank, separate SF / LF total bands. Floor / wall totals equal the estimate's.
 - `src/lib/aiReview.js` + `api/detect-plan.js` `mode: 'review'`: "Check the trace with AI" — Claude
   looks at the drawing with the traced model drawn on it (R/O tags) and returns located findings
   (missing / false wall, missed door, window taken as door…) shown as flags. Never geometry.
@@ -75,7 +88,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 331 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 347 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
   room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
@@ -92,7 +105,6 @@ TileTakeoff works the other way round:
 - pdf.js is imported from the **legacy** build on purpose (5.7 modern build breaks older browsers).
 
 ## Known gaps / next
-- Windows aren't detected (wall treated as continuous).
 - Scans: only horizontal/vertical walls; diagonal walls on scans get flagged.
 - AI room naming (`Name rooms with AI`) runs on the same model chain as AI Detect; untested live.
 - Supabase: deployed env vars point at a deleted project (edsywvqtlnoyqtsamryn). The build
@@ -104,6 +116,8 @@ TileTakeoff works the other way round:
 - The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
+- Shower floor tile isn't a material pick yet (quantity list says SHOWER FLOOR TILE); customer and
+  proposal # aren't stored (left blank on the quantity list).
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road

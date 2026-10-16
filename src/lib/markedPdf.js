@@ -2,14 +2,20 @@
 // markedPdf.js — download the takeoff marked up on the plan, as a PDF.
 //
 // Every plan page that has a takeoff comes out as the ORIGINAL page (still
-// vector, still sharp when zoomed or printed) with the takeoff laid over it:
-// rooms tinted and outlined with name / SF / wall LF, the doors and
-// openings the wall LF was taken net of, and the markups. A summary page
-// up front lists every room, opening and markup with page and job totals.
-// Image plans (PNG / JPG) come out as the image with the same overlay.
+// vector, still sharp when zoomed or printed) marked the way Moshe marks a
+// plan set: floor-tile rooms washed in a highlighter colour by room type
+// with a red SF callout (rounded up), blue along fully tiled walls and
+// magenta along walls tiled partway, red bathroom dims / shower footprint /
+// tub / ceiling note, window cuts, and the markups; a legend says which is
+// which. A summary up front reads like the proposal: page → room (bathroom
+// header with dims and ceiling) → Floor / Shower floor / Walls / Window cut
+// with the arithmetic (engine/takeoffRules.js). Image plans (PNG / JPG) come
+// out as the image with the same marks.
 // ============================================================
 
-import { centroid, roomArea, roomWallLf } from '../engine/geometry.js';
+import { centroid, roomArea, polygonArea } from '../engine/geometry.js';
+import { floorTakeoff, wallTakeoff, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
+import { roomTypeOf } from '../engine/trace/analyze.js';
 import { formatLength, formatArea, ARCH_SCALES } from '../engine/units.js';
 import { markupValue, markupUnit, markupCost, isMeasured, MARKUP_TYPES } from '../engine/markups.js';
 import { roomRegions, zonesOf } from '../engine/zones.js';
@@ -33,52 +39,100 @@ export function takeoffPages(st) {
 
 const scaleLabel = (id) => ARCH_SCALES.find((a) => a.id === id)?.label || null;
 
-/** Openings a room's wall LF was taken net of, in words ("2 doors, 1 opening · 9'-4\""). */
-export function openingsText(r, unit) {
-  const all = r.openings || [];
-  const ops = all.filter((o) => o.type !== 'window');
-  const wins = all.length - ops.length;
-  const winTxt = wins ? `${wins} window${wins > 1 ? 's' : ''} (not deducted)` : '';
-  if (!ops.length) return winTxt;
-  const doors = ops.filter((o) => /door/.test(o.type || '')).length;
-  const open = ops.length - doors;
-  const w = ops.reduce((a, o) => a + (o.width || 0), 0);
-  const parts = [doors && `${doors} door${doors > 1 ? 's' : ''}`, open && `${open} opening${open > 1 ? 's' : ''}`].filter(Boolean);
-  return `${parts.join(', ')} · ${formatLength(w, unit)}${winTxt ? '; ' + winTxt : ''}`;
+// highlighter colours by room type (Moshe's DOB legend: yellow bath, green
+// corridor, purple living / kitchen, cyan mech…)
+const HIGHLIGHT = {
+  bath: '#ffe14d', hall: '#7ed957', living: '#b48be0', kitchen: '#b48be0', dining: '#b48be0', bedroom: '#8fc6ff',
+  closet: '#ffb366', laundry: '#5fd3e6', mech: '#5fd3e6', garage: '#c9c9c9', outdoor: '#ff9ecf', room: '#c7a6e8',
+};
+const TYPE_NAME = { bath: 'bath', hall: 'hall / corridor', living: 'living / kitchen', kitchen: 'living / kitchen', dining: 'living / kitchen', bedroom: 'bedroom', closet: 'closet', laundry: 'laundry / mech', mech: 'laundry / mech', garage: 'garage', outdoor: 'outdoor', room: 'room' };
+const RED = '#d0021b', BLUE = '#1f5fd6', MAGENTA = '#d6249f';
+const n2 = (x) => String(+(+x).toFixed(2));
+const ft = (h) => (Math.abs(h - Math.round(h)) < 0.01 ? `${Math.round(h)}'` : n2(h) + "'");
+
+/**
+ * What a room carries on the marked plan and in the summary, by Artistic's
+ * rules: floor tile (red SF callout), walls fully / partly tiled (blue /
+ * magenta), bathroom dims and shower footprint, window cuts.
+ * @param {object} r     room
+ * @param {object} ctx   { floorIds: Set, wallIds: Set, allFloor: boolean }
+ */
+export function roomMarks(r, ctx) {
+  const type = r.roomType && r.roomType !== 'nofloor' ? r.roomType : roomTypeOf(r.name);
+  const floorTiled = ctx.allFloor || (r.assigned || []).some((id) => ctx.floorIds.has(id)) || (r.zones || []).some((z) => z.materialId);
+  const wallTiled = (r.assigned || []).some((id) => ctx.wallIds.has(id));
+  const fx = roomFixtures(r);
+  const floor = floorTiled ? floorTakeoff(r) : null;
+  const h = wallTiled ? wallTileHeight(r) : 0;
+  const walls = wallTiled ? wallTakeoff(r, h) : null;
+  const ceiling = r.wallHeight ?? 8;
+  const full = wallTiled && h >= ceiling - 1e-6;
+  // room dims as Moshe writes them (9.25x5) when the room is a rectangle
+  const xs = r.points.map((q) => q.x), ys = r.points.map((q) => q.y);
+  const w = Math.max(...xs) - Math.min(...xs), d = Math.max(...ys) - Math.min(...ys);
+  const rect = Math.abs(roomArea(r) + (r.holes || []).reduce((a, hh) => a + Math.abs(polygonArea(hh)), 0) - w * d) < 0.02 * w * d;
+  const dims = rect ? `${n2(Math.round(w * 4) / 4)}x${n2(Math.round(d * 4) / 4)}` : '';
+  const scope = wallTiled ? (full ? `${ft(ceiling)} ceiling - fully tiled` : `${ft(h)} tile`) : '';
+  const paren = [dims, ...fx.showers.map((x) => `sf${n2(x.w)}x${n2(x.d)}`), fx.tubs ? (fx.tubs > 1 ? `${fx.tubs} tubs` : 'tub') : ''].filter(Boolean).join(' ');
+  const header = `${r.name}${(type === 'bath' || fx.showers.length || fx.tubs) && paren ? ` (${paren})` : ''}${scope ? ` ${scope}` : ''}`;
+  return {
+    type, color: HIGHLIGHT[type] || HIGHLIGHT.room, floor, walls, wallTiled, full, height: h, fx, dims, header,
+    windows: walls ? walls.windows : 0, tiled: floorTiled || wallTiled,
+  };
+}
+
+/** Which materials are floor / wall tile, and whether no floor tile is picked yet (then every room is floor). */
+export function markContext(st, rooms) {
+  const floorIds = new Set(st.materials.filter((m) => m.type !== 'wall').map((m) => m.id));
+  const wallIds = new Set(st.materials.filter((m) => m.type === 'wall').map((m) => m.id));
+  const anyFloorPick = rooms.some((r) => (r.assigned || []).some((id) => floorIds.has(id)) || (r.zones || []).some((z) => z.materialId));
+  return { floorIds, wallIds, allFloor: !anyFloorPick };
 }
 
 /**
- * The summary: per page, the rooms and markups with totals; then the job.
- * Pure (tested): the PDF only lays these rows out.
+ * The summary, organized like the proposal: page → room (bathroom header
+ * with dims and ceiling) → Floor / Shower floor / Walls / Window cut, each
+ * with its arithmetic; then the job totals. Pure (tested).
  */
 export function summarize(st) {
-  const unit = st.unitSystem;
-  const matName = (id) => st.materials.find((m) => m.id === id)?.name;
-  const pages = takeoffPages(st).map((p) => {
-    const rooms = p.rooms.map((r) => ({
-      name: r.name, sf: roomArea(r), lf: roomWallLf(r), traced: Number.isFinite(r.wallLf),
-      openings: openingsText(r, unit), height: r.wallHeight ?? 8,
-      materials: (r.assigned || []).map(matName).filter(Boolean).join(', '),
-    }));
+  const pages = takeoffPages(st);
+  const ctx = markContext(st, pages.flatMap((p) => p.rooms));
+  const out = pages.map((p) => {
+    const rooms = [], untiled = [];
+    for (const r of p.rooms) {
+      const mk = roomMarks(r, ctx);
+      if (!mk.tiled) { untiled.push(r.name); continue; }
+      const lines = [];
+      if (mk.floor) lines.push({ label: 'Floor', qty: mk.floor.sf, unit: 'SF', math: mk.floor.text });
+      for (const x of mk.floor ? mk.floor.showers : mk.fx.showers.map((s) => ({ ...s, sf: roundUp(s.w * s.d) }))) {
+        lines.push({ label: `Shower floor ${n2(x.w)}x${n2(x.d)}`, qty: x.sf, unit: 'SF', math: '1 EA' });
+      }
+      if (mk.walls) lines.push({ label: mk.full ? 'Walls - fully tiled' : `Walls - ${ft(mk.height)} tile`, qty: mk.walls.sf, unit: 'SF', math: mk.walls.text.replace(/ · .*$/, '') });
+      if (mk.windows) lines.push({ label: 'Window cut', qty: mk.windows, unit: 'EA', math: 'never deducted' });
+      rooms.push({ name: r.name, header: mk.header, type: mk.type, lines, floorSf: mk.floor?.sf || 0, wallSf: mk.walls?.sf || 0 });
+    }
     const markups = p.markups.filter((m) => isMeasured(m.type)).map((m) => ({
       name: m.name || MARKUP_TYPES[m.type]?.label || m.type, type: m.type,
       value: markupValue(m), unit: markupUnit(m), cost: markupCost(m),
     }));
     return {
-      page: p.page, scale: scaleLabel(p.archScale), rooms, markups,
-      sf: rooms.reduce((a, r) => a + r.sf, 0), lf: rooms.reduce((a, r) => a + r.lf, 0),
+      page: p.page, scale: scaleLabel(p.archScale), rooms, untiled, markups,
+      floorSf: rooms.reduce((a, r) => a + r.floorSf, 0), wallSf: rooms.reduce((a, r) => a + r.wallSf, 0),
     };
   });
+  const all = out.flatMap((p) => p.rooms.flatMap((r) => r.lines));
   return {
-    pages,
-    sf: pages.reduce((a, p) => a + p.sf, 0),
-    lf: pages.reduce((a, p) => a + p.lf, 0),
-    rooms: pages.reduce((a, p) => a + p.rooms.length, 0),
+    pages: out,
+    rooms: out.reduce((a, p) => a + p.rooms.length, 0),
+    floorSf: out.reduce((a, p) => a + p.floorSf, 0),
+    wallSf: out.reduce((a, p) => a + p.wallSf, 0),
+    showerFloors: all.filter((l) => l.label.startsWith('Shower floor')).length,
+    windowCuts: all.filter((l) => l.label === 'Window cut').reduce((a, l) => a + l.qty, 0),
   };
 }
 
 // ---------------------------------------------------------------------------
-// overlay: the takeoff of one page drawn on a transparent canvas
+// overlay: the takeoff of one page, marked the way Moshe marks a plan
 // ---------------------------------------------------------------------------
 
 /**
@@ -87,52 +141,62 @@ export function summarize(st) {
  * @param {(ft:number)=>number} f2c  feet → canvas px
  * @param {number} pt     canvas px per PDF point (type sizes are in points)
  * @param {string} unit   unit system
+ * @param {object} mctx   markContext()
  */
-function drawOverlay(ctx, p, f2c, pt, unit) {
+function drawOverlay(ctx, p, f2c, pt, unit, mctx) {
   const P = (q) => ({ x: f2c(q.x), y: f2c(q.y) });
   const ring = (pts) => pts.forEach((q, i) => { const c = P(q); i ? ctx.lineTo(c.x, c.y) : ctx.moveTo(c.x, c.y); });
+  const path = (r) => { ctx.beginPath(); ring(r.points); ctx.closePath(); for (const h of r.holes || []) { ring(h); ctx.closePath(); } };
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const marks = p.rooms.map((r) => ({ r, mk: roomMarks(r, mctx) })).filter((x) => x.mk.tiled);
 
-  for (const r of p.rooms) {
-    ctx.beginPath(); ring(r.points); ctx.closePath();
-    for (const h of r.holes || []) { ring(h); ctx.closePath(); }
-    ctx.fillStyle = hexA(r.color || '#1d4e6b', 0.16); ctx.fill('evenodd');
-    ctx.strokeStyle = r.color || '#1d4e6b'; ctx.lineWidth = 1.4 * pt; ctx.stroke();
+  // floor tile: a highlighter wash in the room-type colour
+  for (const { r, mk } of marks) {
+    if (!mk.floor) continue;
+    path(r);
+    ctx.fillStyle = hexA(mk.color, 0.42); ctx.fill('evenodd');
     if (zonesOf(r).length) {
       const reg = roomRegions(r);
-      for (const b of reg.bands) {
-        ctx.beginPath(); ring(b.outer); ctx.closePath(); ring(b.holes[0]); ctx.closePath();
-        ctx.fillStyle = hexA(b.zone.color || '#7a3fa0', 0.3); ctx.fill('evenodd');
-      }
-      for (const z of reg.inlays) {
-        ctx.beginPath(); ring(z.outer); ctx.closePath();
-        ctx.fillStyle = hexA(z.zone.color || '#b25e00', 0.3); ctx.fill();
-      }
+      for (const b of reg.bands) { ctx.beginPath(); ring(b.outer); ctx.closePath(); ring(b.holes[0]); ctx.closePath(); ctx.fillStyle = hexA(b.zone.color || '#7a3fa0', 0.3); ctx.fill('evenodd'); }
+      for (const z of reg.inlays) { ctx.beginPath(); ring(z.outer); ctx.closePath(); ctx.fillStyle = hexA(z.zone.color || '#b25e00', 0.3); ctx.fill(); }
     }
   }
-
-  // the doors / openings the traced wall LF is net of
+  // tiled walls: blue = fully tiled, magenta = partway — drawn along the
+  // inside of the room's walls (stroke clipped to the room)
+  for (const { r, mk } of marks) {
+    if (!mk.wallTiled) continue;
+    ctx.save();
+    path(r); ctx.clip('evenodd');
+    path(r);
+    ctx.strokeStyle = mk.full ? BLUE : MAGENTA; ctx.lineWidth = 4.2 * pt; ctx.stroke();
+    ctx.restore();
+  }
+  // windows in tiled walls: a cut charge each, never a deduction
   const res = p.trace?.committedAt ? p.trace.result : null;
-  if (res && p.rooms.some((r) => r.traceId)) {
+  if (res) {
+    const tiledIds = new Set(marks.filter((x) => x.mk.wallTiled).map((x) => x.r.traceId).filter(Boolean));
     for (const o of res.openings || []) {
+      if (o.openingType !== 'window' || !(o.rooms || []).some((id) => tiledIds.has(id))) continue;
       const a = P(o.a), b = P(o.b);
-      // doors blue, openings orange (both off the wall LF); windows teal (not)
-      ctx.strokeStyle = o.openingType === 'window' ? '#1d7a6b' : o.openingType === 'opening' ? '#b25e00' : '#1d6fb0';
-      ctx.lineWidth = 3 * pt; ctx.globalAlpha = 0.85;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      ctx.globalAlpha = 1;
-      label(ctx, (o.openingType === 'window' ? 'win ' : '') + formatLength(o.width, unit), (a.x + b.x) / 2, (a.y + b.y) / 2, 5.5 * pt, ctx.strokeStyle, pt);
+      ctx.strokeStyle = RED; ctx.lineWidth = 1.6 * pt; ctx.setLineDash([3 * pt, 2 * pt]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
+      label(ctx, `WIN ${formatLength(o.width, unit)}`, (a.x + b.x) / 2, (a.y + b.y) / 2, 5 * pt, RED, pt);
     }
   }
-
-  for (const r of p.rooms) {
+  // callouts: the room name, the red SF callout, and for bathrooms the red
+  // dims, shower footprint, tub and ceiling note
+  for (const { r, mk } of marks) {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const q of r.points) { const c = P(q); x0 = Math.min(x0, c.x); x1 = Math.max(x1, c.x); y0 = Math.min(y0, c.y); y1 = Math.max(y1, c.y); }
-    const lines = [
-      { text: r.name, size: 8 * pt, min: 4.5 * pt, wrap: true, font: '700 {}px Helvetica, Arial, sans-serif', color: r.color || '#1d4e6b' },
-      { text: formatArea(roomArea(r), unit), size: 7 * pt, min: 4.5 * pt, font: '600 {}px Helvetica, Arial, sans-serif', color: '#10171f' },
-      { text: `${formatLength(roomWallLf(r), unit)} LF`, size: 6.5 * pt, min: 4.5 * pt, font: '500 {}px Helvetica, Arial, sans-serif', color: '#33414f' },
-    ];
+    const F = (w) => `${w} {}px Helvetica, Arial, sans-serif`;
+    const lines = [{ text: r.name, size: 7.5 * pt, min: 4.5 * pt, wrap: true, font: F(700), color: '#10171f' }];
+    if (mk.floor) lines.push({ text: `${mk.floor.sf} SF`, size: 9 * pt, min: 5 * pt, font: F(700), color: RED });
+    const bathy = mk.type === 'bath' || mk.fx.showers.length || mk.fx.tubs;
+    if (bathy && mk.dims) lines.push({ text: mk.dims, size: 6.5 * pt, min: 4.5 * pt, font: F(700), color: RED });
+    for (const x of mk.fx.showers) lines.push({ text: `SH ${n2(x.w)}x${n2(x.d)}`, size: 6.5 * pt, min: 4.5 * pt, font: F(700), color: RED });
+    if (mk.fx.tubs) lines.push({ text: mk.fx.tubs > 1 ? `${mk.fx.tubs} TUBS` : 'TUB', size: 6.5 * pt, min: 4.5 * pt, font: F(700), color: RED });
+    if (mk.wallTiled) lines.push({ text: mk.full ? `${ft(r.wallHeight ?? 8)} CEILING FULLY TILED` : `${ft(mk.height)} TILE`, size: 5.5 * pt, min: 4 * pt, wrap: true, font: F(700), color: mk.full ? BLUE : MAGENTA });
+    if (mk.walls) lines.push({ text: `WALLS ${mk.walls.sf} SF`, size: 6 * pt, min: 4 * pt, font: F(700), color: mk.full ? BLUE : MAGENTA });
     const measure = (text, size, i) => { ctx.font = lines[i].font.replace('{}', String(size)); return ctx.measureText(text).width; };
     const fit = fitLabelLines(lines, x1 - x0, y1 - y0, measure);
     const c = P(r.labelAt || centroid(r.points));
@@ -140,13 +204,40 @@ function drawOverlay(ctx, p, f2c, pt, unit) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (const l of fit) {
       ctx.font = lines[l.i].font.replace('{}', String(l.size));
-      ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2.2 * pt; ctx.strokeText(l.text, c.x, y);
+      ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = 2.4 * pt; ctx.strokeText(l.text, c.x, y);
       ctx.fillStyle = lines[l.i].color; ctx.fillText(l.text, c.x, y);
       y += l.size * 1.2;
     }
   }
 
   for (const m of p.markups) drawMarkupMark(ctx, m, P, pt, unit);
+  drawLegend(ctx, marks.map((x) => x.mk), pt);
+}
+
+// what the colours mean, top-left of the sheet
+function drawLegend(ctx, mks, pt) {
+  const types = [...new Set(mks.filter((m) => m.floor).map((m) => m.type))];
+  const rows = types.map((t) => ({ sw: HIGHLIGHT[t] || HIGHLIGHT.room, text: `floor tile — ${TYPE_NAME[t] || t}` }));
+  rows.push({ red: true, text: '123 SF  floor tile SF (rounded up)' });
+  if (mks.some((m) => m.wallTiled && m.full)) rows.push({ line: BLUE, text: 'walls fully tiled to the ceiling' });
+  if (mks.some((m) => m.wallTiled && !m.full)) rows.push({ line: MAGENTA, text: 'walls tiled partway (height noted)' });
+  if (!rows.length) return;
+  const fs = 6.5 * pt, lh = fs * 1.55, pad = 6 * pt, sw = 14 * pt;
+  ctx.font = `600 ${fs}px Helvetica, Arial, sans-serif`;
+  const w = pad * 3 + sw + Math.max(...rows.map((r) => ctx.measureText(r.text).width));
+  const h = pad * 2 + lh * rows.length;
+  const x = 18 * pt, y = 18 * pt;
+  ctx.fillStyle = 'rgba(255,255,255,.94)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#33414f'; ctx.lineWidth = 0.6 * pt; ctx.strokeRect(x, y, w, h);
+  rows.forEach((r, i) => {
+    const cy = y + pad + lh * i + lh / 2;
+    if (r.sw) { ctx.fillStyle = hexA(r.sw, 0.6); ctx.fillRect(x + pad, cy - fs * 0.45, sw, fs * 0.9); }
+    if (r.line) { ctx.strokeStyle = r.line; ctx.lineWidth = 3 * pt; ctx.beginPath(); ctx.moveTo(x + pad, cy); ctx.lineTo(x + pad + sw, cy); ctx.stroke(); }
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = r.red ? RED : '#10171f';
+    ctx.font = `${r.red ? 700 : 600} ${fs}px Helvetica, Arial, sans-serif`;
+    ctx.fillText(r.text, x + pad * 2 + (r.red ? 0 : sw), cy);
+  });
 }
 
 function label(ctx, text, x, y, size, color, pt) {
@@ -195,7 +286,7 @@ function drawMarkupMark(ctx, m, P, pt, unit) {
 // ---------------------------------------------------------------------------
 
 /** WinAnsi-safe text for the PDF's standard fonts. */
-const pdfText = (s) => String(s ?? '').replace(/[′’‘]/g, "'").replace(/[″“”]/g, '"').replace(/[–—]/g, '-').replace(/[^\x20-\x7e\xa0-\xff]/g, '?');
+const pdfText = (s) => String(s ?? '').replace(/[′’‘]/g, "'").replace(/[″“”]/g, '"').replace(/[–—−]/g, '-').replace(/→/g, '=').replace(/[^\x20-\x7e\xa0-\xff]/g, '?');
 
 async function canvasPng(canvas) {
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
@@ -225,6 +316,7 @@ export async function buildMarkedPdf(st, { plan = null, pdfDoc = null, onProgres
   const bold = await out.embedFont(StandardFonts.HelveticaBold);
 
   drawSummary(out, summarize(st), { st, font, bold, rgb, unit, planName: plan?.name });
+  const mctx = markContext(st, pages.flatMap((p) => p.rooms));
 
   let srcPdf = null, jsDoc = pdfDoc;
   if (plan?.kind === 'pdf') {
@@ -280,7 +372,7 @@ export async function buildMarkedPdf(st, { plan = null, pdfDoc = null, onProgres
     canvas.width = Math.ceil(W * pt); canvas.height = Math.ceil(H * pt);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas unavailable on this device.');
-    drawOverlay(ctx, p, (ft) => ft * perFt * pt, pt, unit);
+    drawOverlay(ctx, p, (ftv) => ftv * perFt * pt, pt, unit, mctx);
     const png = await out.embedPng(await canvasPng(canvas));
     canvas.width = canvas.height = 0;
     // image unit square → the page as displayed (rotation and crop box included)
@@ -323,66 +415,70 @@ function stampFooter(pg, { font, rgb, degrees, text, toPdf, H }) {
 function drawSummary(out, sum, { st, font, bold, rgb, unit, planName }) {
   const W = 792, H = 612, M = 40;
   let pg = null, y = 0;
-  const ink = rgb(0.06, 0.09, 0.12), mute = rgb(0.4, 0.45, 0.5), line = rgb(0.83, 0.86, 0.89), accent = rgb(0.78, 0.32, 0.12);
+  const ink = rgb(0.06, 0.09, 0.12), mute = rgb(0.4, 0.45, 0.5), line = rgb(0.83, 0.86, 0.89), red = rgb(0.82, 0.01, 0.11), band = rgb(0.95, 0.96, 0.97);
   const newPage = () => {
     pg = out.addPage([W, H]); y = H - M;
     pg.drawText(pdfText(st.name || 'Takeoff'), { x: M, y: y - 14, size: 16, font: bold, color: ink });
     pg.drawText(pdfText(['Marked-up takeoff', planName, new Date().toLocaleDateString()].filter(Boolean).join(' · ')), { x: M, y: y - 30, size: 9, font, color: mute });
     y -= 50;
   };
-  const cols = [
-    { k: 'name', x: M, w: 210, h: 'Room' },
-    { k: 'sf', x: M + 215, w: 70, h: 'Floor SF', right: true },
-    { k: 'lf', x: M + 290, w: 80, h: 'Wall LF', right: true },
-    { k: 'openings', x: M + 380, w: 150, h: 'Doors / openings (net of)' },
-    { k: 'materials', x: M + 535, w: W - M - (M + 535), h: 'Materials' },
-  ];
   const fit = (s, w, f, size) => {
     let t = pdfText(s);
     if (f.widthOfTextAtSize(t, size) <= w) return t;
     while (t.length > 1 && f.widthOfTextAtSize(t + '...', size) > w) t = t.slice(0, -1);
     return t + '...';
   };
-  const cell = (c, text, f = font, size = 8.5, color = ink) => {
-    const t = fit(text, c.w, f, size);
-    const x = c.right ? c.x + c.w - f.widthOfTextAtSize(t, size) : c.x;
-    pg.drawText(t, { x, y, size, font: f, color });
+  const text = (s, x, w, f = font, size = 8.5, color = ink, right = false) => {
+    const t = fit(s, w, f, size);
+    pg.drawText(t, { x: right ? x + w - f.widthOfTextAtSize(t, size) : x, y, size, font: f, color });
   };
   const need = (h) => { if (!pg || y - h < M) newPage(); };
-  const rule = () => pg.drawLine({ start: { x: M, y: y - 4 }, end: { x: W - M, y: y - 4 }, thickness: 0.6, color: line });
+  const C = { label: M + 14, qty: M + 200, unit: M + 262, math: M + 300 };
 
   newPage();
-  pg.drawText(pdfText(`${sum.rooms} rooms · ${formatArea(sum.sf, unit)} floor · ${formatLength(sum.lf, unit)} wall LF${sum.pages.length > 1 ? ` · ${sum.pages.length} pages` : ''}`), { x: M, y, size: 11, font: bold, color: accent });
-  y -= 24;
+  const tot = [`${sum.rooms} tiled room${sum.rooms === 1 ? '' : 's'}`, `floor ${sum.floorSf} SF`, `walls ${sum.wallSf} SF`,
+    sum.showerFloors && `${sum.showerFloors} shower floor${sum.showerFloors > 1 ? 's' : ''}`, sum.windowCuts && `${sum.windowCuts} window cut${sum.windowCuts > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+  text(tot, M, W - 2 * M, bold, 11, red);
+  y -= 14;
+  text("Floor = room - shower - 10 SF a tub.  Walls = perimeter x tiled height - 14 SF a door (8 at 4'), wide openings at their width, - 10 SF a tub; windows never deducted.  All rounded up.", M, W - 2 * M, font, 7.5, mute);
+  y -= 22;
   for (const p of sum.pages) {
-    need(60);
-    pg.drawText(pdfText(`Page ${p.page}${p.scale ? ` — ${p.scale}` : ''}`), { x: M, y, size: 11, font: bold, color: ink });
-    pg.drawText(pdfText(`${p.rooms.length} rooms · ${formatArea(p.sf, unit)} · ${formatLength(p.lf, unit)} wall LF`), { x: M + 200, y, size: 9, font, color: mute });
-    y -= 16;
-    if (p.rooms.length) {
-      for (const c of cols) cell(c, c.h, bold, 7.5, mute);
-      rule(); y -= 13;
-      for (const r of p.rooms) {
-        need(14);
-        cell(cols[0], r.name); cell(cols[1], formatArea(r.sf, unit).replace(/\s*sf$/i, '')); cell(cols[2], formatLength(r.lf, unit) + (r.traced ? '' : ' *'));
-        cell(cols[3], r.openings || '—'); cell(cols[4], r.materials || '—', font, 8, mute);
+    need(50);
+    pg.drawRectangle({ x: M, y: y - 4, width: W - 2 * M, height: 16, color: band });
+    text(`PAGE ${p.page}${p.scale ? `  -  ${p.scale}` : ''}`, M + 4, 300, bold, 10);
+    text(`floor ${p.floorSf} SF · walls ${p.wallSf} SF`, M + 300, W - 2 * M - 304, font, 8.5, mute, true);
+    y -= 20;
+    for (const r of p.rooms) {
+      need(14 + 12.5 * r.lines.length);
+      text(r.header, M, W - 2 * M, bold, 9);
+      y -= 12.5;
+      for (const l of r.lines) {
+        text(l.label, C.label, C.qty - C.label - 6);
+        text(String(l.qty), C.qty, 52, bold, 8.5, l.label === 'Floor' ? red : ink, true);
+        text(l.unit, C.unit, 30, font, 8, mute);
+        text(l.math, C.math, W - M - C.math, font, 7.5, mute);
         y -= 12.5;
       }
+      pg.drawLine({ start: { x: M, y: y + 6 }, end: { x: W - M, y: y + 6 }, thickness: 0.4, color: line });
+      y -= 4;
+    }
+    if (p.untiled.length) {
+      need(14);
+      text(`Not tiled (no tile picked): ${p.untiled.join(', ')}`, M, W - 2 * M, font, 7.5, mute);
+      y -= 12;
     }
     if (p.markups.length) {
       need(30); y -= 4;
-      pg.drawText('Markups', { x: M, y, size: 8.5, font: bold, color: mute }); y -= 12;
+      text('Markups', M, 200, bold, 8.5, mute); y -= 12;
       for (const m of p.markups) {
         need(14);
         const qty = m.type === 'length' ? formatLength(m.value, unit) : m.type === 'count' ? `${m.value} ea` : formatArea(m.value, unit);
-        cell(cols[0], m.name); cell(cols[1], qty); cell(cols[2], m.cost ? `$${m.cost.toFixed(2)}` : '');
+        text(m.name, C.label, C.qty - C.label - 6); text(qty, C.qty, 90, bold); if (m.cost) text(`$${m.cost.toFixed(2)}`, C.math, 120);
         y -= 12.5;
       }
     }
-    y -= 14;
+    y -= 12;
   }
-  need(30);
-  pg.drawText('* wall LF is the room outline (no traced walls to net openings from).', { x: M, y, size: 7.5, font, color: mute });
 }
 
 /**

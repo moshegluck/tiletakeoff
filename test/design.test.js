@@ -93,12 +93,13 @@ describe('review regressions — takeoff side', () => {
     expect(second.sort()).toEqual(first.sort());
   });
 
-  it('full-height wall tile also covers the wall above each door', () => {
+  it('full-height wall tile: the whole perimeter × ceiling, less 14 SF a door (Artistic rule)', () => {
     useStore.getState().newProject();
     useStore.setState({ rooms: [{ id: 'b', name: 'BATH', points: sq(0, 0, 10, 8), assigned: [], wallHeight: 8, doorHeight: 6 + 8 / 12, wallLf: 33.5, openings: [{ width: 2.5 }], layout: { pattern: 'grid' } }], materials: [] });
     useStore.getState().applyFinish('b', { wallTilePreset: WALL_TILE_PRESETS[0], wallTileHeight: null });
     const e = estimateProject(useStore.getState());
-    expect(e.lines.find((l) => l.material.type === 'wall').netSf).toBeCloseTo(33.5 * 8 + 2.5 * (8 - (6 + 8 / 12)), 6);
+    // the traced LF is net of the 2'-6" door: put it back, × 8', − 14 SF (2 LF × 7')
+    expect(e.lines.find((l) => l.material.type === 'wall').netSf).toBe((33.5 + 2.5) * 8 - 14);
   });
 });
 

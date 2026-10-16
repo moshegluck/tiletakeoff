@@ -424,6 +424,7 @@ export const useStore = create((rawSet, get) => {
         layout: p?.layout || { angleDeg: 0, origin: { x: 0, y: 0 } },
         finish: p?.finish,
         zones: p?.zones,
+        fixtures: p?.fixtures,
         traceId: t.id, traceName: t.name, roomType: t.type,
         wallLf: t.wallLf, spurLf: t.spurLf, openings: t.openings, labelAt: t.center, doorHeight: DH,
       };

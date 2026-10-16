@@ -14,6 +14,7 @@ import PatternSwatch from './PatternSwatch.jsx';
 import { materialItem, saveMine } from '../lib/library.js';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
 import { roomRegions, zonesOf, isAxisRect } from '../engine/zones.js';
+import { roomFixtures, floorTakeoff, wallTakeoff, wallTileHeight, parseShowers, showersText } from '../engine/takeoffRules.js';
 
 const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -174,9 +175,65 @@ function RoomCard({ room: r }) {
             </button>
           </div>
 
+          <RoomTakeoff room={r} />
           <FloorDesign room={r} />
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---- Takeoff: tubs, showers, wall tile height, and the arithmetic ----
+   Artistic's rules (engine/takeoffRules.js): floor = room − shower − 10 a
+   tub; walls = perimeter × tiled height − 14 a door (8 at 4'), − 10 a tub;
+   windows never deducted; everything rounded up. The numbers show their
+   working so they can be checked against the plan. */
+function RoomTakeoff({ room: r }) {
+  const s = useProject();
+  const fx = roomFixtures(r);
+  const [shText, setShText] = React.useState(showersText(fx.showers));
+  React.useEffect(() => { setShText(showersText(roomFixtures(r).showers)); }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setFx = (patch) => s.updateRoom(r.id, { fixtures: { ...(r.fixtures || {}), ...patch } });
+  const wallMat = s.materials.find((m) => m.type === 'wall' && r.assigned.includes(m.id));
+  const th = r.finish?.wallTileHeight;
+  const ceiling = r.wallHeight ?? 8;
+  const mode = th == null || th >= ceiling ? 'full' : Math.abs(th - 4) < 1e-6 ? 'half' : 'custom';
+  const traced = Number.isFinite(r.wallLf);
+  if (!s.scale) return null;
+  const floor = floorTakeoff(r);
+  const walls = wallMat ? wallTakeoff(r, wallTileHeight(r)) : null;
+  return (
+    <div className="field"><label>Takeoff</label>
+      <div className="row" style={{ gap: 6 }}>
+        <label className="mini">Tubs<input className="inp mono" type="number" min="0" step="1" value={fx.tubs}
+          onChange={(e) => setFx({ tubs: Math.max(0, Math.floor(+e.target.value || 0)) })} /></label>
+        <label className="mini" style={{ flex: 2 }}>Showers (SH)<input className="inp mono" placeholder="5x2.75" value={shText}
+          onChange={(e) => setShText(e.target.value)} onBlur={() => { const sh = parseShowers(shText); setFx({ showers: sh }); setShText(showersText(sh)); }} /></label>
+        {!traced && <label className="mini">Doors<input className="inp mono" type="number" min="0" step="1" value={fx.doors}
+          title="Doors in this room's walls (traced rooms count their own)"
+          onChange={(e) => setFx({ doors: Math.max(0, Math.floor(+e.target.value || 0)) })} /></label>}
+      </div>
+      {wallMat && (
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <select className="inp" value={mode} onChange={(e) => {
+            const v = e.target.value;
+            if (v === 'full') s.applyFinish(r.id, { wallTileHeight: null });
+            else if (v === 'half') s.applyFinish(r.id, { wallTileHeight: 4 });
+            else s.applyFinish(r.id, { wallTileHeight: Math.min(ceiling, th && th < ceiling ? th : 7) });
+          }}>
+            <option value="full">Walls fully tiled ({formatLength(ceiling, s.unitSystem)} ceiling)</option>
+            <option value="half">{"Walls half tiled 4'-0\""}</option>
+            <option value="custom">Walls tiled to a set height</option>
+          </select>
+          {mode === 'custom' && <DimInput value={th} system={s.unitSystem} onCommit={(h) => s.applyFinish(r.id, { wallTileHeight: Math.min(h, ceiling) })} />}
+        </div>
+      )}
+      <div className="takeoff-math">
+        <div><b>Floor</b> {floor.text}</div>
+        {floor.showers.map((x, i) => <div key={i}><b>Shower floor</b> {showersText([x])} = {x.sf} SF</div>)}
+        {walls && <div><b>Walls</b> {walls.text}</div>}
+        {!walls && <div className="dim">Assign a wall tile to take off its walls.</div>}
+      </div>
     </div>
   );
 }
@@ -581,6 +638,12 @@ function EstimatePanel() {
             )}
 
             <div className="est-row"><span>Net area</span><b>{l.netSf.toFixed(1)} sf</b></div>
+            {(l.usedRooms || []).length > 0 && (
+              <details className="est-rooms">
+                <summary>{l.usedRooms.length} room{l.usedRooms.length > 1 ? 's' : ''} — how each was taken off</summary>
+                {l.usedRooms.map((u, i) => <div key={i}><b>{u.name}</b> {u.text || `${u.sf} SF`}</div>)}
+              </details>
+            )}
             {(l.usedRooms || []).some((u) => u.lf) && (
               <div className="est-row"><span>Border run</span><b>{fmtLen((l.usedRooms || []).reduce((a, u) => a + (u.lf || 0), 0), s.unitSystem)}</b></div>
             )}
@@ -633,6 +696,7 @@ function EstimatePanel() {
 
       <div className="row" style={{ display: 'flex', gap: 8 }}>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-marked'))}>Marked PDF</button>
+        <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-qty'))}>Qty List</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportCSV(s)}>CSV</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportXLSX(s)}>Excel</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => exportJSON(s)}>JSON</button>
