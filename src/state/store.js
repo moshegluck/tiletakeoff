@@ -193,6 +193,9 @@ export const useStore = create((rawSet, get) => {
   },
   setPdf: (doc, pages) => set({ pdfDoc: doc, pdfPages: pages, pdfPage: 1 }),
   setPdfPage: (n) => set({ pdfPage: n }),
+  // snap drawing points to the plan's lines (a preference, kept per device)
+  snapOn: (() => { try { return localStorage.getItem('tt.snap') !== '0'; } catch (_) { return true; } })(),
+  toggleSnap: () => { const v = !get().snapOn; set({ snapOn: v }); try { localStorage.setItem('tt.snap', v ? '1' : '0'); } catch (_) { /* private mode */ } },
   // a restored plan keeps the saved view instead of fitting (Canvas2D)
   keepView: false,
   keepViewOnce: () => set({ keepView: true }),
