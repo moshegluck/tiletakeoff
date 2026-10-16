@@ -6,6 +6,7 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 
 - **2D takeoff** — draw rectangle rooms, trace polygon rooms, calibrate scale with the ruler, pan/zoom, move/resize, plan-image underlay.
 - **PDF takeoff** — load a plan PDF, render any page into the canvas, page-to-page navigation, then calibrate scale and measure directly on the drawing.
+- **Undo / redo** — every change to rooms, design zones, materials, markups, the trace, the scale or rates can be undone (Ctrl/Cmd Z) and redone (Ctrl/Cmd Shift Z or Ctrl Y), or from the header. A drag on the plan or a burst of typing is one step; panning isn't a step; opening another project starts a fresh history.
 - **Sharp at any zoom** — the part of the PDF on screen is re-rendered from the vector drawing at screen resolution whenever the view settles (up to 3200%); smooth wheel / trackpad / pinch zoom about the cursor, two-finger touch pan & zoom on tablets and phones, Ctrl + / − / 0 to zoom and fit.
 - **Markups (Bluebeam-style)** — Length, Area, Box, and Count measurement tools with per-markup unit cost, line cost, notes, and a measurement log that totals by type. Hotkeys M / A / B / C.
 - **All measurement types** — feet-inches (fractions), decimal feet, inches, meters, cm, mm. Switch any time; everything re-renders.

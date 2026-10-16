@@ -820,6 +820,8 @@ export default function Canvas2D() {
     draft.current = back(snapd.draft); mkDraft.current = back(snapd.mk); trDraft.current = snapd.tr;
   }
   function handleDown(e) {
+    // everything one press-drag-release does is one undo step
+    useStore.getState().historyBegin();
     if (e.pointerType === 'touch') {
       touches.current.set(e.pointerId, evPt(e));
       if (touches.current.size === 2 && !pinch.current) {
@@ -848,10 +850,11 @@ export default function Canvas2D() {
   function handleUp(e) {
     if (e.pointerType === 'touch') {
       touches.current.delete(e.pointerId);
-      if (pinch.current) { if (!touches.current.size) pinch.current = null; return; }
+      if (pinch.current) { if (!touches.current.size) { pinch.current = null; useStore.getState().historyEnd(); } return; }
       touchSnap.current = null;
     }
     onUp(e);
+    useStore.getState().historyEnd();
   }
 
   // resize
@@ -988,6 +991,7 @@ export default function Canvas2D() {
         onContextMenu={(e) => e.preventDefault()}
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         onPointerCancel={(e) => {
+          useStore.getState().historyEnd();
           touches.current.delete(e.pointerId);
           if (!touches.current.size) pinch.current = null;
           pan.current = null; draft.current = null; ruler.current = null; drag.current = null; mkDraft.current = null; marquee.current = null;

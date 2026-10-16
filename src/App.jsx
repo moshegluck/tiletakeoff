@@ -119,6 +119,12 @@ export default function App() {
     const onKey = (e) => {
       if (/input|select|textarea/i.test(e.target.tagName)) return;
       const k = e.key.toLowerCase();
+      // Ctrl/Cmd+Z undo · Ctrl/Cmd+Shift+Z or Ctrl+Y redo (fields keep their own)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); useStore.getState().undo(); }
+        else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); useStore.getState().redo(); }
+        return;   // other shortcuts are never tool keys
+      }
       const t = TOOLS.find((t) => t.key.toLowerCase() === k);
       if (t) s.setTool(t.id);
       else if (k === 'f') window.dispatchEvent(new Event('tt:fit'));
@@ -168,6 +174,14 @@ export default function App() {
           <b>Tile<span>Takeoff</span></b>
         </div>
         <input className="docname" value={s.name} maxLength={60} onChange={(e) => s.setName(e.target.value)} />
+        <div className="undo-redo">
+          <button className="tbtn icon" disabled={!s.undoCount} onClick={() => s.undo()} title="Undo (Ctrl Z)" aria-label="Undo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+          </button>
+          <button className="tbtn icon" disabled={!s.redoCount} onClick={() => s.redo()} title="Redo (Ctrl Shift Z)" aria-label="Redo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14l5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg>
+          </button>
+        </div>
         <select className="unit-sel" value={s.unitSystem} onChange={(e) => s.setUnitSystem(e.target.value)}>
           {Object.values(UNIT_SYSTEMS).map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
         </select>

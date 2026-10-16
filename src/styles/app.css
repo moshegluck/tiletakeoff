@@ -484,3 +484,9 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
   .lib-patterns{grid-template-columns:repeat(3,1fr)}
   .lib-foot-note{display:none}
 }
+
+/* undo / redo in the header */
+.undo-redo{display:flex;gap:2px}
+.tbtn.icon{padding:6px 7px}
+.tbtn.icon svg{width:16px;height:16px}
+.tbtn:disabled{opacity:.4;cursor:default}
