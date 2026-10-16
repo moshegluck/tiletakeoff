@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runTrace } from '../src/engine/trace/index.js';
 import { pairWalls, mergeCollinear } from '../src/engine/trace/walls.js';
+import { buildGraph } from '../src/engine/trace/graph.js';
 import { arcsFromPolylines, isDoorSwing, readLeaves } from '../src/engine/trace/arcs.js';
 import { chromatic } from '../src/lib/pdfVectors.js';
 import { wallsToLines } from './fixtures/planFactory.js';
@@ -261,6 +262,24 @@ describe('trace — bathrooms and closets of the mill units', () => {
     const kept = readLeaves([], [part], [{ a: { x: 0.05, y: 0.05 }, b: { x: -1.15, y: 1.25 } }]);
     expect(kept.length).toBe(1);
     expect(kept[0].closed).toEqual({ x: 0, y: 1.7 });
+  });
+
+  it("a wall stopping on another wall right by that wall's own end (a 3\" scrap of it) joins that corner", () => {
+    // the west wall comes in three pieces, one a 3" scrap; the south wall of the
+    // room ends 1.6" off the scrap's top — on the wall, too near the scrap's end
+    // to split it, a hair past the snap distance from the corner
+    const t = 6 * IN;
+    const segs = [
+      { a: { x: 0, y: 0 }, b: { x: 0, y: 5 }, t, kind: 'wall' },
+      { a: { x: 0, y: 5 }, b: { x: 0.02, y: 5.25 }, t, kind: 'wall' },
+      { a: { x: 0.02, y: 5.25 }, b: { x: 0.05, y: 9 }, t, kind: 'wall' },
+      { a: { x: 0.095, y: 5.09 }, b: { x: 8, y: 5.09 }, t: 4 * IN, kind: 'wall' },
+    ];
+    const g = buildGraph(segs);
+    const deg = new Map();
+    for (const e of g.edges) for (const n of [e.u, e.v]) deg.set(n, (deg.get(n) || 0) + 1);
+    const corner = g.nodes.find((n) => Math.abs(n.x) < 0.1 && Math.abs(n.y - 5) < 0.1);
+    expect(deg.get(corner.id)).toBe(3);
   });
 
   it('a closet door drawn part open, between jamb returns too short to read as walls, closes the closet', () => {

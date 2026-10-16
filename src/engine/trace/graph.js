@@ -627,6 +627,10 @@ export function buildGraph(segs, options = {}, log = []) {
 
   // split parameters per segment
   const cuts = S.map(() => [0, 1]);
+  // an end that stops on another wall right by that wall's own end — too near
+  // it to split the wall there, a little past the snap distance from it — is
+  // that corner (a short scrap of a wall leaves it hanging otherwise)
+  const snapTo = new Map();
   for (let i = 0; i < S.length; i++) {
     const s = S[i];
     const cand = idx.query(Math.min(s.a.x, s.b.x) - opt.snapTol, Math.min(s.a.y, s.b.y) - opt.snapTol, Math.max(s.a.x, s.b.x) + opt.snapTol, Math.max(s.a.y, s.b.y) + opt.snapTol);
@@ -635,9 +639,12 @@ export function buildGraph(segs, options = {}, log = []) {
       if (j === i) continue;
       const o = S[j];
       // other's endpoints lying on this segment (tees)
-      for (const p of [o.a, o.b]) {
+      for (const [w, p] of [['a', o.a], ['b', o.b]]) {
         const c = closestOnSeg(p, s.a, s.b);
-        if (c.d <= opt.snapTol && c.t * L > opt.snapTol && (1 - c.t) * L > opt.snapTol) cuts[i].push(c.t);
+        if (c.d > opt.snapTol) continue;
+        if (c.t * L > opt.snapTol && (1 - c.t) * L > opt.snapTol) { cuts[i].push(c.t); continue; }
+        const E = c.t < 0.5 ? s.a : s.b, d = dist(p, E);
+        if (d > opt.snapTol && d <= 2 * opt.snapTol) snapTo.set(`${j}:${w}`, E);
       }
       // proper crossings
       if (j > i) {
@@ -656,9 +663,10 @@ export function buildGraph(segs, options = {}, log = []) {
   const pieces = [];
   S.forEach((s, i) => {
     const ts = [...new Set(cuts[i].map((t) => +t.toFixed(9)))].sort((a, b) => a - b);
+    const at = (t) => (t === 0 && snapTo.get(`${i}:a`)) || (t === 1 && snapTo.get(`${i}:b`)) || { x: s.a.x + (s.b.x - s.a.x) * t, y: s.a.y + (s.b.y - s.a.y) * t };
     for (let k = 0; k + 1 < ts.length; k++) {
-      const a = { x: s.a.x + (s.b.x - s.a.x) * ts[k], y: s.a.y + (s.b.y - s.a.y) * ts[k] };
-      const b = { x: s.a.x + (s.b.x - s.a.x) * ts[k + 1], y: s.a.y + (s.b.y - s.a.y) * ts[k + 1] };
+      const a = { ...at(ts[k]) };
+      const b = { ...at(ts[k + 1]) };
       const ia = pts.push(a) - 1, ib = pts.push(b) - 1;
       pieces.push({ ia, ib, src: s });
     }
