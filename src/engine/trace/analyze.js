@@ -475,6 +475,9 @@ export function analyzeGraph(g, ctx = {}) {
     flag('error', 'scale', null, calibration.msg);
   }
 
+  // ---- the plan's own numbers: a room tag that prints its area is the answer key ----
+  const verify = checkPrintedAreas(rooms, ctx.allTexts || texts, flag);
+
   // attach flags to rooms
   for (const fl of flags) {
     if (fl.roomId) continue;
@@ -488,7 +491,7 @@ export function analyzeGraph(g, ctx = {}) {
     r.status = sev.includes('error') ? 'error' : sev.includes('warn') ? 'review' : 'ok';
   }
 
-  return { rooms, voids, walls, openings, flags, calibration, faces: faces.length };
+  return { rooms, voids, walls, openings, flags, calibration, verify, faces: faces.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -598,3 +601,54 @@ export function parseDoorSchedule(texts) {
 }
 
 export { lerp };
+
+// ---------------------------------------------------------------------------
+// The plan checks the trace: room tags that print an area ("COWORKS 007
+// 580 SF") are the architect's own takeoff. Each traced room that holds one
+// either agrees (within 6%, or 3 SF on a closet) or is flagged at the tag
+// with both numbers — never a silent wrong area.
+// ---------------------------------------------------------------------------
+const AREA_TAG = /^(?:area\s*[:=]?\s*)?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:sf|s\.f\.?|sq\.?\s*ft\.?|ft²|ft2)$/i;
+
+/** Printed area tags on the sheet: [{ sf, x, y }] (a tag printed twice is one tag). */
+export function printedAreas(texts) {
+  const out = [];
+  for (const t of texts || []) {
+    const m = AREA_TAG.exec(String(t.str || '').trim());
+    if (!m) continue;
+    const sf = +m[1].replace(/,/g, '');
+    if (!(sf > 0)) continue;
+    if (out.some((o) => o.sf === sf && Math.hypot(o.x - t.x, o.y - t.y) < 1)) continue;
+    out.push({ sf, x: t.x, y: t.y });
+  }
+  return out;
+}
+
+function checkPrintedAreas(rooms, texts, flag) {
+  const tags = printedAreas(texts);
+  const verify = { tags: tags.length, matched: 0, off: 0, unplaced: 0 };
+  if (!tags.length) return verify;
+  const inRoom = (p, r) => pointInPoly(p, r.poly) && !(r.holes || []).some((h) => pointInPoly(p, h));
+  const held = new Map();
+  for (const t of tags) {
+    const r = rooms.find((rr) => inRoom(t, rr));
+    if (!r) { verify.unplaced++; continue; }
+    if (!held.has(r)) held.set(r, []);
+    held.get(r).push(t);
+  }
+  const sfTxt = (v) => `${Math.round(v).toLocaleString('en-US')} SF`;
+  for (const [r, ts] of held) {
+    const want = ts.reduce((a, t) => a + t.sf, 0);
+    const d = r.area - want;
+    r.printedSf = want;
+    if (ts.length === 1 && Math.abs(d) <= Math.max(3, want * 0.06)) { r.areaCheck = 'match'; verify.matched++; continue; }
+    r.areaCheck = 'off'; verify.off++;
+    const why = ts.length > 1
+      ? `${ts.length} room tags (${ts.map((t) => t.sf).join(' + ')} = ${sfTxt(want)}) sit in one traced room — rooms merged: a wall or door between them was not found`
+      : d > 0
+        ? `the plan prints ${sfTxt(want)}; the trace has ${sfTxt(r.area)} (+${sfTxt(d)}) — it runs into a neighbouring space (a missing wall, or a gap bridged in the wrong place)`
+        : `the plan prints ${sfTxt(want)}; the trace has ${sfTxt(r.area)} (−${sfTxt(-d)}) — a wall drawn inside it, or the room split`;
+    flag('warn', 'area_check', ts[0], `${r.name}: ${why}`, { roomId: r.id, printedSf: want, tracedSf: r.area });
+  }
+  return verify;
+}

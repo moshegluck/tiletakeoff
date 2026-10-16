@@ -18,6 +18,7 @@ export default function TracePanel() {
   const [err, setErr] = useState('');
   const [sheet, setSheet] = useState(null);     // detected sheet scale
   const [showInfo, setShowInfo] = useState(false);
+  const [showSurvey, setShowSurvey] = useState(true);
   const [aiBusy, setAiBusy] = useState(false);
   const [checkBusy, setCheckBusy] = useState(false);
   const hasPlan = !!(s.pdfDoc || s.planImage);
@@ -235,7 +236,20 @@ export default function TracePanel() {
               {res.totals.windows > 0 && <span><b>{res.totals.windows}</b> windows</span>}
             </div>
             {res.calibration?.verdict !== 'unknown' && <div className="tr-cal">{res.calibration.msg}</div>}
+            {res.verify?.tags > 0 && (
+              <div className={'tr-cal tr-plancheck ' + (res.verify.off || res.verify.unplaced ? 'off' : 'ok')}>
+                <span>Plan check: <b>{res.verify.matched} of {res.verify.tags}</b> printed room areas agree with the trace{res.verify.off ? ` · ${res.verify.off} don't (flagged)` : ''}{res.verify.unplaced ? ` · ${res.verify.unplaced} in no traced room` : ''}</span>
+              </div>
+            )}
           </div>
+
+          {/* ---- what the trace read off the sheet ---- */}
+          {res.survey?.notes?.length > 0 && (
+            <div className="tr-sec">
+              <button className="tr-h tr-toggle" onClick={() => setShowSurvey(!showSurvey)}>{showSurvey ? '▾' : '▸'} What the trace read off the sheet</button>
+              {showSurvey && <ul className="tr-survey">{res.survey.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+            </div>
+          )}
 
           {/* ---- flags ---- */}
           {mainFlags.length > 0 && (
@@ -289,6 +303,8 @@ export default function TracePanel() {
                   <span className="tr-num">{formatLength(r.wallLf, u)} wall LF</span>
                   {aiRooms.has(r.id) && <span className="tr-tag ai" title="The AI check found something here — see What needs a look">AI: check</span>}
                   {ai && !aiRooms.has(r.id) && aiOk.has(r.id) && <span className="tr-tag ok" title="The AI check found this room matches the drawing">AI ✓</span>}
+                  {r.areaCheck === 'match' && <span className="tr-tag ok" title="The room tag on the plan prints this area — the trace agrees">plan {Math.round(r.printedSf)} SF ✓</span>}
+                  {r.areaCheck === 'off' && <span className="tr-tag bad" title="The room tag on the plan prints a different area — see What needs a look">plan says {Math.round(r.printedSf)} SF</span>}
                   {r.type === 'nofloor' && <span className="tr-tag" title="Unexcavated / shaft / open to below: kept in the wall model, left out of the floor total and the takeoff">no floor · not in takeoff</span>}
                   {r.spurLf > 0 && <span className="tr-tag" title="Includes both faces of partitions that dead-end in this room">+ returns {formatLength(r.spurLf, u)}</span>}
                   {r.openings.length > 0 && <span className="tr-tag" title={r.openings.map((o) => `${o.type === 'window' ? 'window ' : ''}${formatLength(o.width, u)} → ${o.to || '?'}`).join('\n')}>{openingsTag(r.openings)}</span>}
