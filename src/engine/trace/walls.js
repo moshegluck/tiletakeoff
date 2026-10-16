@@ -27,9 +27,13 @@ export const WALL_DEFAULTS = {
   minT: 2.5 * IN,           // thinnest plausible wall
   minTAtypical: 3.5 * IN,   // thinnest wall we accept when it isn't a dominant thickness
   maxT: 16 * IN,            // thickest plausible wall (exterior / foundation)
+  thickMaxT: 36 * IN,       // an old masonry wall (a mill's brick): up to this thick …
+  thickMinLen: 8,           // … when both faces run on together at least this far (ft)
   minBodyLen: 0.45,         // ft
   peakTol: 0.75 * IN,
   seriesTol: 0.1,           // 10% spacing match → evenly spaced hatch
+  hairlineRatio: 0.4,       // lighter than this × the sheet's wall pen: not a wall face
+  thickPenRatio: 0.25,      // a thick masonry wall's faces: at least this × the wall pen
 };
 
 /** Normalize raw lines to { a, b, w, th, u, n, rho, s0, s1, len }. */
@@ -46,8 +50,45 @@ function prep(raw, opt) {
     const s0 = dot(r.a, u), s1 = dot(r.b, u);
     out.push({
       th, u, n, rho: (dot(r.a, n) + dot(r.b, n)) / 2,
-      s0: Math.min(s0, s1), s1: Math.max(s0, s1), w: r.w || 0, wl: !!r.wl, src: r.src || 'vector',
+      s0: Math.min(s0, s1), s1: Math.max(s0, s1), w: r.w || 0, wl: !!r.wl, ann: !!r.ann, src: r.src || 'vector',
     });
+  }
+  return out;
+}
+
+/**
+ * A dashed line — hidden, overhead, demolished, a basement wall's outer face
+ * below grade — comes off the sheet as a row of short pieces at an even
+ * pitch (a dash-dot's dots are too short to keep). Four or more in a row
+ * become one line marked `dashed`: never a wall face of its own, at most the
+ * hidden face of a thick wall whose other face is drawn solid.
+ */
+const DASH = { maxLen: 3, minGap: 0.05, maxGap: 1.5, minCount: 4, spread: 2.5 };
+function dashRuns(runs, at) {
+  const out = [];
+  const len = (r) => r.s1 - r.s0;
+  let i = 0;
+  while (i < runs.length) {
+    let j = i;
+    while (j + 1 < runs.length && len(runs[j]) <= DASH.maxLen && len(runs[j + 1]) <= DASH.maxLen) {
+      const gap = runs[j + 1].s0 - runs[j].s1;
+      if (gap < DASH.minGap || gap > DASH.maxGap) break;
+      j++;
+    }
+    const seq = runs.slice(i, j + 1);
+    const gaps = seq.slice(1).map((r, k) => r.s0 - seq[k].s1);
+    const even = (xs) => xs.length && Math.max(...xs) <= DASH.spread * Math.min(...xs);
+    if (seq.length >= DASH.minCount && even(gaps) && even(seq.map(len))) {
+      const pens = seq.map((r) => r.w).sort((p, q) => p - q);
+      out.push({
+        a: at(seq[0].s0), b: at(seq[seq.length - 1].s1), w: pens[Math.floor(pens.length / 2)],
+        wl: seq.some((r) => r.wl), ann: seq.filter((r) => r.ann).length > seq.length / 2,
+        dup: seq.reduce((acc, r) => acc + r.dup, 0), dashed: true,
+      });
+    } else {
+      for (const r of seq) out.push({ a: r.a, b: r.b, w: r.w, wl: r.wl, ann: r.ann, dup: r.dup });
+    }
+    i = j + 1;
   }
   return out;
 }
@@ -76,7 +117,7 @@ export function mergeCollinear(raw, options = {}) {
       const pa = { x: l.u.x * l.s0 + l.n.x * l.rho, y: l.u.y * l.s0 + l.n.y * l.rho };
       const pb = { x: l.u.x * l.s1 + l.n.x * l.rho, y: l.u.y * l.s1 + l.n.y * l.rho };
       const a = dot(pa, u), b = dot(pb, u);
-      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, wl: !!l.wl, src: l.src, orig: { a: pa, b: pb } };
+      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, wl: !!l.wl, ann: l.ann, src: l.src, orig: { a: pa, b: pb } };
     }).sort((p, q) => p.rho - q.rho);
     // band by rho (again anchored on the band's first line)
     let band = [];
@@ -85,28 +126,40 @@ export function mergeCollinear(raw, options = {}) {
       if (band.length === 1) {
         // a line with nothing to merge with is emitted exactly as drawn
         const o = band[0].orig;
-        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, wl: band[0].wl, dup: 1 });
+        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, wl: band[0].wl, ann: band[0].ann, dup: 1 });
         band = [];
         return;
       }
       const rho = band.reduce((s, l) => s + l.rho * (l.s1 - l.s0), 0) / band.reduce((s, l) => s + (l.s1 - l.s0), 0);
       band.sort((p, q) => p.s0 - q.s0);
-      let a = band[0].s0, b = band[0].s1, w = band[0].w, wl = band[0].wl, cnt = 1;
-      const emit = () => merged.push({
-        a: { x: u.x * a + n.x * rho, y: u.y * a + n.y * rho },
-        b: { x: u.x * b + n.x * rho, y: u.y * b + n.y * rho }, w, wl, dup: cnt,
-      });
+      // the run's pen: the heaviest weight drawing at least half as much of it
+      // as the most-used one — a wall face doubled by a lighter gypsum line is
+      // heavy; a long hairline dimension string that brushes a few heavy
+      // wall end-caps stays a hairline
+      const pen = new Map();
+      let annL = 0, allL = 0;   // a run drawn mostly in an annotation colour is annotation
+      const addPen = (l) => { pen.set(l.w, (pen.get(l.w) || 0) + (l.s1 - l.s0)); allL += l.s1 - l.s0; if (l.ann) annL += l.s1 - l.s0; };
+      const runW = () => {
+        const most = Math.max(...pen.values());
+        return Math.max(...[...pen].filter(([, L]) => L >= most * 0.5).map(([pw]) => pw));
+      };
+      let a = band[0].s0, b = band[0].s1, wl = band[0].wl, cnt = 1;
+      addPen(band[0]);
+      const runs = [];
+      const at = (sv) => ({ x: u.x * sv + n.x * rho, y: u.y * sv + n.y * rho });
+      const emit = () => runs.push({ a: at(a), b: at(b), s0: a, s1: b, w: runW(), wl, ann: annL > allL / 2, dup: cnt });
       let first = band[0];
       const emitRun = () => {
-        if (cnt === 1) merged.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, w, wl, dup: 1 });
+        if (cnt === 1) runs.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, s0: a, s1: b, w: first.w, wl, ann: first.ann, dup: 1 });
         else emit();
       };
       for (let i = 1; i < band.length; i++) {
         const l = band[i];
-        if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); w = Math.max(w, l.w); wl = wl || l.wl; cnt++; }
-        else { emitRun(); a = l.s0; b = l.s1; w = l.w; wl = l.wl; cnt = 1; first = l; }
+        if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); wl = wl || l.wl; cnt++; addPen(l); }
+        else { emitRun(); a = l.s0; b = l.s1; wl = l.wl; cnt = 1; first = l; pen.clear(); annL = allL = 0; addPen(l); }
       }
       emitRun();
+      merged.push(...dashRuns(runs, at));
       band = [];
     };
     for (const l of items) {
@@ -178,13 +231,82 @@ export function pairWalls(rawLines, options = {}) {
       if (o1 - o0 < opt.minBodyLen) continue;
       const side = dot(sub(m.a, l.a), n) + dot(sub(m.b, l.a), n);
       const d = Math.abs((dot(sub(m.a, l.a), n) + dot(sub(m.b, l.a), n)) / 2);
-      if (d < opt.minT || d > opt.maxT) continue;
-      const c = { i: l.id, j, d, o0, o1, overlap: o1 - o0 };
+      if (d < opt.minT || d > opt.thickMaxT) continue;
+      // past the usual thickness only a long, continuous pair can be a wall
+      const thick = d > opt.maxT;
+      if (thick && o1 - o0 < opt.thickMinLen) continue;
+      // a dashed line is only ever the hidden face of a thick wall
+      if ((l.dashed || m.dashed) && (!thick || (l.dashed && m.dashed))) continue;
+      const c = { i: l.id, j, d, o0, o1, overlap: o1 - o0, thick };
       cands.push(c);
+      if (thick) continue;
       partners[l.id].push({ j, d, side: Math.sign(side), o0, o1 });
       partners[j].push({ j: l.id, d, side: -Math.sign(side), o0, o1 });
     }
   }
+
+  // ---- a thick masonry wall is solid between its faces: a pair with other
+  // faces running inside it for most of its length (a layered wall and the
+  // deck edge beside it, two walls side by side) is not one thick wall. The
+  // window frames in a mill wall's bays are short beside its run.
+  for (const c of cands) {
+    if (!c.thick) continue;
+    const l = lines[c.i], u = l.u, n = perp(u);
+    const r0 = dot(l.a, n), r1 = dot(lines[c.j].a, n);
+    const lo = Math.min(r0, r1) + opt.minT / 2, hi = Math.max(r0, r1) - opt.minT / 2;
+    const ivs = [];
+    const mid = { x: (l.a.x + l.b.x) / 2, y: (l.a.y + l.b.y) / 2 };
+    const R = dist(l.a, l.b) / 2 + opt.thickMaxT;
+    for (const k of idx.query(mid.x - R, mid.y - R, mid.x + R, mid.y + R)) {
+      if (k === c.i || k === c.j) continue;
+      const q = lines[k];
+      if (angleDiff(l.th, q.th) > opt.pairAngTol) continue;
+      const rq = (dot(q.a, n) + dot(q.b, n)) / 2;
+      if (rq <= lo || rq >= hi) continue;
+      const a0 = Math.max(c.o0, Math.min(dot(q.a, u), dot(q.b, u))), a1 = Math.min(c.o1, Math.max(dot(q.a, u), dot(q.b, u)));
+      if (a1 > a0) ivs.push([a0, a1]);
+    }
+    ivs.sort((p, q) => p[0] - q[0]);
+    let cov = 0, end = -Infinity;
+    for (const [a0, a1] of ivs) { if (a1 <= end) continue; cov += a1 - Math.max(a0, end); end = a1; }
+    if (cov > 0.5 * c.overlap) c.dead = true;
+  }
+  for (let k = cands.length - 1; k >= 0; k--) if (cands[k].dead) cands.splice(k, 1);
+
+  // ---- line weight: on a sheet plotted with line weights, a wall cut in
+  // plan is drawn with the heavy pen and furniture, fixtures, casework and
+  // dimension lines with hairlines. When the candidates show a clear heavy
+  // class, a pair whose heavier line is still a hairline (under 40% of that
+  // weight) is not a wall — two parallel hairlines are a wardrobe, a tub, a
+  // dimension line beside a cabinet. A heavy face paired with a light one
+  // stays (an exterior wall drawn heavy outside, light inside). Each pair's
+  // say is capped, so one long border or dimension can't set the weight.
+  const heavyW = (() => {
+    const mass = new Map();
+    let total = 0;
+    for (const c of cands) {
+      if (c.thick) continue;
+      const w = Math.max(lines[c.i].w || 0, lines[c.j].w || 0);
+      if (!(w > 0)) continue;
+      const key = Math.round(Math.log(w) / Math.log(1.08));
+      const m = Math.min(c.overlap, 10);
+      mass.set(key, (mass.get(key) || 0) + m); total += m;
+    }
+    const keys = [...mass.keys()].sort((p, q) => q - p);
+    const k = keys.find((x) => mass.get(x) >= total * 0.15);
+    return k == null ? 0 : Math.pow(1.08, k);
+  })();
+  // A light line in an annotation colour (a dimension string, a grid line)
+  // is never a wall face. A thick masonry pair needs both faces in a wall
+  // pen — an existing wall is often plotted lighter than new work, but a
+  // hairline dimension string three feet off a wall is not its other face.
+  const light = (l, ratio) => heavyW > 0 && (l.w || 0) < heavyW * ratio;
+  const hairline = (c) => {
+    const l = lines[c.i], m = lines[c.j];
+    if ((l.ann && light(l, opt.hairlineRatio)) || (m.ann && light(m, opt.hairlineRatio))) return true;
+    if (c.thick) return l.ann || m.ann || light(l, opt.thickPenRatio) || light(m, opt.thickPenRatio);
+    return heavyW > 0 && Math.max(l.w || 0, m.w || 0) < heavyW * opt.hairlineRatio;
+  };
 
   // ---- hatch / evenly spaced series rejection ----
   // A run of evenly spaced parallels is a hatch, tile pattern or stair treads,
@@ -212,7 +334,14 @@ export function pairWalls(rawLines, options = {}) {
   // a wall face that happens to line up with a pattern's strokes (a long
   // exterior face beside a row of short window-frame or tread lines) is
   // not one of them
-  const outlier = (i, ids, d) => lines[i].len >= Math.max(10 * d, 2 * medianLen(ids));
+  // (or a wall face several times its strokes' length: a thick old wall's
+  // inner face lines up with the window-frame strokes in its bays)
+  const strokeLen = (ids) => {
+    const ls = ids.map((i) => lines[i].len).sort((a, b) => a - b);
+    return ls[Math.floor((ls.length - 1) / 4)];
+  };
+  const outlier = (i, ids, d) => lines[i].len >= Math.max(10 * d, 2 * medianLen(ids))
+    || lines[i].len >= Math.max(3 * strokeLen(ids), 4 * d);
   for (const l of lines) {
     if (hatch.has(l.id)) continue;
     const ps = partners[l.id];
@@ -242,7 +371,7 @@ export function pairWalls(rawLines, options = {}) {
   const bin = 0.25 * IN;
   const hist = new Map();
   for (const c of cands) {
-    if (hatch.has(c.i) || hatch.has(c.j)) continue;
+    if (hatch.has(c.i) || hatch.has(c.j) || hairline(c) || c.thick) continue;
     const k = Math.round(c.d / bin);
     hist.set(k, (hist.get(k) || 0) + c.overlap);
   }
@@ -260,8 +389,8 @@ export function pairWalls(rawLines, options = {}) {
 
   for (const c of cands) {
     const pk = nearPeak(c.d);
-    c.typical = !!pk;
-    c.prio = pk ? 0 : 1;
+    c.typical = !!pk && !c.thick;
+    c.prio = c.thick ? 2 : pk ? 0 : 1;
   }
   // A wall face's true partner is the one it runs alongside the longest: a sink
   // or shelf line may sit a "wall thickness" off the face, but only for a short
@@ -274,6 +403,7 @@ export function pairWalls(rawLines, options = {}) {
   for (const c of cands) {
     if (hatch.has(c.i) || hatch.has(c.j)) continue;
     if (!c.typical && c.d < opt.minTAtypical) continue;
+    if (hairline(c)) continue;
     const l = lines[c.i], m = lines[c.j];
     const u = l.u;
     // coverage of l is stored in l's own param (dot with l.u); m's in m's.
@@ -307,7 +437,7 @@ export function pairWalls(rawLines, options = {}) {
       const A = { x: (pL0.x + f0.x) / 2, y: (pL0.y + f0.y) / 2 };
       const B = { x: (pL1.x + f1.x) / 2, y: (pL1.y + f1.y) / 2 };
       const conf = Math.min(1, (c.typical ? 0.85 : 0.55) + Math.min(0.15, (b - a) / 40));
-      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), typical: c.typical, src: 'paired' });
+      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), wmin: Math.min(l.w, m.w), typical: c.typical, src: 'paired' });
       addInterval(covL, a, b);
       // store m coverage in m's own param
       const ma = sOf(m, f0), mb = sOf(m, f1);
@@ -336,7 +466,7 @@ export function pairWalls(rawLines, options = {}) {
     hatch,
     stats: {
       rawLines: rawLines.length, mergedLines: lines.length, candidates: cands.length,
-      hatchLines: hatch.size, peaks: peaks.map((p) => +(p.t * 12).toFixed(2)), bodies: bodies.length,
+      hatchLines: hatch.size, peaks: peaks.map((p) => +(p.t * 12).toFixed(2)), bodies: bodies.length, heavyW,
     },
   };
 }
@@ -406,13 +536,22 @@ export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1
         if (angleDiff(th, lineAngle(q.a, q.b)) > angTol) continue;
         const rp = dot(p.a, n), rq = (dot(q.a, n) + dot(q.b, n)) / 2;
         // face to face, or with an air gap between them (a new stud wall built
-        // 1–3" inside a foundation wall): one wall, the gap is no floor
+        // 1–3" inside a foundation wall): one wall, the gap is no floor. Or
+        // one inside the other: a wall drawn in layers (face lines, gypsum
+        // lines, the fill's edge) pairs up twice, a thinner body stacked in
+        // the thicker — still one wall, as thick as its outer faces
         const gap = Math.abs(rq - rp) - (p.t + q.t) / 2;
-        if (gap < -touchTol || gap > cavity) continue;
+        if (gap > cavity) continue;
         const ps = [dot(p.a, u), dot(p.b, u)].sort((a, b) => a - b);
         const qs = [dot(q.a, u), dot(q.b, u)].sort((a, b) => a - b);
         const lo = Math.max(ps[0], qs[0]), hi = Math.min(ps[1], qs[1]);
         if (hi - lo < minOverlap) continue;
+        if (gap < -touchTol) {
+          // overlapping: only the same wall twice — one band inside the
+          // other, running together for most of both lengths
+          const nested = Math.abs(rq - rp) + Math.min(p.t, q.t) / 2 <= Math.max(p.t, q.t) / 2 + touchTol;
+          if (!nested || hi - lo < 0.5 * (ps[1] - ps[0]) || hi - lo < 0.5 * (qs[1] - qs[0])) continue;
+        }
         // the combined body spans both outer faces
         const f0 = Math.min(rp - p.t / 2, rq - q.t / 2), f1 = Math.max(rp + p.t / 2, rq + q.t / 2);
         const rc = (f0 + f1) / 2;

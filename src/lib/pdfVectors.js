@@ -56,6 +56,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
   const opTexts = [];          // text read straight off the drawing operators (with its layer)
   let ctm = [1, 0, 0, 1, 0, 0];
   let lw = 1;
+  let sc = '#000000', fc = '#000000';   // stroke / fill colour (dimensions are often plotted in colour)
   const stack = [];
   // marked content: the layer each path / text belongs to (name null = not a layer)
   /** @type {{ name: string|null, hidden: boolean }[]} */
@@ -72,11 +73,13 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
     const fn = ops.fnArray[i];
     const args = ops.argsArray[i];
     switch (fn) {
-      case OPS.save: stack.push([ctm, lw]); break;
-      case OPS.restore: if (stack.length) [ctm, lw] = stack.pop(); break;
+      case OPS.save: stack.push([ctm, lw, sc, fc]); break;
+      case OPS.restore: if (stack.length) [ctm, lw, sc, fc] = stack.pop(); break;
+      case OPS.setStrokeRGBColor: sc = hexColor(args) ?? sc; break;
+      case OPS.setFillRGBColor: fc = hexColor(args) ?? fc; break;
       case OPS.transform: ctm = mult(ctm, args); break;
-      case OPS.paintFormXObjectBegin: stack.push([ctm, lw]); if (Array.isArray(args?.[0]) || ArrayBuffer.isView(args?.[0])) ctm = mult(ctm, Array.from(args[0])); break;
-      case OPS.paintFormXObjectEnd: if (stack.length) [ctm, lw] = stack.pop(); break;
+      case OPS.paintFormXObjectBegin: stack.push([ctm, lw, sc, fc]); if (Array.isArray(args?.[0]) || ArrayBuffer.isView(args?.[0])) ctm = mult(ctm, Array.from(args[0])); break;
+      case OPS.paintFormXObjectEnd: if (stack.length) [ctm, lw, sc, fc] = stack.pop(); break;
       case OPS.setLineWidth: lw = args[0]; break;
       case OPS.beginMarkedContentProps: {
         const id = args?.[0] === 'OC' ? args?.[1]?.id : null;
@@ -102,7 +105,11 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
         const wpx = Math.max(0, lw * scaleK);
         painted++;
         const l0 = lines.length, c0 = curves.length;
+        const fillOnly = paintOp === OPS.fill || paintOp === OPS.eoFill;
         walkPath(data, m, wpx, lines, curves, paintOp !== OPS.stroke && paintOp !== OPS.closeStroke);
+        const col = fillOnly ? fc : sc;
+        for (let k = l0; k < lines.length; k++) lines[k].col = col;
+        for (let k = c0; k < curves.length; k++) curves[k].col = col;
         const layer = layerNow();
         if (layer !== null) {
           for (let k = l0; k < lines.length; k++) lines[k].layer = layer;
@@ -204,6 +211,25 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       textSource, ...(textError ? { textError } : {}), layered: !!layers,
     },
   };
+}
+
+/** A colour op's argument as "#rrggbb" (pdf.js hands RGB ops a hex string). */
+function hexColor(args) {
+  const a = args?.[0];
+  if (typeof a === 'string') return a.toLowerCase();
+  if (args?.length >= 3 && args.slice(0, 3).every((v) => Number.isFinite(+v))) {
+    const k = Math.max(...args.slice(0, 3)) > 1 ? 1 : 255;
+    return '#' + args.slice(0, 3).map((v) => Math.round(+v * k).toString(16).padStart(2, '0')).join('');
+  }
+  return null;
+}
+
+/** A colour that isn't a gray: dimension strings, grid bubbles, tags — annotation, not construction. */
+export function chromatic(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  if (!m) return false;
+  const v = m.slice(1).map((x) => parseInt(x, 16));
+  return Math.max(...v) - Math.min(...v) >= 48;
 }
 
 function walkPath(d, m, w, lines, curves, filled) {

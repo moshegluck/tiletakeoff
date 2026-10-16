@@ -6,10 +6,11 @@
 //   scanned PDF / image → raster stroke detection (+ any text layer)
 // ============================================================
 
-import { arcFromBezier, isDoorSwing } from '../engine/trace/arcs.js';
+import { arcFromBezier, arcsFromPolylines, isDoorSwing } from '../engine/trace/arcs.js';
 import { parseScaleNote } from '../engine/trace/analyze.js';
 import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
+import { chromatic } from './pdfVectors.js';
 
 const VECTOR_MIN_LINES = 150;
 
@@ -89,12 +90,16 @@ export function evidenceToFeet(ev, scale, region = null) {
   const layered = hasWallLayers(ev.lines);
   // wl: drawn on a wall layer (a sheet that names them) — the architect's own walls
   const lines = wallCandidates(ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region)))
-    .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall' }));
+    .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall', ann: chromatic(l.col) }));
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
   const arcs = [];
   for (const c of ev.curves || []) {
     if (!inRegion(c.pieces[0].p0, region)) continue;
     const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
+    if (isDoorSwing(arc)) arcs.push(arc);
+  }
+  // swings a CAD export flattened into short straight pieces
+  for (const arc of arcsFromPolylines(ev.lines.filter((l) => inRegion(l.a, region)).map((l) => ({ a: P(l.a), b: P(l.b) })))) {
     if (isDoorSwing(arc)) arcs.push(arc);
   }
   // door / window linework: where the sheet says a doorway or a window is
