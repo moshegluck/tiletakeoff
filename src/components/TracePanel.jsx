@@ -19,6 +19,7 @@ export default function TracePanel() {
   const [sheet, setSheet] = useState(null);     // detected sheet scale
   const [showInfo, setShowInfo] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [checkBusy, setCheckBusy] = useState(false);
   const hasPlan = !!(s.pdfDoc || s.planImage);
   const editsKey = `${tr.manual.length}:${tr.removed.length}:${JSON.stringify(tr.region)}:${tr.settings.floorAtDoor}:${tr.settings.maxOpening}`;
   const lastEdits = useRef(editsKey);
@@ -70,7 +71,8 @@ export default function TracePanel() {
       // carry over names the user (or AI) already gave rooms in a previous run
       const names = cur.names || {};
       for (const r of result.rooms) { const k = nameKey(r); if (names[k]) { r.name = names[k]; } }
-      st.setTrace({ result, source: { mode: evidence.mode, page: st.pdfPage, stats: evidence.stats, input, at: Date.now() } });
+      // a new model: an earlier AI check was of the old one
+      st.setTrace({ result, aiReview: null, source: { mode: evidence.mode, page: st.pdfPage, stats: evidence.stats, input, at: Date.now() } });
       st.setShowTrace(true);
       if (cur.settings.ceilingHeight == null) st.setTraceSettings({ ceilingHeight: 8 });
       if (result.schedule?.doorHeight && !cur.settings.doorHeightSet) st.setTraceSettings({ doorHeight: result.schedule.doorHeight });
@@ -122,6 +124,23 @@ export default function TracePanel() {
     finally { setAiBusy(false); }
   }
 
+  // the AI looks at the drawing with the model on it and says where they disagree
+  async function aiCheck() {
+    setCheckBusy(true); setErr('');
+    try {
+      const { reviewTraceWithAI } = await import('../lib/aiReview.js');
+      const st = useStore.getState();
+      const page = st.pdfPage, result = st.trace?.result;
+      const out = await reviewTraceWithAI(st);
+      const now = useStore.getState();
+      if (now.pdfPage !== page || now.trace?.result !== result) return;   // the model changed meanwhile
+      now.setTrace({ aiReview: out });
+      const n = out.flags.length;
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: out.warning || (n ? `AI check: ${n} thing${n > 1 ? 's' : ''} to look at — listed under What needs a look` : 'AI check: the model matches the drawing'), ok: !out.warning } }));
+    } catch (e) { setErr(e.message || 'AI check failed'); }
+    finally { setCheckBusy(false); }
+  }
+
   function renameRoom(r, name) {
     const names = { ...(tr.names || {}), [nameKey(r)]: name };
     s.setTrace({ result: { ...res, rooms: res.rooms.map((x) => (x.id === r.id ? { ...x, name } : x)) }, names });
@@ -144,7 +163,11 @@ export default function TracePanel() {
     );
   }
 
-  const flags = res ? [...res.flags].sort((a, b) => SEV[a.severity] - SEV[b.severity]) : [];
+  // the engine's flags, then what the AI check found (never mixed into the numbers)
+  const ai = tr?.aiReview;
+  const flags = res ? [...res.flags, ...(ai?.flags || [])].sort((a, b) => SEV[a.severity] - SEV[b.severity]) : [];
+  const aiRooms = new Set((ai?.flags || []).map((f) => f.roomId).filter(Boolean));
+  const aiOk = new Set(ai?.okIds || []);
   const mainFlags = flags.filter((f) => f.severity !== 'info');
   const infoFlags = flags.filter((f) => f.severity === 'info');
   const u = s.unitSystem;
@@ -264,12 +287,18 @@ export default function TracePanel() {
                 <div className="tr-room-nums">
                   <span className="tr-num">{formatArea(r.area, u)}</span>
                   <span className="tr-num">{formatLength(r.wallLf, u)} wall LF</span>
+                  {aiRooms.has(r.id) && <span className="tr-tag ai" title="The AI check found something here — see What needs a look">AI: check</span>}
+                  {ai && !aiRooms.has(r.id) && aiOk.has(r.id) && <span className="tr-tag ok" title="The AI check found this room matches the drawing">AI ✓</span>}
                   {r.type === 'nofloor' && <span className="tr-tag" title="Unexcavated / shaft / open to below: kept in the wall model, left out of the floor total and the takeoff">no floor · not in takeoff</span>}
                   {r.spurLf > 0 && <span className="tr-tag" title="Includes both faces of partitions that dead-end in this room">+ returns {formatLength(r.spurLf, u)}</span>}
                   {r.openings.length > 0 && <span className="tr-tag" title={r.openings.map((o) => `${o.type === 'window' ? 'window ' : ''}${formatLength(o.width, u)} → ${o.to || '?'}`).join('\n')}>{openingsTag(r.openings)}</span>}
                 </div>
               </div>
             ))}
+            <button className="tbtn tr-ai" disabled={checkBusy} onClick={aiCheck} title="Claude looks at the drawing with the traced model on it and lists where they disagree. The numbers stay the trace's.">
+              {checkBusy ? 'AI is checking the model against the drawing…' : ai ? 'Check again with AI' : 'Check the trace with AI'}
+            </button>
+            {ai && <div className="note">AI checked {new Date(ai.at).toLocaleTimeString()} · {ai.flags.length ? `${ai.flags.length} finding${ai.flags.length > 1 ? 's' : ''}` : 'no disagreements'} · {aiOk.size} room{aiOk.size === 1 ? '' : 's'} confirmed</div>}
             {res.rooms.some((r) => /^Space \d+$/.test(r.name)) && (
               <button className="tbtn tr-ai" disabled={aiBusy} onClick={aiName}>{aiBusy ? 'Reading labels…' : 'Name rooms with AI'}</button>
             )}

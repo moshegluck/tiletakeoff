@@ -381,6 +381,7 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .tr-name:focus{outline:none;border-bottom:1px solid var(--accent)}
 .tr-num{font:600 11px var(--mono);color:var(--ink-2);white-space:nowrap}
 .tr-tag{font-size:10px;font-weight:600;color:#1d6fb0;background:#e5eff7;border-radius:8px;padding:1px 6px;white-space:nowrap}
+.tr-tag.ai{color:#7b3fa8;background:#f1e8f7}.tr-tag.ok{color:#1d7a4d;background:#e4f3eb}
 .tr-ai{width:100%;justify-content:center;margin-top:7px}
 .tr-actions{display:flex;flex-direction:column;gap:7px}
 .tr-actions .tbtn{justify-content:center;padding:8px 10px}

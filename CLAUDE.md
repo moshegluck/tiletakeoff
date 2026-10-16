@@ -62,15 +62,28 @@ TileTakeoff works the other way round:
 - `src/engine/zones.js` floor design zones (border bands follow the walls, traced inlays); the
   field = room − holes − bands − inlays. Drawn in 2D (`drawZones`), 3D (`houseModel.zoneSurfaces`)
   and priced in `estimate.js`.
+- `src/state/pages.js` each plan page keeps its own takeoff: the store holds the page on screen
+  (rooms / markups / trace / scale) and parks the others in `pageData[page]`; `switchPage()` swaps.
+  The estimate, exports and cloud save use `wholeProject()` (every page).
+- `src/lib/markedPdf.js` Export → Marked-up plan (PDF): the original vector pages with the takeoff
+  overlaid (rooms, SF, wall LF, doors / openings / windows, markups) + a summary page.
+- `src/lib/aiReview.js` + `api/detect-plan.js` `mode: 'review'`: "Check the trace with AI" — Claude
+  looks at the drawing with the traced model drawn on it (R/O tags) and returns located findings
+  (missing / false wall, missed door, window taken as door…) shown as flags. Never geometry.
 - `src/lib/supabasePublic.js` the live Supabase project; the API verifies each session with the
   project that issued its token, so a stale env var can't lock users out.
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 308 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 331 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
-- Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 28 rooms / 1,671 SF, 3 open-end
-  flags (unexcavated footing lines + one foundation corner). Was 18 rooms / 393 SF.
+- Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
+  room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
+  match). 3 open-end flags (unexcavated footing lines + one foundation corner). Was 18 rooms / 393 SF.
+- Wall LF rules: windows stay in wall LF (layer A-Glaz etc.); doors / openings come off; a stud
+  wall furred 1–3" inside a foundation wall is one wall; leftover wall-layer faces 1–8" inside a
+  room move its edge in; layer "0" never gives walls on a layered sheet; unexcavated / shaft
+  rooms are out of the floor total. Flags that change a number are "check", with the amount.
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Sample sheet: 7 rooms, 1,047.3 SF vector vs 1,046.5 SF from the crooked scan; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
@@ -86,7 +99,9 @@ TileTakeoff works the other way round:
   (`vite.config.js`) and `src/lib/supabase.js` swap in the live `tiletakeoff` project
   (qgvloanrqzuciuhpepjy); the API routes tokens by issuer. Clean fix = update
   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
-- A layered wall's shared seam lets the room run up to the seam (≤ 6½" along that wall).
+- A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
+- Windows are recognised from window layers only; on unlayered sheets a window gap reads as an opening.
+- The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).

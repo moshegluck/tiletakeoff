@@ -678,7 +678,7 @@ export function drawTrace(ctx, rc) {
     // gets its own pin with a ring.
     const pins = [];
     let focused = null;
-    for (const f of res.flags) {
+    for (const f of [...res.flags, ...(s.trace.aiReview?.flags || [])]) {
       if (!f.at) continue;
       const on = focus?.type === 'flag' && focus.id === f.id;
       if (on) { focused = f; continue; }
