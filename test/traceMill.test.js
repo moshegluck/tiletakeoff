@@ -163,9 +163,18 @@ describe('trace — the sheet checks the trace', () => {
   });
 
   it('two room tags in one traced room say the rooms merged', () => {
-    const res = runTrace({ lines: room(), texts: [{ str: '60 SF', x: 3, y: 5 }, { str: '50 SF', x: 9, y: 5 }] });
+    const res = runTrace({ lines: room(), texts: [{ str: '60 SF', x: 3, y: 5 }, { str: '30 SF', x: 9, y: 5 }] });
     expect(res.verify.off).toBe(1);
-    expect(res.flags.find((x) => x.kind === 'area_check').msg).toMatch(/2 room tags \(60 \+ 50 = 110 SF\).*rooms merged/);
+    expect(res.flags.find((x) => x.kind === 'area_check').msg).toMatch(/2 room tags \(60 \+ 30 = 90 SF\).*rooms merged/);
+  });
+
+  it('an open space the plan prints as two areas, with nothing drawn between them, agrees when they add up', () => {
+    // a meter alcove and the electric room it opens off: 47 + 64 = 111 SF
+    const res = runTrace({ lines: room(), texts: [{ str: 'METER', x: 3, y: 4 }, { str: '47 SF', x: 3, y: 5 }, { str: 'ELECTRIC', x: 9, y: 4 }, { str: '64 SF', x: 9, y: 5 }] });
+    expect(res.verify).toMatchObject({ matched: 1, off: 0 });
+    expect(res.rooms[0].areaCheck).toBe('match');
+    expect(res.rooms[0].printedParts).toEqual([47, 64]);
+    expect(res.flags.find((x) => x.kind === 'area_zones').msg).toMatch(/2 areas here \(47 \+ 64 = 111 SF\) with nothing drawn between them/);
   });
 
   it('a window drawn as frame lines across the gap is a window (closes the room, stays in wall LF) on a sheet without layers', () => {
@@ -280,6 +289,40 @@ describe('trace — bathrooms and closets of the mill units', () => {
     for (const e of g.edges) for (const n of [e.u, e.v]) deg.set(n, (deg.get(n) || 0) + 1);
     const corner = g.nodes.find((n) => Math.abs(n.x) < 0.1 && Math.abs(n.y - 5) < 0.1);
     expect(deg.get(corner.id)).toBe(3);
+  });
+
+  it("a wall meeting another just past that wall's end (its corner fills out beyond the centreline) closes the corner", () => {
+    // 10x8 room: the north wall ends 1.8" above where the east wall's centreline stops
+    const t = 4 * IN;
+    const bodies = [
+      { a: { x: 0, y: 0 }, b: { x: 9.95, y: 0 }, t },
+      { a: { x: 10, y: 0.15 }, b: { x: 10, y: 8 }, t },
+      { a: { x: 10, y: 0.15 }, b: { x: 12, y: 0.15 }, t: 7.8 * IN },
+      { a: { x: 10, y: 8 }, b: { x: 0, y: 8 }, t },
+      { a: { x: 0, y: 8 }, b: { x: 0, y: 0 }, t },
+    ];
+    const res = runTrace({ bodies });
+    expect(res.rooms.length).toBe(1);
+    const atCorner = (f) => f.at && Math.hypot(f.at.x - 10, f.at.y) < 0.5;
+    expect(res.flags.filter((f) => (f.kind === 'spur' || f.kind === 'open_end') && atCorner(f))).toEqual([]);
+    expect(res.rooms[0].area).toBeGreaterThan(70);
+  });
+
+  it('a wall runs straight through an offset crossing (walls meeting it from each side 5" apart)', () => {
+    // a 20x16 block cut by a N-S wall at x 10; an E-W wall meets it from the west
+    // at y 8 and one from the east at y 8.4 — each ends at the N-S wall, whose
+    // pieces stop at the walls they turn into
+    const t = 4 * IN;
+    const bodies = [
+      ...box(20, 16, 6 * IN).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 10, y: 0 }, b: { x: 10, y: 8 }, t },
+      { a: { x: 10, y: 8.4 }, b: { x: 10, y: 16 }, t },
+      { a: { x: 0, y: 8.4 }, b: { x: 10, y: 8.4 }, t },
+      { a: { x: 10, y: 8 }, b: { x: 20, y: 8 }, t },
+    ];
+    const res = runTrace({ bodies });
+    expect(res.rooms.length).toBe(4);
+    expect(errors(res)).toEqual([]);
   });
 
   it('a closet door drawn part open, between jamb returns too short to read as walls, closes the closet', () => {

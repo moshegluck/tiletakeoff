@@ -103,6 +103,7 @@ export function joinWalls(inSegs, options = {}, log = []) {
   }
 
   // ---- tees: ray from a free end hits another wall's body ----
+  const extra = [];
   for (const e of ends) {
     if (e.joined) continue;
     let best = null;
@@ -121,17 +122,39 @@ export function joinWalls(inSegs, options = {}, log = []) {
       // inner wall layer — anything narrower than a door is not a doorway)
       const shortOfFace = hit.s - s.t / 2;
       if ((hit.s > s.t * opt.stubFactor + opt.snapTol && shortOfFace > Math.min(opt.draftGap, opt.minOpening)) || hit.s < -s.t - opt.snapTol) continue;
-      if (!best || Math.abs(hit.s) < Math.abs(best.s)) best = { s: hit.s, pt: hit.pt, j };
+      if (!best || Math.abs(hit.s) < Math.abs(best.s)) best = { s: hit.s, pt: hit.pt, j, along, L };
     }
     if (best) {
       const moved = Math.abs(best.s);
       e.p = { ...best.pt }; e.joined = true;
+      // met just past the other wall's end (its corner fills out beyond its
+      // centreline end): that wall runs on to the meeting point
+      const o = segs[best.j];
+      if (best.along < -opt.snapTol) extra.push({ a: { ...best.pt }, b: { ...o.a }, t: o.t, conf: 0.6, kind: 'wall', src: 'repair' });
+      else if (best.along > best.L + opt.snapTol) extra.push({ a: { ...o.b }, b: { ...best.pt }, t: o.t, conf: 0.6, kind: 'wall', src: 'repair' });
       if (moved > opt.snapTol) log.push({ kind: 'tee', at: { ...best.pt }, note: `Wall extended ${(moved * 12).toFixed(1)}" to meet crossing wall` });
     }
   }
 
+  // ---- an offset crossing: walls meet a wall from each side a few inches
+  // apart, so its pieces each turn a corner or tee into a different one —
+  // it still runs straight through between them ----
+  for (let i = 0; i < ends.length; i++) {
+    const e1 = ends[i];
+    if (!e1.joined || e1.through) continue;
+    for (const bj of near(e1.p, maxT + opt.snapTol)) {
+      if (bj === e1.bi) continue;
+      for (const e2 of endByBody(bj)) {
+        if (!e2.joined || e2.through || e1.through) continue;
+        const g = collinearGap(e1, e2);
+        if (!g || g.gap <= opt.snapTol || g.gap > Math.min(opt.draftGap, Math.max(e1.t, e2.t) + opt.snapTol)) continue;
+        extra.push({ a: { ...e1.p }, b: { ...e2.p }, t: Math.min(e1.t, e2.t), conf: 0.6, kind: 'wall', src: 'repair' });
+        e1.through = e2.through = true;
+      }
+    }
+  }
+
   // ---- drafting gaps: collinear free ends facing each other, tiny gap ----
-  const extra = [];
   for (let i = 0; i < ends.length; i++) {
     const e1 = ends[i]; if (e1.joined) continue;
     for (const bj of near(e1.p, opt.draftGap + maxT)) {

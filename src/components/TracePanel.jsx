@@ -303,7 +303,7 @@ export default function TracePanel() {
                   <span className="tr-num">{formatLength(r.wallLf, u)} wall LF</span>
                   {aiRooms.has(r.id) && <span className="tr-tag ai" title="The AI check found something here — see What needs a look">AI: check</span>}
                   {ai && !aiRooms.has(r.id) && aiOk.has(r.id) && <span className="tr-tag ok" title="The AI check found this room matches the drawing">AI ✓</span>}
-                  {r.areaCheck === 'match' && <span className="tr-tag ok" title="The room tag on the plan prints this area — the trace agrees">plan {Math.round(r.printedSf)} SF ✓</span>}
+                  {r.areaCheck === 'match' && <span className="tr-tag ok" title={r.printedParts ? 'The plan prints this open space as several areas — their sum agrees with the trace' : 'The room tag on the plan prints this area — the trace agrees'}>plan {r.printedParts ? r.printedParts.join(' + ') : Math.round(r.printedSf)} SF ✓</span>}
                   {r.areaCheck === 'off' && <span className="tr-tag bad" title="The room tag on the plan prints a different area — see What needs a look">plan says {Math.round(r.printedSf)} SF</span>}
                   {r.type === 'nofloor' && <span className="tr-tag" title="Unexcavated / shaft / open to below: kept in the wall model, left out of the floor total and the takeoff">no floor · not in takeoff</span>}
                   {r.spurLf > 0 && <span className="tr-tag" title="Includes both faces of partitions that dead-end in this room">+ returns {formatLength(r.spurLf, u)}</span>}
