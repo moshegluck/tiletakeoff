@@ -7,9 +7,11 @@
 // rooms land exactly over the drawing. The ANTHROPIC_API_KEY lives in an
 // env var and never reaches the browser.
 //
-// Model: Claude Opus 5.5 by default (override with ANTHROPIC_MODEL). On
-// current models image coordinates map 1:1 to pixels up to 2576 px on the
-// long edge, and higher effort reads technical drawings more accurately.
+// Model: Claude Opus 5.5 by default. ANTHROPIC_MODEL may name another model
+// that reads plans at full resolution (see src/lib/planModels.js); an older
+// one is ignored, and a configured model the API rejects falls back to the
+// default. Image coordinates map 1:1 to pixels up to 2576 px on the long
+// edge, and higher effort reads technical drawings more accurately.
 // Structured outputs guarantee the room list is valid JSON in this shape.
 // Refusal fallbacks are on, so a safety-classifier false positive on a
 // drawing retries on another model instead of failing.
@@ -26,13 +28,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { projectForToken } from '../src/lib/supabasePublic.js';
+import { FALLBACK_MODELS, planModels, isModelProblem } from '../src/lib/planModels.js';
 
 // Claude reads a dense plan carefully; give it room (Fluid compute allows 300 s).
 export const config = { maxDuration: 300 };
 
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5-5';
-// Models that accept server-side refusal fallbacks ("default" routing).
-const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
+const MODELS = planModels(process.env.ANTHROPIC_MODEL);
+if (MODELS.ignored) {
+  console.warn(`[detect-plan] ANTHROPIC_MODEL=${MODELS.ignored} can't read plans at full resolution; using ${MODELS.chain[0]}. Remove or update ANTHROPIC_MODEL.`);
+}
 
 const SYSTEM = `You are a flooring takeoff assistant. You are given one image cut from an architectural drawing; it may be a whole sheet or a zoomed-in part of one.
 
@@ -198,10 +202,10 @@ function cleanRoom(r, W, H) {
   return { name, x, y, w, h, outline, dimText, dimWFt: ft(r.dim_w_ft), dimHFt: ft(r.dim_h_ft), confidence: conf };
 }
 
-// One Messages call. With a fallback-capable model, opt into server-side
-// refusal fallbacks; if the API rejects that request shape, retry plainly so
-// an optional extra can never take detection down.
-async function askClaude(anthropic, params) {
+// One Messages call on one model. With a fallback-capable model, opt into
+// server-side refusal fallbacks; if the API rejects that request shape, retry
+// plainly so an optional extra can never take detection down.
+async function askModel(anthropic, params) {
   if (FALLBACK_MODELS.has(params.model)) {
     try {
       return await anthropic.beta.messages.create({
@@ -215,6 +219,20 @@ async function askClaude(anthropic, params) {
     }
   }
   return anthropic.messages.create(params);
+}
+
+// Try each model in the chain; move on only when the API says the model
+// itself can't serve the request (unknown to this key, or missing a feature).
+async function askClaude(anthropic, params) {
+  const { chain } = MODELS;
+  for (let i = 0; ; i++) {
+    try {
+      return await askModel(anthropic, { ...params, model: chain[i] });
+    } catch (err) {
+      if (i === chain.length - 1 || !isModelProblem(err)) throw err;
+      console.error(`[detect-plan] ${chain[i]} rejected the request (${err?.status}: ${err?.message}); trying ${chain[i + 1]}`);
+    }
+  }
 }
 
 export default async function handler(req, res) {
@@ -272,7 +290,6 @@ export default async function handler(req, res) {
     let msg;
     try {
       msg = await askClaude(anthropic, {
-        model: MODEL,
         max_tokens: 16000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'high', format: { type: 'json_schema', schema: ROOM_SCHEMA } },
