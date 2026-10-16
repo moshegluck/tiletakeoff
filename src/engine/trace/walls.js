@@ -347,7 +347,15 @@ export function pairWalls(rawLines, options = {}) {
     const ls = ids.map((i) => lines[i].len).sort((a, b) => a - b);
     return ls[Math.floor(ls.length / 2)];
   };
-  const isPattern = (ids, d) => ids.length >= 6 || (ids.length >= 4 && medianLen(ids) < 10 * d);
+  // a hatch or tile pattern is drawn with one pen: four short lines a few
+  // inches apart in four different pens (a door leaf, a wall's two faces, the
+  // washer box beside it) are drawing that happens to line up
+  const onePen = (ids) => {
+    const n = new Map();
+    for (const i of ids) { const key = lines[i].w > 0 ? Math.round(Math.log(lines[i].w) / Math.log(1.1)) : 'none'; n.set(key, (n.get(key) || 0) + 1); }
+    return Math.max(...n.values()) >= Math.ceil(0.75 * ids.length);
+  };
+  const isPattern = (ids, d) => ids.length >= 6 || (ids.length >= 4 && medianLen(ids) < 10 * d && onePen(ids));
   // a wall face that happens to line up with a pattern's strokes (a long
   // exterior face beside a row of short window-frame or tread lines) is
   // not one of them

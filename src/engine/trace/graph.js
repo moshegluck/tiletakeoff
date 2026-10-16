@@ -59,10 +59,13 @@ export function joinWalls(inSegs, options = {}, log = []) {
   segs.forEach((s, i) => idx.insert(i, Math.min(s.a.x, s.b.x) - maxT, Math.min(s.a.y, s.b.y) - maxT, Math.max(s.a.x, s.b.x) + maxT, Math.max(s.a.y, s.b.y) + maxT));
   const near = (p, r) => idx.query(p.x - r, p.y - r, p.x + r, p.y + r);
 
-  // already-connected ends (touching another segment)
+  // already-connected ends (touching another segment). A scrap shorter than
+  // half the wall is thick (the step a layered wall's poche leaves in a
+  // corner) doesn't hold an end: it's pruned as a stub later, and the end
+  // would be left open — let it find its corner instead.
   for (const e of ends) {
     for (const j of near(e.p, opt.snapTol)) {
-      if (j === e.bi) continue;
+      if (j === e.bi || dist(segs[j].a, segs[j].b) < e.t / 2) continue;
       if (touches(e.p, segs[j], opt.snapTol)) { e.joined = true; break; }
     }
   }
@@ -570,6 +573,22 @@ function refineWidth(gap, r) {
   return Math.abs(r - gap) / gap < 0.2 ? r : gap;
 }
 
+/**
+ * A door drawn part open whose jambs are short returns, too small to read as
+ * walls: the gap the trace sees runs on to the wall faces beyond, wider than
+ * the leaf. The swing still marks it when it hinges at one jamb and closes
+ * (`arc.closed`: the end away from its drawn leaf) on the doorway line,
+ * across most of it.
+ */
+function closesAcross(c, arc) {
+  if (!arc.closed) return false;
+  const [A, B] = dist(c.jambs[0], arc.c) <= dist(c.jambs[1], arc.c) ? c.jambs : [c.jambs[1], c.jambs[0]];
+  const W = dist(A, B);
+  if (W < 1e-6) return false;
+  const u = norm(sub(B, A)), v = sub(arc.closed, A), s = dot(v, u);
+  return Math.abs(cross(u, v)) <= (c.t || 0) / 2 + 0.3 && s >= 0.55 * W && s <= W + 0.3;
+}
+
 function matchArcs(c, arcs) {
   if (!arcs.length) return [];
   const out = [];
@@ -578,13 +597,13 @@ function matchArcs(c, arcs) {
     const nearJamb = c.jambs.some((j) => dist(j, arc.c) <= tol);
     if (!nearJamb) continue;
     // a swing drawn a size off its frame (2'-6" leaf in a 3'-2" rough gap) still marks the door
-    const single = Math.abs(arc.r - c.width) / c.width < 0.25;
+    const single = Math.abs(arc.r - c.width) / c.width < 0.25 || closesAcross(c, arc);
     const dbl = Math.abs(arc.r * 2 - c.width) / c.width < 0.25;
     if (single || dbl) out.push(arc);
   }
   // a single leaf whose radius = full width beats two half-width matches; a
   // double door needs both its leaves — one half-width swing alone is no door
-  const full = out.filter((a) => Math.abs(a.r - c.width) / c.width < 0.25);
+  const full = out.filter((a) => Math.abs(a.r - c.width) / c.width < 0.25 || closesAcross(c, a));
   if (full.length) return full.slice(0, 1);
   return out.length >= 2 ? out.slice(0, 2) : [];
 }
