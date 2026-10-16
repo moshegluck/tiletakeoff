@@ -18,6 +18,7 @@ import { MONO, hexA } from './canvasUtils.js';
 import { roundRect } from './canvasUtils.js';
 
 export function renderScene(ctx, W, H, rc) {
+  rc.W = W; rc.H = H;
   const { s, scale, planImg } = rc;
   // plan underlay — image lives at model-px origin (0,0)
   // view.x/y is the screen offset of model origin, zoom scales it
@@ -33,9 +34,16 @@ export function renderScene(ctx, W, H, rc) {
     // for images not attached to the DOM.
     const piw = planImg.naturalWidth  || planImg.width;
     const pih = planImg.naturalHeight || planImg.height;
+    const z = s.view.zoom;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     if (piw && pih) {
-      ctx.drawImage(planImg, ox, oy, piw * s.view.zoom, pih * s.view.zoom);
+      ctx.drawImage(planImg, ox, oy, piw * z, pih * z);
     }
+    // the on-screen part re-rendered from the PDF at device resolution
+    // (lib/planDetail.js); canvas px i ↔ model px d.x + i / d.k exactly
+    const d = rc.planDetail;
+    if (d) ctx.drawImage(d.canvas, ox + d.x * z, oy + d.y * z, (d.canvas.width / d.k) * z, (d.canvas.height / d.k) * z);
     ctx.globalAlpha = 1;
   }
   if (scale && s.showGrid) drawFootGrid(ctx, W, H, rc);
@@ -208,6 +216,15 @@ export function drawMkDraft(ctx, rc) {
 }
 
 export function drawFootGrid(ctx, W, H, rc) {
+  // multiply: the grid tints the white paper but never paints over the
+  // plan's dark lines and text
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  drawFootGridLines(ctx, W, H, rc);
+  ctx.restore();
+}
+
+function drawFootGridLines(ctx, W, H, rc) {
   const { s, ft2px } = rc;
   const z = s.view.zoom, step = ft2px(1) * z;
   if (step < 6) return;
@@ -360,23 +377,50 @@ export function drawTileGrid(ctx, rc) {
   }
 }
 
+// Tile layouts only change with the room or the tile, never with the view,
+// so they are generated once and reused every frame (rooms are immutable:
+// an edited room is a new points array).
+const layoutCache = new WeakMap();
+function cachedLayout(poly, opts) {
+  let byPoly = layoutCache.get(poly);
+  if (!byPoly) { byPoly = new Map(); layoutCache.set(poly, byPoly); }
+  const key = `${opts.pattern}|${opts.tileW}|${opts.tileH}|${opts.angleDeg}|${opts.origin.x},${opts.origin.y}`;
+  let tiles = byPoly.get(key);
+  if (!tiles) {
+    if (byPoly.size > 8) byPoly.clear();
+    tiles = generateLayout(poly, opts);
+    byPoly.set(key, tiles);
+  }
+  return tiles;
+}
+
 function drawLayoutTiles(ctx, rc, m, poly, layout, twFt, thFt) {
-  const { s, ft2px, toScreen } = rc;
-  const tiles = generateLayout(poly, {
+  const { s, ft2px, toScreen, W = Infinity, H = Infinity } = rc;
+  const tiles = cachedLayout(poly, {
     pattern: layout?.pattern || m.pattern || 'grid',
     tileW: twFt, tileH: thFt,
     angleDeg: layout?.angleDeg || 0, origin: layout?.origin || { x: 0, y: 0 },
   });
   const z = s.view.zoom;
-  tiles.forEach((t) => {
+  const w = ft2px(twFt) * z, h = ft2px(thFt) * z;
+  if (Math.min(w, h) < 2) return;               // too small to read: skip the grid
+  // every visible tile goes into one path: one fill and one stroke per room
+  const path = new Path2D();
+  for (const t of tiles) {
     const sp = toScreen(ft2px(t.cx), ft2px(t.cy));
-    const w = ft2px(t.w) * z, h = ft2px(t.h) * z;
-    if (w < 2 || h < 2) return;
-    ctx.save(); ctx.translate(sp.x, sp.y); ctx.rotate(t.rot);
-    ctx.fillStyle = hexA(m.color, .1); ctx.strokeStyle = hexA(m.color, .5); ctx.lineWidth = 1;
-    ctx.fillRect(-w / 2, -h / 2, w - 1, h - 1); ctx.strokeRect(-w / 2, -h / 2, w - 1, h - 1);
-    ctx.restore();
-  });
+    const tw = ft2px(t.w) * z - 1, th = ft2px(t.h) * z - 1;
+    const r = (tw + th) / 2 + 1;
+    if (sp.x < -r || sp.y < -r || sp.x > W + r || sp.y > H + r) continue;
+    if (!t.rot) { path.rect(sp.x - tw / 2 - 0.5, sp.y - th / 2 - 0.5, tw, th); continue; }
+    const c = Math.cos(t.rot), si = Math.sin(t.rot), hx = tw / 2, hy = th / 2;
+    path.moveTo(sp.x - hx * c + hy * si, sp.y - hx * si - hy * c);
+    path.lineTo(sp.x + hx * c + hy * si, sp.y + hx * si - hy * c);
+    path.lineTo(sp.x + hx * c - hy * si, sp.y + hx * si + hy * c);
+    path.lineTo(sp.x - hx * c - hy * si, sp.y - hx * si + hy * c);
+    path.closePath();
+  }
+  ctx.fillStyle = hexA(m.color, .1); ctx.strokeStyle = hexA(m.color, .5); ctx.lineWidth = 1;
+  ctx.fill(path); ctx.stroke(path);
 }
 
 // Border band: a joint across the band at every piece length along each run.

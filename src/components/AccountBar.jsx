@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useStore, setCloudSaver } from '../state/store.js';
+import { useStore, useProject, setCloudSaver } from '../state/store.js';
 import { cloudEnabled } from '../lib/supabase.js';
 import {
   getUser, onAuthChange, signInWithPassword, signUp, signOut,
@@ -166,7 +166,7 @@ function AuthModal({ onClose, initialMode = 'in' }) {
 }
 
 function ProjectsDrawer({ onClose }) {
-  const s = useStore();
+  const s = useProject();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
 

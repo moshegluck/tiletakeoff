@@ -81,18 +81,17 @@ export async function renderPage(doc, pageNum, targetWidth = 1400) {
   return { dataUrl, width: W, height: H, renderScale: scale };
 }
 
+// PNG, not JPEG: plans are thin lines on white, which JPEG smears into
+// grey halos (very visible zoomed in), and line art compresses well as PNG.
 function canvasToUrl(canvas) {
   return new Promise((resolve) => {
     if (canvas.toBlob) {
       canvas.toBlob((blob) => {
-        if (blob && blob.size > 500) {
-          resolve(URL.createObjectURL(blob));
-        } else {
-          resolve(canvas.toDataURL('image/jpeg', 0.88));
-        }
-      }, 'image/jpeg', 0.88);
+        if (blob && blob.size > 500) resolve(URL.createObjectURL(blob));
+        else resolve(canvas.toDataURL('image/png'));
+      }, 'image/png');
     } else {
-      resolve(canvas.toDataURL('image/jpeg', 0.88));
+      resolve(canvas.toDataURL('image/png'));
     }
   });
 }
