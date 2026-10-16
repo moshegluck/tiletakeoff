@@ -221,6 +221,95 @@ describe('trace — real CAD sheets', () => {
     expect(onBathWall.every((o) => o.width < 4)).toBe(true);
   });
 
+  it('a stud wall built 2" inside a foundation wall is one wall, not a strip of floor', () => {
+    // the bay at the top of the play area: a 4½" stud wall stands 2" off the
+    // 8" foundation wall and stops 4' short of the west wall; the 2" air gap
+    // opened into the room and read as floor + 2 faces of wall LF
+    const W = 12, H = 10, S = 4.5 * IN, gap = 2 * IN, y = EXT / 2 + gap + S / 2;
+    const lines = wallsToLines([...box(W, H), { x1: 4, y1: y, x2: W, y2: y, t: S, capA: 0 }], [], W, H);
+    const res = runTrace({ lines });
+    expect(res.rooms.length).toBe(1);
+    expect(errors(res)).toEqual([]);
+    const inside = (W - EXT) * (H - EXT);
+    const layer = (W - EXT / 2 - 4) * (gap + S);
+    expect(res.rooms[0].area).toBeCloseTo(inside - layer, 0);
+    // the face steps where the stud wall stops (an L: its perimeter is the
+    // box's) — and no strip's two faces on top
+    expect(res.rooms[0].wallLf).toBeCloseTo(2 * (W - EXT) + 2 * (H - EXT), 1);
+  });
+
+  it('a wall that thickens (a recess) joins up instead of opening a doorway', () => {
+    // bath 2's east wall: 8" with a 14" stretch, its centreline 3" off
+    const W = 10, H = 8, T2 = 14 * IN, off = (T2 - EXT) / 2;
+    const lines = wallsToLines([
+      { x1: 0, y1: 0, x2: W, y2: 0, t: EXT }, { x1: 0, y1: H, x2: W, y2: H, t: EXT }, { x1: 0, y1: 0, x2: 0, y2: H, t: EXT },
+      { x1: W, y1: 0, x2: W, y2: 3, t: EXT, capB: 0 }, { x1: W - off, y1: 3, x2: W - off, y2: 4.5, t: T2, capA: 0, capB: 0 },
+      { x1: W, y1: 4.5, x2: W, y2: H, t: EXT, capA: 0 },
+    ], [], W, H);
+    const res = runTrace({ lines });
+    expect(res.rooms.length).toBe(1);
+    expect(res.openings.filter((o) => o.rooms.some(Boolean))).toEqual([]);
+    expect(res.rooms[0].openingLf).toBe(0);
+  });
+
+  it('a window is no break in the wall: it closes the room and stays in wall LF', () => {
+    const W = 12, H = 10;
+    const gapAt = { axis: 'h', c: H, s: 4, w: 3, t: EXT };
+    const lines = wallsToLines(box(W, H), [gapAt], W, H);
+    // sash lines along the wall, inside its thickness, on the window layer
+    const sash = [-EXT / 4, 0, EXT / 4].map((dy) => ({ a: { x: 4, y: H + dy }, b: { x: 7, y: H + dy }, kind: 'window' }));
+    const win = runTrace({ lines, hints: sash });
+    expect(win.rooms.length).toBe(1);
+    expect(win.openings.map((o) => o.openingType)).toEqual(['window']);
+    const full = 2 * (W - EXT) + 2 * (H - EXT);
+    expect(win.rooms[0].wallLf).toBeCloseTo(full, 1);
+    expect(win.rooms[0].area).toBeCloseTo((W - EXT) * (H - EXT), 1);
+    // the same gap drawn on the door layer is a doorway: off the wall LF
+    const door = runTrace({ lines, hints: sash.map((h) => ({ ...h, kind: 'door' })) });
+    expect(door.openings.map((o) => o.openingType)).toEqual(['opening']);
+    expect(door.rooms[0].wallLf).toBeCloseTo(full - 3, 1);
+  });
+
+  it('a furring face on the wall layer that no wall took is where the room stops', () => {
+    // the gym's east side: 8" foundation wall with a 4½" stud layer against it
+    // drawn as three lines (the middle one shared) — the room ran to the middle one
+    const W = 12, H = 10, F = 4.5 * IN;
+    const lines = wallsToLines(box(W, H), [], W, H).map((l) => ({ ...l, wl: true }));
+    // furring along most of the wall (the foundation wall's two faces run longer, so they pair)
+    lines.push({ a: { x: W - EXT / 2 - F, y: EXT / 2 }, b: { x: W - EXT / 2 - F, y: EXT / 2 + 0.8 * (H - EXT) }, wl: true });
+    const res = runTrace({ lines });
+    expect(res.rooms.length).toBe(1);
+    expect(res.rooms[0].area).toBeCloseTo((W - EXT - F) * (H - EXT), 1);
+    // off the wall layer (a counter, a shelf) the same line moves nothing
+    const plain = runTrace({ lines: lines.map((l) => ({ ...l, wl: false })) });
+    expect(plain.rooms[0].area).toBeCloseTo((W - EXT) * (H - EXT), 1);
+  });
+
+  it('an unnamed alcove off a named room is part of it, not a room behind an inferred opening', () => {
+    // the study's 9'-4" alcove of built-ins: no door, nothing drawn across
+    const W = 20, H = 14, y = 4;
+    const walls = [...box(W, H), { x1: 0, y1: y, x2: 5, y2: y, t: INT }, { x1: 14.33, y1: y, x2: W, y2: y, t: INT }];
+    const lines = wallsToLines(walls, [], W, H);
+    const study = runTrace({ lines, texts: [{ str: 'STUDY', x: 10, y: 9 }] });
+    expect(study.rooms.length).toBe(1);
+    expect(study.rooms[0].name).toBe('STUDY');
+    // two named rooms either side: a cased opening between them stays
+    const two = runTrace({ lines, texts: [{ str: 'STUDY', x: 10, y: 9 }, { str: 'LIBRARY', x: 10, y: 2 }] });
+    expect(two.rooms.length).toBe(2);
+  });
+
+  it('an unexcavated area closes the walls but is no floor: out of the totals, flagged', () => {
+    const W = 16, H = 10;
+    const lines = wallsToLines([...box(W, H), { x1: 10, y1: 0, x2: 10, y2: H, t: INT }], [], W, H);
+    const res = runTrace({ lines, texts: [{ str: 'GYM', x: 5, y: 5 }, { str: 'UNEXCAVATED', x: 13, y: 5 }] });
+    expect(res.rooms.length).toBe(2);
+    const gym = res.rooms.find((r) => r.name === 'GYM'), unx = res.rooms.find((r) => r.name === 'UNEXCAVATED');
+    expect(unx.type).toBe('nofloor');
+    expect(res.totals.rooms).toBe(1);
+    expect(res.totals.floorSf).toBeCloseTo(gym.area, 6);
+    expect(res.flags.some((f) => f.kind === 'not_floor' && f.severity === 'warn')).toBe(true);
+  });
+
   it('hatch strokes inside a new wall never become walls of their own', () => {
     // a 4" wall with three 45° hatch strokes near its end (too few for a pattern)
     const lines = [hline(0, 0, 10), hline(INT, 0, 10)];

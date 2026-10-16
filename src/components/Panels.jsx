@@ -26,6 +26,10 @@ export function Panels() {
   return <EstimatePanel />;
 }
 
+// a room's ways in (doors, openings: wall LF is net of them) and its windows (not)
+const ways = (r) => (r.openings || []).filter((o) => o.type !== 'window');
+const wins = (r) => (r.openings || []).filter((o) => o.type === 'window');
+
 /* ---------------- Other pages ---------------- */
 // The lists show the page on screen; this says what the plan's other pages
 // hold and goes there (App renders the page).
@@ -120,7 +124,8 @@ function RoomCard({ room: r }) {
               <span>Floor <b>{formatArea(area, s.unitSystem)}</b></span>
               <span>Wall LF <b>{formatLength(roomWallLf(r), s.unitSystem)}</b></span>
               {r.spurLf > 0 && <span>incl. returns <b>{formatLength(r.spurLf, s.unitSystem)}</b></span>}
-              {r.openings?.length > 0 && <span>{r.openings.length} opening{r.openings.length > 1 ? 's' : ''}: {r.openings.map((o) => formatLength(o.width, s.unitSystem)).join(', ')}</span>}
+              {ways(r).length > 0 && <span>net of {ways(r).length} door{ways(r).length > 1 ? 's' : ''} / opening{ways(r).length > 1 ? 's' : ''}: {ways(r).map((o) => formatLength(o.width, s.unitSystem)).join(', ')}</span>}
+              {wins(r).length > 0 && <span>{wins(r).length} window{wins(r).length > 1 ? 's' : ''} (wall LF runs under)</span>}
               {r.holes?.length > 0 && <span>{r.holes.length} column/chase deducted</span>}
             </div>
           )}

@@ -8,7 +8,11 @@
 // a title-block box can pass for a wall face. Pure; no DOM.
 // ============================================================
 
-/** @typedef {'wall'|'opening'|'roomLabel'|'ignore'|'other'} LayerKind */
+/**
+ * door / window: the architect's door or window drawing; opening: a layer
+ * holding both (A - DOORS_WINDOWS)
+ * @typedef {'wall'|'door'|'window'|'opening'|'roomLabel'|'ignore'|'other'} LayerKind
+ */
 
 const norm = (name) => ` ${String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
 
@@ -20,9 +24,13 @@ const RULES = [
   ['ignore', /\b(above|abv|ovhd|overhead|hidden|beam\w*|joist\w*|header|lintel|soffit|roof\w*|ceil\w*|clg|rcp)\b/],
   // room-name text: "T - ROOM LABEL", "A-AREA-IDEN" (AIA), "A-ANNO-RMNM", "ROOM TAGS"
   ['roomLabel', /\b(room|rm|space)\b.*\b(labels?|names?|tags?|iden\w*|text|txt)\b|\b(area ?iden\w*|area ?names?|rmnm|rm ?names?)\b/],
-  ['opening', /\b(doors?|dr|drs|glaz\w*|windows?|wind|wndw|win|openings?|storefront|curtain ?wall)\b/],
+  // tags and labels are text, not the door / window drawn in the wall
+  ['ignore', /\b(labels?|tags?|text|txt|symbols?|symb|notes?)\b/],
+  ['opening', /\b(doors?|drs?)\b.*(\w*windows?|glaz\w*)|(\w*windows?|glaz\w*)\b.*\bdoors?\b|\bopenings?\b/],
+  ['door', /\b(\w*doors?|dr|drs)\b/],
+  ['window', /\b(glaz\w*|\w*windows?|wind|wndw|win|sash\w*|storefront|curtain ?wall)\b/],
   ['ignore', /\b(dim\w*|text|txt|anno\w*|notes?|keynotes?|titles?|tblk|t ?block|frame|border|sheet|revis\w*|leaders?|multileaders?|labels?|tags?|symbols?|symb|section|sect|elev\w*|details?|grid\w*|hatch\w*|patt\w*|poch\w*|viewports?|vports?|defpoints|furn\w*|fixt\w*|equip\w*|casework|built ?ins?|millwork|cabinet\w*|appl\w*|plumb\w*|plmb|elec\w*|wiring|lighting|light\w*|mech\w*|hvac|struc\w*|stairs?|strs|deck\w*|rail\w*|site|topo\w*|landsc\w*|areas?)\b/],
-  ['wall', /\b(walls?|wall\w*|partitions?|prtn|ptn|foundation ?walls?|fdn ?walls?)\b/],
+  ['wall', /\b(\w*walls?|wall\w*|partitions?|prtn|ptn|foundation ?walls?|fdn ?walls?)\b/],
 ];
 
 /**
@@ -35,6 +43,9 @@ export function classifyLayer(name) {
   for (const [kind, re] of RULES) if (re.test(n)) return kind;
   return 'other';
 }
+
+/** A door, window or door-and-window layer: linework that marks a gap in a wall. */
+export const isOpeningLayer = (k) => k === 'door' || k === 'window' || k === 'opening';
 
 /**
  * Does this sheet's layering name its walls? Only then are layers trusted to
@@ -50,7 +61,8 @@ export function hasWallLayers(lines) {
 
 /**
  * The lines that can be wall faces: on a layered sheet, those on wall layers
- * and on layers we can't name (a wall drawn on an odd layer still counts);
+ * and on layers we can't name (a wall drawn on an odd layer still counts,
+ * except on the default layer "0");
  * never dimensions, text, furniture, doors / windows, things overhead or
  * demolished walls. A sheet without wall layers keeps everything.
  * @template {{ layer?: string|null }} L
@@ -61,9 +73,14 @@ export function wallCandidates(lines) {
   if (!hasWallLayers(lines)) return lines;
   return lines.filter((l) => {
     const k = classifyLayer(l.layer);
-    return k === 'wall' || k === 'other';
+    // CAD's default layer "0" holds dimension ticks, break lines, block
+    // insides — once the sheet names its wall layers, never its walls
+    return k === 'wall' || (k === 'other' && !isDefaultLayer(l.layer));
   });
 }
+
+/** AutoCAD's default layer. */
+export const isDefaultLayer = (name) => /^\s*0\s*$/.test(String(name ?? ''));
 
 /**
  * Sheet text that can name a room: never the title block, dimensions, detail

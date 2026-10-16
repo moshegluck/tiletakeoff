@@ -63,6 +63,16 @@ describe('a plan page keeps its own takeoff', () => {
     expect(allRooms(S()).map((r) => [r.page, r.name])).toEqual([[1, 'OFFICE'], [2, 'GYM']]);
   });
 
+  it('a space that is no floor (unexcavated) is not sent to the takeoff', () => {
+    S().setScale(QUARTER);
+    S().setTrace({ result: { rooms: [
+      { id: 'a', name: 'GYM', type: 'room', poly: sq(0, 0, 10, 10), center: { x: 5, y: 5 }, wallLf: 40 },
+      { id: 'b', name: 'UNEXCAVATED', type: 'nofloor', poly: sq(10, 0, 5, 10), center: { x: 12, y: 5 }, wallLf: 30 },
+    ], counts: {} } });
+    expect(S().commitTrace()).toBe(1);
+    expect(S().rooms.map((r) => r.name)).toEqual(['GYM']);
+  });
+
   it('undo does not reach across a page change', () => {
     S().setScale(QUARTER);
     S().addRoom(sq(0, 0, 10, 10));

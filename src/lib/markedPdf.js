@@ -35,13 +35,16 @@ const scaleLabel = (id) => ARCH_SCALES.find((a) => a.id === id)?.label || null;
 
 /** Openings a room's wall LF was taken net of, in words ("2 doors, 1 opening · 9'-4\""). */
 export function openingsText(r, unit) {
-  const ops = r.openings || [];
-  if (!ops.length) return '';
+  const all = r.openings || [];
+  const ops = all.filter((o) => o.type !== 'window');
+  const wins = all.length - ops.length;
+  const winTxt = wins ? `${wins} window${wins > 1 ? 's' : ''} (not deducted)` : '';
+  if (!ops.length) return winTxt;
   const doors = ops.filter((o) => /door/.test(o.type || '')).length;
   const open = ops.length - doors;
   const w = ops.reduce((a, o) => a + (o.width || 0), 0);
   const parts = [doors && `${doors} door${doors > 1 ? 's' : ''}`, open && `${open} opening${open > 1 ? 's' : ''}`].filter(Boolean);
-  return `${parts.join(', ')} · ${formatLength(w, unit)}`;
+  return `${parts.join(', ')} · ${formatLength(w, unit)}${winTxt ? '; ' + winTxt : ''}`;
 }
 
 /**
@@ -113,11 +116,12 @@ function drawOverlay(ctx, p, f2c, pt, unit) {
   if (res && p.rooms.some((r) => r.traceId)) {
     for (const o of res.openings || []) {
       const a = P(o.a), b = P(o.b);
-      ctx.strokeStyle = o.openingType === 'opening' ? '#b25e00' : '#1d6fb0';
+      // doors blue, openings orange (both off the wall LF); windows teal (not)
+      ctx.strokeStyle = o.openingType === 'window' ? '#1d7a6b' : o.openingType === 'opening' ? '#b25e00' : '#1d6fb0';
       ctx.lineWidth = 3 * pt; ctx.globalAlpha = 0.85;
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       ctx.globalAlpha = 1;
-      label(ctx, formatLength(o.width, unit), (a.x + b.x) / 2, (a.y + b.y) / 2, 5.5 * pt, ctx.strokeStyle, pt);
+      label(ctx, (o.openingType === 'window' ? 'win ' : '') + formatLength(o.width, unit), (a.x + b.x) / 2, (a.y + b.y) / 2, 5.5 * pt, ctx.strokeStyle, pt);
     }
   }
 

@@ -411,7 +411,8 @@ export const useStore = create((rawSet, get) => {
     const floor = get().materials.find((m) => m.type === 'floor');
     const H = tr.settings?.ceilingHeight ?? 8;
     const DH = tr.settings?.doorHeight ?? 6 + 8 / 12;
-    const rooms = res.rooms.map((t, i) => {
+    // a space that is no floor (unexcavated, a shaft) stays in the model, not the takeoff
+    const rooms = res.rooms.filter((t) => t.type !== 'nofloor').map((t, i) => {
       const p = matchPrev(t);
       return {
         id: p?.id || nanoid(),

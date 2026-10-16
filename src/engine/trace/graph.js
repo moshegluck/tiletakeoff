@@ -143,6 +143,25 @@ export function joinWalls(inSegs, options = {}, log = []) {
       }
     }
   }
+  // ---- steps: a wall that changes thickness (a recess, a thickened stretch,
+  // a furring layer that stops) — two ends meeting head-on, side by side
+  // within their thicknesses: the face steps there, it doesn't open ----
+  for (let i = 0; i < ends.length; i++) {
+    const e1 = ends[i]; if (e1.joined) continue;
+    for (const bj of near(e1.p, maxT + opt.snapTol)) {
+      if (bj === e1.bi) continue;
+      for (const e2 of endByBody(bj)) {
+        if (e2.joined || e1.joined) continue;
+        if (dot(e1.dir, e2.dir) > -0.985) continue;
+        const v = sub(e2.p, e1.p);
+        const gap = dot(v, e1.dir), lateral = Math.abs(cross(e1.dir, v));
+        if (gap > opt.draftGap || gap < -Math.max(e1.t, e2.t) || lateral > (e1.t + e2.t) / 2 || lateral < 1e-6) continue;
+        extra.push({ a: { ...e1.p }, b: { ...e2.p }, t: Math.min(e1.t, e2.t), conf: 0.6, kind: 'wall', src: 'repair' });
+        e1.joined = e2.joined = true;
+        log.push({ kind: 'gap', at: { x: (e1.p.x + e2.p.x) / 2, y: (e1.p.y + e2.p.y) / 2 }, note: `Wall thickness changes here (${(lateral * 12).toFixed(1)}" step)` });
+      }
+    }
+  }
   return { segs: segs.concat(extra), ends, extra };
 }
 
@@ -246,7 +265,7 @@ function hintCoverage(a, b, hints, hintIdx, reach) {
  * @param {object[]} [arcs]  door swings
  * @param {object} [options]
  * @param {object[]} [log]
- * @param {{a,b}[]} [hints]  linework from the sheet's door / window layers (ft):
+ * @param {{a,b,kind?:string}[]} [hints]  linework from the sheet's door / window layers (ft):
  *   evidence that a gap is a doorway / window. With it, a gap can close across
  *   two wall ends that aren't in line (a closet front between two partitions)
  *   or from a wall end sideways to another wall, and one wall end can carry a
@@ -254,10 +273,24 @@ function hintCoverage(a, b, hints, hintIdx, reach) {
  */
 export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hints = []) {
   const opt = { ...GRAPH_DEFAULTS, ...options };
-  const free = ends.filter((e) => !e.joined);
+  // ends left open on purpose (an alcove's mouth: runTrace's second pass)
+  const keepOpen = opt.keepOpen || [];
+  const held = (e) => keepOpen.some((p) => dist(p, e.p) < 0.1);
+  const free = ends.filter((e) => !e.joined && !held(e));
   const hintIdx = new GridIndex(4);
   hints.forEach((h, i) => hintIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
-  const hinted = (a, b, t) => hints.length > 0 && hintCoverage(a, b, hints, hintIdx, Math.max(1.25, (t || 0) / 2 + 0.75)) >= 0.6;
+  const reachOf = (t) => Math.max(1.25, (t || 0) / 2 + 0.75);
+  const hinted = (a, b, t) => hints.length > 0 && hintCoverage(a, b, hints, hintIdx, reachOf(t)) >= 0.6;
+  // a window, not a doorway: drawn on a window layer, and nothing on a door
+  // (or door-and-window) layer across it. It closes the room; it is no
+  // break in the wall at the floor (wall LF runs under it).
+  const windowIdx = new GridIndex(4), doorIdx = new GridIndex(4);
+  const winHints = hints.filter((h) => h.kind === 'window'), doorHints = hints.filter((h) => h.kind && h.kind !== 'window');
+  winHints.forEach((h, i) => windowIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
+  doorHints.forEach((h, i) => doorIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
+  const isWindow = (c) => !c.arcs.length && winHints.length > 0
+    && hintCoverage(c.jambs[0], c.jambs[1], winHints, windowIdx, reachOf(c.t)) >= 0.6
+    && hintCoverage(c.jambs[0], c.jambs[1], doorHints, doorIdx, reachOf(c.t)) < 0.3;
   /** @type {any[]} */
   const cands = [];
   const segIdx = new GridIndex(4);
@@ -292,7 +325,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
     }
     return n === 1;
   };
-  const corners = ends.filter((e) => e.joined && plainL(e));
+  const corners = ends.filter((e) => e.joined && plainL(e) && !held(e));
   const isCorner = new Set(corners);
   const joinedEnd = new Set(ends.filter((e) => e.joined).map((e) => `${e.bi}:${e.w}`));
 
@@ -491,17 +524,18 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
       (e.used ||= []).push(dirFrom(e, c));
     }
     const nArc = c.arcs.length;
-    const kind = nArc >= 2 ? 'double_door' : nArc === 1 ? 'door' : 'opening';
+    const kind = nArc >= 2 ? 'double_door' : nArc === 1 ? 'door' : isWindow(c) ? 'window' : 'opening';
     let width = c.width;
     if (nArc === 1) width = refineWidth(c.width, c.arcs[0].r);
     openings.push({
       id: uid('o'), a: { ...c.a }, b: { ...c.b }, t: c.t, kind: 'opening', openingType: kind,
-      width, arcs: c.arcs, conf: nArc ? 0.95 : (c.width <= 4 ? 0.7 : 0.5), via: c.type,
+      width, arcs: c.arcs, conf: nArc ? 0.95 : (c.width <= 4 ? 0.7 : 0.5), via: c.type, hint: !!c.hint,
       jambs: c.jambs.map((p) => ({ ...p })),
     });
   }
   for (const o of openings) {
-    log.push({ kind: 'opening', at: { x: (o.a.x + o.b.x) / 2, y: (o.a.y + o.b.y) / 2 }, note: `${o.openingType === 'opening' ? 'Opening' : 'Door'} bridged (${fmtIn(o.width)})` });
+    const what = o.openingType === 'opening' ? 'Opening' : o.openingType === 'window' ? 'Window' : 'Door';
+    log.push({ kind: 'opening', at: { x: (o.a.x + o.b.x) / 2, y: (o.a.y + o.b.y) / 2 }, note: `${what} bridged (${fmtIn(o.width)})` });
   }
   return openings;
 }

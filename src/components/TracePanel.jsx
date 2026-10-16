@@ -5,6 +5,12 @@ import { formatArea, formatLength, ARCH_SCALES } from '../engine/units.js';
 const SEV = { error: 0, warn: 1, info: 2 };
 const SEV_LABEL = { error: 'Needs input', warn: 'Check', info: 'Note' };
 
+// "2 openings · 1 window": windows are listed but never taken off wall LF
+function openingsTag(ops) {
+  const w = ops.filter((o) => o.type === 'window').length, n = ops.length - w;
+  return [n && `${n} opening${n > 1 ? 's' : ''}`, w && `${w} window${w > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+}
+
 export default function TracePanel() {
   const s = useProject();
   const tr = s.trace || defaultTrace();
@@ -202,7 +208,8 @@ export default function TracePanel() {
               <span><b>{res.totals.rooms}</b> rooms</span>
               <span><b>{formatArea(res.totals.floorSf, u)}</b> floor</span>
               <span><b>{formatLength(res.totals.roomWallLf, u)}</b> wall LF</span>
-              <span><b>{res.totals.openings}</b> openings</span>
+              <span><b>{res.totals.openings}</b> doors / openings</span>
+              {res.totals.windows > 0 && <span><b>{res.totals.windows}</b> windows</span>}
             </div>
             {res.calibration?.verdict !== 'unknown' && <div className="tr-cal">{res.calibration.msg}</div>}
           </div>
@@ -257,8 +264,9 @@ export default function TracePanel() {
                 <div className="tr-room-nums">
                   <span className="tr-num">{formatArea(r.area, u)}</span>
                   <span className="tr-num">{formatLength(r.wallLf, u)} wall LF</span>
+                  {r.type === 'nofloor' && <span className="tr-tag" title="Unexcavated / shaft / open to below: kept in the wall model, left out of the floor total and the takeoff">no floor · not in takeoff</span>}
                   {r.spurLf > 0 && <span className="tr-tag" title="Includes both faces of partitions that dead-end in this room">+ returns {formatLength(r.spurLf, u)}</span>}
-                  {r.openings.length > 0 && <span className="tr-tag" title={r.openings.map((o) => `${formatLength(o.width, u)} → ${o.to || '?'}`).join('\n')}>{r.openings.length} opening{r.openings.length > 1 ? 's' : ''}</span>}
+                  {r.openings.length > 0 && <span className="tr-tag" title={r.openings.map((o) => `${o.type === 'window' ? 'window ' : ''}${formatLength(o.width, u)} → ${o.to || '?'}`).join('\n')}>{openingsTag(r.openings)}</span>}
                 </div>
               </div>
             ))}
@@ -269,7 +277,7 @@ export default function TracePanel() {
 
           <div className="tr-sec tr-actions">
             <button className="tbtn primary" onClick={commit}>
-              {tr.committedAt ? 'Update takeoff rooms' : `Send ${res.rooms.length} rooms to takeoff`}
+              {tr.committedAt ? 'Update takeoff rooms' : `Send ${res.rooms.filter((r) => r.type !== 'nofloor').length} rooms to takeoff`}
             </button>
             <button className="tbtn" onClick={() => { if (!tr.committedAt) commit(); s.toggle3d(true); }}>Walk through in 3D</button>
             <label className="tr-check"><input type="checkbox" checked={s.showTrace} onChange={(e) => s.setShowTrace(e.target.checked)} /> Show traced model on plan</label>
