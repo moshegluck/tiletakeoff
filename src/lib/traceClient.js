@@ -57,5 +57,5 @@ export async function runPlanTrace(state, { evidence, region, options, manual, r
   const input = evidenceToFeet(ev, state.scale, region);
   const sheet = { x0: 0, y0: 0, x1: (ev.width || 0) * state.scale, y1: (ev.height || 0) * state.scale };
   const result = await solve({ ...input, sheet, manual: manual || [], removed: removed || [], options });
-  return { result, evidence: ev, input: { lines: input.lines.length, bodies: input.bodies.length, arcs: input.arcs.length, texts: input.texts.length } };
+  return { result, evidence: ev, input: { lines: input.lines.length, bodies: input.bodies.length, arcs: input.arcs.length, texts: input.labels.length, layered: input.layered } };
 }

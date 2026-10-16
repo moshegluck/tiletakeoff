@@ -19,6 +19,9 @@ export default function TracePanel() {
   const runSeq = useRef(0);
   const pending = useRef(false);
 
+  // the scale this panel last took off a sheet by itself (not one the user set)
+  const autoScale = useRef(null);
+
   // read the sheet once a plan is loaded: is there a scale note?
   useEffect(() => {
     let alive = true;
@@ -30,10 +33,14 @@ export default function TracePanel() {
         const { sheetScale } = await readPlan(useStore.getState());
         if (!alive) return;
         setSheet(sheetScale);
-        // the sheet states its scale and none is set yet → just use it
+        // the sheet states its scale and none is set yet → just use it. A page
+        // with a different scale (a 1/8" site plan, then a 1/4" floor plan)
+        // replaces one we read off the last page — never one the user set.
         const st = useStore.getState();
-        if (sheetScale && !st.scale) {
+        const wasAuto = autoScale.current != null && st.scale && Math.abs(st.scale - autoScale.current) < 1e-12;
+        if (sheetScale && (!st.scale || (wasAuto && Math.abs(sheetScale.scale - st.scale) > 1e-12))) {
           st.setScale(sheetScale.scale); st.setArchScale(sheetScale.id);
+          autoScale.current = sheetScale.scale;
           window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Scale read from sheet · ${sheetScale.label}`, ok: true } }));
         }
       } catch (_) { /* reading is best-effort */ }
@@ -272,6 +279,8 @@ export default function TracePanel() {
           <div className="tr-src">
             Read from {tr.source?.mode === 'raster' ? 'scanned image' : 'vector PDF'}
             {tr.source?.input && ` · ${tr.source.input.lines} lines, ${tr.source.input.arcs} door swings, ${tr.source.input.texts} labels`}
+            {tr.source?.input?.layered ? ' · walls from the drawing\'s CAD layers' : ''}
+            {tr.source?.stats?.textError && !tr.source?.stats?.texts ? ` · couldn't read the sheet's text (${tr.source.stats.textError}) — name rooms with AI` : ''}
             {tr.source?.stats?.skewDeg ? ` · straightened ${tr.source.stats.skewDeg}°` : ''}
             {` · solved in ${res.stats.ms} ms`}
           </div>

@@ -142,7 +142,7 @@ function rect(x, y, w, h) {
 }
 
 const K = 0.5522847498;
-function quarterArc(c, v0, v1) {
+export function quarterArc(c, v0, v1) {
   // arc from c+v0 to c+v1 (perpendicular radius vectors), as one cubic
   const p0 = { x: c.x + v0.x, y: c.y + v0.y }, p3 = { x: c.x + v1.x, y: c.y + v1.y };
   const p1 = { x: p0.x + v1.x * K, y: p0.y + v1.y * K };

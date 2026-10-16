@@ -44,6 +44,9 @@ TileTakeoff works the other way round:
     sheet-border / title-block removal (by page extent), all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
   - `arcs.js` door-swing recognition from Bézier curves
+  - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
+    wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
+    names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
 - `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list)
 - `src/lib/rasterWalls.js` scanned plans: blob filter, auto-deskew, H/V stroke detection
 - `src/lib/planEvidence.js`, `traceClient.js`, `traceWorker.js` read plan → feet → solve in a Worker
@@ -64,7 +67,11 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 128 passing (engine, raster, design↔estimate, review regressions).
+- `npm test` → 308 passing (engine, raster, design↔estimate, review regressions,
+  `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
+- Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 28 rooms / 1,671 SF, 3 open-end
+  flags (unexcavated footing lines + one foundation corner). Was 18 rooms / 393 SF.
+  CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Sample sheet: 7 rooms, 1,047.3 SF vector vs 1,046.5 SF from the crooked scan; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
 - 10k-line sheet traces in ~0.5 s (spatial indexes everywhere).
@@ -79,7 +86,10 @@ TileTakeoff works the other way round:
   (`vite.config.js`) and `src/lib/supabase.js` swap in the live `tiletakeoff` project
   (qgvloanrqzuciuhpepjy); the API routes tokens by issuer. Clean fix = update
   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
-- Next real step: run Moshe's own messy PDFs and tune on what comes back wrong.
+- A layered wall's shared seam lets the room run up to the seam (≤ 6½" along that wall).
+- iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
+  shown in the Trace panel. Root cause unconfirmed.
+- Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road
 - Never make the takeoff come from pixels; geometry must go through the coherence engine.

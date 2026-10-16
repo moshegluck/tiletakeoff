@@ -146,7 +146,7 @@ function addInterval(cov, a, b) {
 
 /**
  * Pair parallel lines into wall bodies.
- * @returns {{ bodies: {a,b,t,conf,w}[], lines: object[], stats: object }}
+ * @returns {{ bodies: {a,b,t,conf,w}[], lines: object[], hatch: Set<number>, stats: object }}
  */
 export function pairWalls(rawLines, options = {}) {
   const opt = { ...WALL_DEFAULTS, ...options };
@@ -187,18 +187,34 @@ export function pairWalls(rawLines, options = {}) {
   }
 
   // ---- hatch / evenly spaced series rejection ----
-  // Four or more evenly spaced parallels = a hatch or tile pattern, not walls.
-  // (Three can happen by coincidence: wall faces + one pattern line.)
+  // A run of evenly spaced parallels is a hatch, tile pattern or stair treads,
+  // not walls: six or more in a row always; four or five when they're short
+  // strokes (each under ten spacings long — treads, a tile field, diagonal wall
+  // hatch). A layered wall (foundation + furring, or an old wall with a new one
+  // built against it) also shows faces a near-equal spacing apart, and a deck
+  // edge or dimension line can land the same distance off — but those are long
+  // runs, many spacings long, and never six deep.
   const hatch = new Set();
   const mids = lines.map((l) => ({ x: (l.a.x + l.b.x) / 2, y: (l.a.y + l.b.y) / 2 }));
-  const extends4 = (x, d, from) => {
-    // "further" is measured across the lines (along x's normal), never along them
+  // the next line of the run beyond `x`, coming from `from` (same spacing, further across)
+  const nextInRun = (x, d, from) => {
     const nx = perp(lines[x].u);
-    const away = dot(sub(mids[x], mids[from]), nx);
-    return partners[x].some((r) => r.j !== from && Math.abs(r.d - d) / d <= opt.seriesTol &&
-      dot(sub(mids[r.j], mids[x]), nx) * Math.sign(away) > d * 0.5);
+    const away = Math.sign(dot(sub(mids[x], mids[from]), nx));
+    const r = partners[x].find((q) => q.j !== from && Math.abs(q.d - d) / d <= opt.seriesTol &&
+      dot(sub(mids[q.j], mids[x]), nx) * away > d * 0.5);
+    return r ? r.j : -1;
   };
+  const medianLen = (ids) => {
+    const ls = ids.map((i) => lines[i].len).sort((a, b) => a - b);
+    return ls[Math.floor(ls.length / 2)];
+  };
+  const isPattern = (ids, d) => ids.length >= 6 || (ids.length >= 4 && medianLen(ids) < 10 * d);
+  // a wall face that happens to line up with a pattern's strokes (a long
+  // exterior face beside a row of short window-frame or tread lines) is
+  // not one of them
+  const outlier = (i, ids, d) => lines[i].len >= Math.max(10 * d, 2 * medianLen(ids));
   for (const l of lines) {
+    if (hatch.has(l.id)) continue;
     const ps = partners[l.id];
     for (const p of ps) {
       if (p.side >= 0) continue;
@@ -208,8 +224,16 @@ export function pairWalls(rawLines, options = {}) {
         // (no overlap test between p and q: diagonal hatch is staggered along the
         // wall, so neighbours overlap l on different stretches)
         const d = (p.d + q.d) / 2;
-        if (!extends4(p.j, d, l.id) && !extends4(q.j, d, l.id)) continue;
-        hatch.add(l.id); hatch.add(p.j); hatch.add(q.j);
+        const run = [p.j, l.id, q.j];
+        for (const [end, from] of [[p.j, l.id], [q.j, l.id]]) {
+          let cur = end, prev = from;
+          for (let k = 0; k < 64; k++) {
+            const nx = nextInRun(cur, d, prev);
+            if (nx < 0 || run.includes(nx)) break;
+            run.push(nx); prev = cur; cur = nx;
+          }
+        }
+        if (isPattern(run, d)) for (const i of run) if (!outlier(i, run, d)) hatch.add(i);
       }
     }
   }
@@ -242,7 +266,8 @@ export function pairWalls(rawLines, options = {}) {
   // A wall face's true partner is the one it runs alongside the longest: a sink
   // or shelf line may sit a "wall thickness" off the face, but only for a short
   // stretch. Longer overlap first, then the thinner spacing.
-  cands.sort((p, q) => p.prio - q.prio || (q.overlap - p.overlap) || p.d - q.d);
+  // (overlaps within 1/2" are a tie: the thinner spacing wins, not float noise)
+  cands.sort((p, q) => p.prio - q.prio || (Math.abs(q.overlap - p.overlap) > 0.04 ? q.overlap - p.overlap : 0) || p.d - q.d);
 
   // ---- greedy assignment with per-line interval coverage ----
   const bodies = [];
@@ -267,7 +292,9 @@ export function pairWalls(rawLines, options = {}) {
     let parts = subtractIntervals(c.o0, c.o1, covLProj);
     parts = parts.flatMap(([a, b]) => subtractIntervals(a, b, covMProj));
     for (const [a, b] of parts) {
-      if (b - a < opt.minBodyLen) continue;
+      // a wall runs most of its thickness at least (two parallel hatch strokes
+      // a foot apart are not a 12" wall five inches long)
+      if (b - a < Math.max(opt.minBodyLen, c.d * 0.6)) continue;
       const pL0 = { x: u.x * a + perp(u).x * lPerp, y: u.y * a + perp(u).y * lPerp };
       const pL1 = { x: u.x * b + perp(u).x * lPerp, y: u.y * b + perp(u).y * lPerp };
       // foot on m's line
@@ -289,8 +316,9 @@ export function pairWalls(rawLines, options = {}) {
   }
 
   return {
-    bodies: mergeBodies(bodies),
+    bodies: dropInside(mergeBodies(mergeLayers(mergeBodies(bodies)))),
     lines,
+    hatch,
     stats: {
       rawLines: rawLines.length, mergedLines: lines.length, candidates: cands.length,
       hatchLines: hatch.size, peaks: peaks.map((p) => +(p.t * 12).toFixed(2)), bodies: bodies.length,
@@ -335,3 +363,95 @@ export function mergeBodies(bodies, { angTol = 1 * Math.PI / 180, offTol = 1.0 *
   }
   return items.filter((b) => !b.dead).map(({ th: _th, dead: _dead, ...b }) => b);
 }
+
+/**
+ * One wall, not two: parallel bodies that touch face to face (an existing
+ * wall with a new layer built against it, a foundation wall with its furring)
+ * become a single body of their combined thickness wherever they run side by
+ * side. Left as two, the room would leak into the seam between them and their
+ * corners would never meet. Repeats until stable (three layers → one wall).
+ */
+export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1.0 * IN, minOverlap = 1.5 } = {}) {
+  let items = bodies.filter((b) => b && b.a && b.b && dist(b.a, b.b) > 1e-3 && Number.isFinite(b.t));
+  for (let guard = 0; guard < 8; guard++) {
+    const idx = new GridIndex(4);
+    items.forEach((b, i) => idx.insert(i, Math.min(b.a.x, b.b.x) - 1, Math.min(b.a.y, b.b.y) - 1, Math.max(b.a.x, b.b.x) + 1, Math.max(b.a.y, b.b.y) + 1));
+    const dead = new Set();
+    const out = [];
+    let merged = 0;
+    for (let i = 0; i < items.length; i++) {
+      if (dead.has(i)) continue;
+      const p = items[i];
+      const u = norm(sub(p.b, p.a)), n = perp(u);
+      const th = lineAngle(p.a, p.b);
+      const near = idx.query(Math.min(p.a.x, p.b.x) - 1, Math.min(p.a.y, p.b.y) - 1, Math.max(p.a.x, p.b.x) + 1, Math.max(p.a.y, p.b.y) + 1);
+      for (const j of near) {
+        if (j <= i || dead.has(j) || dead.has(i)) continue;
+        const q = items[j];
+        if (angleDiff(th, lineAngle(q.a, q.b)) > angTol) continue;
+        const rp = dot(p.a, n), rq = (dot(q.a, n) + dot(q.b, n)) / 2;
+        if (Math.abs(Math.abs(rq - rp) - (p.t + q.t) / 2) > touchTol) continue;
+        const ps = [dot(p.a, u), dot(p.b, u)].sort((a, b) => a - b);
+        const qs = [dot(q.a, u), dot(q.b, u)].sort((a, b) => a - b);
+        const lo = Math.max(ps[0], qs[0]), hi = Math.min(ps[1], qs[1]);
+        if (hi - lo < minOverlap) continue;
+        // the combined body spans both outer faces
+        const f0 = Math.min(rp - p.t / 2, rq - q.t / 2), f1 = Math.max(rp + p.t / 2, rq + q.t / 2);
+        const rc = (f0 + f1) / 2;
+        const at = (s, r) => ({ x: u.x * s + n.x * r, y: u.y * s + n.y * r });
+        out.push({ ...p, a: at(lo, rc), b: at(hi, rc), t: f1 - f0, conf: Math.max(p.conf ?? 0, q.conf ?? 0), typical: true, layered: true });
+        // what runs on past the shared stretch stays as it was
+        for (const [b, ss, r] of [[p, ps, rp], [q, qs, rq]]) {
+          if (lo - ss[0] > 0.05) out.push({ ...b, a: at(ss[0], r), b: at(lo, r) });
+          if (ss[1] - hi > 0.05) out.push({ ...b, a: at(hi, r), b: at(ss[1], r) });
+        }
+        dead.add(i); dead.add(j);
+        merged++;
+        break;
+      }
+      if (!dead.has(i)) out.push(p);
+    }
+    items = out;
+    if (!merged) break;
+  }
+  return items;
+}
+
+/**
+ * Drop a short body lying wholly inside a longer wall's footprint: hatch
+ * strokes drawn across a new wall pair up into little slanted "walls" near
+ * its ends, where the run is too short to read as hatch. Inside another wall
+ * they're its drawing, not a wall of their own.
+ */
+export function dropInside(bodies, { tol = 1.0 * IN, maxLen = 3 } = {}) {
+  const idx = new GridIndex(4);
+  bodies.forEach((b, i) => idx.insert(i, Math.min(b.a.x, b.b.x), Math.min(b.a.y, b.b.y), Math.max(b.a.x, b.b.x), Math.max(b.a.y, b.b.y)));
+  const inside = (p, w, tl = tol) => {
+    const L = dist(w.a, w.b);
+    if (L < 1e-6) return false;
+    const u = { x: (w.b.x - w.a.x) / L, y: (w.b.y - w.a.y) / L };
+    const s = dot(sub(p, w.a), u), d = Math.abs(dot(sub(p, w.a), perp(u)));
+    return s >= -tl && s <= L + tl && d <= w.t / 2 + tl;
+  };
+  return bodies.filter((b, i) => {
+    const L = dist(b.a, b.b);
+    if (L > maxLen) return true;
+    const reach = 3 * IN;   // a corner tick often stops in the junction, just past one wall's end
+    const hosts = [...idx.query(Math.min(b.a.x, b.b.x) - reach, Math.min(b.a.y, b.b.y) - reach, Math.max(b.a.x, b.b.x) + reach, Math.max(b.a.y, b.b.y) + reach)]
+      .filter((j) => j !== i && dist(bodies[j].a, bodies[j].b) >= 2 * L);
+    // inside one wall
+    if (hosts.some((j) => inside(b.a, bodies[j]) && inside(b.b, bodies[j]))) return false;
+    // a short slanted stroke across a corner or ticked off a wall (the wall
+    // hatch's 45° strokes at an inside corner): no wall runs on a slant to
+    // every wall it touches for under 1'-6"
+    if (L <= 1.5 && hosts.some((j) => inside(b.a, bodies[j], reach) || inside(b.b, bodies[j], reach))) {
+      const slant = hosts.every((j) => {
+        const c = Math.abs(dot(norm(sub(b.b, b.a)), norm(sub(bodies[j].b, bodies[j].a))));
+        return c > Math.sin(10 * Math.PI / 180) && c < Math.cos(10 * Math.PI / 180);
+      });
+      if (slant) return false;
+    }
+    return true;
+  });
+}
+

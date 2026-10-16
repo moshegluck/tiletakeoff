@@ -24,7 +24,9 @@ export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor
  * @param {{a,b,w?}[]} [input.lines]   raw linework (ft)
  * @param {{a,b,t,conf?}[]} [input.bodies] pre-paired wall bodies (raster / AI / manual) (ft)
  * @param {{c,r}[]} [input.arcs]       door-swing arcs (ft)
- * @param {{str,x,y}[]} [input.texts]  sheet text (ft)
+ * @param {{a,b}[]} [input.hints]      linework from door / window layers (ft) — doorway evidence
+ * @param {{str,x,y}[]} [input.texts]  sheet text (ft) — door schedule / tags
+ * @param {{str,x,y}[]} [input.labels] text that can name a room (ft); omitted = texts
  * @param {{a,b}[]} [input.removed]    walls the user erased (matched by proximity)
  * @param {{a,b,t}[]} [input.manual]   walls the user drew by hand (ft) — always win
  * @param {object|null} [input.schedule] door schedule; omitted = parsed from texts
@@ -62,7 +64,7 @@ export function runTrace(input = {}) {
   const { segs, ends } = dropDetached(joined.segs, joined.ends, opt, log);
 
   // 3. bridge doors & openings so rooms can close
-  const openings = bridgeOpenings(segs, ends, arcs, opt, log);
+  const openings = bridgeOpenings(segs, ends, arcs, opt, log, input.hints || []);
 
   // 4. planar graph, cleaned
   const g0 = buildGraph(segs.concat(openings), opt, log);
@@ -70,7 +72,7 @@ export function runTrace(input = {}) {
 
   // 5. faces → rooms, LF, flags
   const schedule = input.schedule !== undefined ? input.schedule : parseDoorSchedule(texts);
-  const res = analyzeGraph(g, { texts, arcs, schedule, options: opt, sheet: input.sheet || null });
+  const res = analyzeGraph(g, { texts: input.labels || texts, arcs, schedule, options: opt, sheet: input.sheet || null });
 
   const floorSf = res.rooms.reduce((s, r) => s + r.area, 0);
   const wallLf = res.rooms.reduce((s, r) => s + r.wallLf, 0);
