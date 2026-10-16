@@ -35,7 +35,15 @@ TileTakeoff works the other way round:
 ## Where things are
 - `src/engine/trace/` — the engine (pure JS, unit-tested)
   - `walls.js` pairs parallel face lines into wall bodies; merges doubled traces; rejects
-    evenly spaced hatch / tile patterns (4+ equal spacings)
+    evenly spaced hatch / tile patterns (4+ equal spacings). Pen-aware: on a sheet drawn with pen
+    weights two hairlines (< 0.4 × the wall pen) never pair; a light line in an annotation colour
+    (`chromatic`, read in `pdfVectors.js`) is never a face; a merged run carries the pen most of it is
+    drawn with; dashed runs (4+ even pieces) are `dashed` — never a wall, except as the hidden outer
+    face of a thick wall. Thick masonry 16"–36" when the faces run on 8'+ (or its piers between
+    window bays add up), both in a wall pen, nothing inside. Bodies nested in each other over most of
+    their length (a wall drawn as faces + gypsum + fill) are one wall (`mergeLayers`).
+  - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
+    gap inside the wall's thickness → a window (closes the room, stays in wall LF).
   - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures),
     bridges doors/openings (swing arcs as evidence), builds the planar graph, traces faces
   - `analyze.js` rooms (offset to finished faces; floor to door centre by default), wall LF
@@ -43,7 +51,18 @@ TileTakeoff works the other way round:
     holes, labels → names/types, door-in-context checks, scale check from door swings,
     sheet-border / title-block removal (by page extent), all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
-  - `arcs.js` door-swing recognition from Bézier curves
+  - `arcs.js` door-swing recognition from Bézier curves, and from swings a CAD export flattened into
+    chains of straight pieces (`arcsFromPolylines`)
+  - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
+    legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
+    used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
+    when a rule could be wrong for this drawing (`READINGS`: every pen can be a wall; no masonry) and
+    keeps the one that agrees best with the sheet's own evidence (`readingScore`: printed areas,
+    named rooms, merged / unplaced names, open ends).
+  - Plan check (`analyze.js` `printedAreas` / `checkPrintedAreas`): room tags that print an area
+    ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (6% / 3 SF)
+    or an `area_check` flag at the tag with both numbers (several tags in one room = rooms merged).
+    `res.verify` = { tags, matched, off, unplaced }.
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
@@ -94,7 +113,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 349 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 363 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
   room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
@@ -104,6 +123,11 @@ TileTakeoff works the other way round:
   room move its edge in; layer "0" never gives walls on a layered sheet; unexcavated / shaft
   rooms are out of the floor total. Flags that change a number are "check", with the amount.
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
+- Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
+  no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
+  51 rooms; plan check 15 of 55 printed areas agree (was 4; e.g. FITNESS 935 vs 932, DOG WASH 229 vs
+  228, OFFICE 2/3, 3 bedrooms, 3 baths, 2 living rooms), 19 flagged off, 88/92 swings confirm the scale.
+  Patriot and the sample sheet trace as before. `test/traceMill.test.js` = its cases.
 - Sample sheet: 7 rooms, 1,047.3 SF vector vs 1,046.5 SF from the crooked scan; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
 - 10k-line sheet traces in ~0.5 s (spatial indexes everywhere).
@@ -118,7 +142,12 @@ TileTakeoff works the other way round:
   (qgvloanrqzuciuhpepjy); the API routes tokens by issuer. Clean fix = update
   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
-- Windows are recognised from window layers only; on unlayered sheets a window gap reads as an opening.
+- Mill 2 still open: site linework (a double line outside the building) encloses the outside, and
+  gaps in the brick envelope join it to the corridor / units; the commercial half merges into one face
+  (LOUNGE + meeting + storage…). Next: an envelope rule (faces outside the building aren't rooms) and an
+  AI reading pass (building type, legend, what's outside / in scope) feeding the survey — the AI may
+  name and classify, never supply geometry. No Anthropic key in this container: AI modes are mock-tested.
+- Sliding doors drawn as parallel panels in a gap can read as a window on unlayered sheets.
 - The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.

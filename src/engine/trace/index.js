@@ -13,6 +13,7 @@ import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
 import { dist } from './vec.js';
+import { describeSheet } from './survey.js';
 
 export { parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf };
 export { arcFromBezier } from './arcs.js';
@@ -48,7 +49,47 @@ function alcoveMouths(res) {
   return out;
 }
 
+/**
+ * The readings of a sheet worth trying when the first one leans on a rule
+ * that could be wrong for this drawing: pen weights (furniture drawn heavy,
+ * existing walls drawn light) and thick masonry pairs. Each is traced and
+ * scored against the sheet's own evidence; the best one is kept.
+ */
+const READINGS = [
+  { id: 'all-pens', label: 'every pen can draw a wall', when: (st) => st.heavyW > 0, options: { hairlineRatio: 0 } },
+  { id: 'no-masonry', label: 'no walls thicker than 16"', when: (st) => st.thickBodies > 0, options: { thickMaxT: WALL_DEFAULTS.maxT } },
+];
+
+/**
+ * How well a trace agrees with what the sheet itself says: printed room
+ * areas it matches (or misses), named rooms each in a room of their own,
+ * names merged into one room or left in no room, wall ends left open.
+ */
+export function readingScore(res) {
+  const v = res.verify || {};
+  const kind = (k) => res.flags.filter((f) => f.kind === k).length;
+  const named = res.rooms.filter((r) => r.labels?.length).length;
+  return 3 * (v.matched || 0) - 2 * (v.off || 0) + named - 2 * kind('merged_rooms') - 1.5 * kind('room_not_closed') - 0.2 * kind('open_end');
+}
+
 export function runTrace(input = {}) {
+  const first = traceReading(input);
+  const tried = [{ id: 'default', label: 'as drawn', score: readingScore(first) }];
+  let best = first, bestScore = tried[0].score, chosen = 'default';
+  for (const rd of READINGS) {
+    if (input.options?.[Object.keys(rd.options)[0]] !== undefined || !rd.when(first.stats)) continue;
+    const res = traceReading({ ...input, options: { ...(input.options || {}), ...rd.options } });
+    const score = readingScore(res);
+    tried.push({ id: rd.id, label: rd.label, score });
+    // a different reading must do clearly better to win (ties keep the drawing as drawn)
+    if (score > bestScore + 2) { best = res; bestScore = score; chosen = rd.id; }
+  }
+  best.readings = tried.map((t) => ({ ...t, chosen: t.id === chosen }));
+  best.survey = describeSheet(input, best);
+  return best;
+}
+
+function traceReading(input = {}) {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const opt = { ...TRACE_DEFAULTS, ...(input.options || {}) };
   const log = [];
@@ -56,7 +97,7 @@ export function runTrace(input = {}) {
   const arcs = input.arcs || [];
 
   // 1. linework → wall bodies
-  const paired = input.lines?.length ? pairWalls(input.lines, opt) : { bodies: [], faces: [], stats: {} };
+  const paired = input.lines?.length ? pairWalls(input.lines, opt) : { bodies: [], faces: [], lines: [], stats: {} };
   let bodies = mergeBodies([
     ...paired.bodies,
     ...(input.bodies || []).map((b) => ({ conf: 0.75, src: 'given', ...b })),
@@ -82,12 +123,12 @@ export function runTrace(input = {}) {
     const joined = joinWalls(bodies, o2, lg);
     const { segs, ends } = dropDetached(joined.segs, joined.ends, o2, lg);
     // 3. bridge doors & openings so rooms can close
-    const openings = bridgeOpenings(segs, ends, arcs, o2, lg, input.hints || []);
+    const openings = bridgeOpenings(segs, ends, arcs, o2, lg, input.hints || [], paired.lines || []);
     // 4. planar graph, cleaned
     const g0 = buildGraph(segs.concat(openings), o2, lg);
     const g = pruneGraph(g0, o2, lg);
     // 5. faces → rooms, LF, flags
-    const res = analyzeGraph(g, { texts: input.labels || texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [] });
+    const res = analyzeGraph(g, { texts: input.labels || texts, allTexts: texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [] });
     return { g, res };
   };
   let { g, res } = solve([], log);
@@ -126,6 +167,7 @@ export function runTrace(input = {}) {
     repairs: log.filter((l) => l.at),
     log,
     calibration: res.calibration,
+    verify: res.verify,
     schedule,
     totals: {
       rooms: floorRooms.length, floorSf, roomWallLf: wallLf, wallCenterLf: centerLf, exteriorLf: extLf,

@@ -232,9 +232,11 @@ export function pairWalls(rawLines, options = {}) {
       const side = dot(sub(m.a, l.a), n) + dot(sub(m.b, l.a), n);
       const d = Math.abs((dot(sub(m.a, l.a), n) + dot(sub(m.b, l.a), n)) / 2);
       if (d < opt.minT || d > opt.thickMaxT) continue;
-      // past the usual thickness only a long, continuous pair can be a wall
+      // past the usual thickness only a long pair can be a wall — one long
+      // run, or the piers of a brick wall between its window bays (short
+      // pairs sharing one face at one thickness: summed below)
       const thick = d > opt.maxT;
-      if (thick && o1 - o0 < opt.thickMinLen) continue;
+      if (thick && o1 - o0 < Math.max(opt.minBodyLen, 1.5)) continue;
       // a dashed line is only ever the hidden face of a thick wall
       if ((l.dashed || m.dashed) && (!thick || (l.dashed && m.dashed))) continue;
       const c = { i: l.id, j, d, o0, o1, overlap: o1 - o0, thick };
@@ -243,6 +245,21 @@ export function pairWalls(rawLines, options = {}) {
       partners[l.id].push({ j, d, side: Math.sign(side), o0, o1 });
       partners[j].push({ j: l.id, d, side: -Math.sign(side), o0, o1 });
     }
+  }
+
+  // ---- piers: short thick pairs along one face at one thickness add up ----
+  {
+    const run = new Map();
+    const keys = (c) => {
+      const l = lines[c.i], m = lines[c.j];
+      const sl = Math.sign(dot(sub(m.a, l.a), perp(l.u)) + dot(sub(m.b, l.a), perp(l.u)));
+      const sm = Math.sign(dot(sub(l.a, m.a), perp(m.u)) + dot(sub(l.b, m.a), perp(m.u)));
+      const dk = Math.round(c.d / (1.5 * IN));
+      return [`${c.i}|${sl}|${dk}`, `${c.j}|${sm}|${dk}`];
+    };
+    for (const c of cands) if (c.thick) for (const k of keys(c)) run.set(k, (run.get(k) || 0) + c.overlap);
+    for (const c of cands) if (c.thick && c.overlap < opt.thickMinLen && !keys(c).some((k) => run.get(k) >= opt.thickMinLen)) c.dead = true;
+    for (let k = cands.length - 1; k >= 0; k--) if (cands[k].dead) cands.splice(k, 1);
   }
 
   // ---- a thick masonry wall is solid between its faces: a pair with other
@@ -467,6 +484,8 @@ export function pairWalls(rawLines, options = {}) {
     stats: {
       rawLines: rawLines.length, mergedLines: lines.length, candidates: cands.length,
       hatchLines: hatch.size, peaks: peaks.map((p) => +(p.t * 12).toFixed(2)), bodies: bodies.length, heavyW,
+      thickBodies: bodies.filter((b) => b.t > opt.maxT).length,
+      dashedLines: lines.filter((l) => l.dashed).length, annotationLines: lines.filter((l) => l.ann).length,
     },
   };
 }

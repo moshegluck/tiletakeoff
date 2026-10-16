@@ -271,7 +271,7 @@ function hintCoverage(a, b, hints, hintIdx, reach) {
  *   or from a wall end sideways to another wall, and one wall end can carry a
  *   door on each side.
  */
-export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hints = []) {
+export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hints = [], drawn = []) {
   const opt = { ...GRAPH_DEFAULTS, ...options };
   // ends left open on purpose (an alcove's mouth: runTrace's second pass)
   const keepOpen = opt.keepOpen || [];
@@ -288,9 +288,34 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   const winHints = hints.filter((h) => h.kind === 'window'), doorHints = hints.filter((h) => h.kind && h.kind !== 'window');
   winHints.forEach((h, i) => windowIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
   doorHints.forEach((h, i) => doorIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
-  const isWindow = (c) => !c.arcs.length && winHints.length > 0
+  // …or, on a sheet without layers, the window symbol itself: two or more
+  // lines running across the gap inside the wall's thickness (frame, glass,
+  // sill). A doorway has nothing drawn along it there.
+  const drawnIdx = new GridIndex(4);
+  drawn.forEach((l, i) => drawnIdx.insert(i, Math.min(l.a.x, l.b.x), Math.min(l.a.y, l.b.y), Math.max(l.a.x, l.b.x), Math.max(l.a.y, l.b.y)));
+  const glazed = (c) => {
+    const [p, q] = c.jambs;
+    const W = dist(p, q);
+    if (!drawn.length || W < 1e-6) return false;
+    const u = norm(sub(q, p)), n = perp(u), band = (c.t || 0.4) / 2 + 1 / 12;
+    const offs = [];
+    for (const i of drawnIdx.query(Math.min(p.x, q.x) - band, Math.min(p.y, q.y) - band, Math.max(p.x, q.x) + band, Math.max(p.y, q.y) + band)) {
+      const l = drawn[i];
+      const L = dist(l.a, l.b);
+      if (L < 1e-6 || Math.abs(dot(norm(sub(l.b, l.a)), u)) < Math.cos(3 * DEG)) continue;
+      const o = (dot(sub(l.a, p), n) + dot(sub(l.b, p), n)) / 2;
+      if (Math.abs(o) > band) continue;
+      const s0 = Math.min(dot(sub(l.a, p), u), dot(sub(l.b, p), u)), s1 = Math.max(dot(sub(l.a, p), u), dot(sub(l.b, p), u));
+      // it spans most of the gap and doesn't run on far past it (that's a wall face beside it)
+      if (Math.min(W, s1) - Math.max(0, s0) < 0.6 * W || s1 - s0 > W + 1.5) continue;
+      if (!offs.some((x) => Math.abs(x - o) < 0.5 / 12)) offs.push(o);
+    }
+    return offs.length >= 2;
+  };
+  const isWindow = (c) => !c.arcs.length && ((winHints.length > 0
     && hintCoverage(c.jambs[0], c.jambs[1], winHints, windowIdx, reachOf(c.t)) >= 0.6
-    && hintCoverage(c.jambs[0], c.jambs[1], doorHints, doorIdx, reachOf(c.t)) < 0.3;
+    && hintCoverage(c.jambs[0], c.jambs[1], doorHints, doorIdx, reachOf(c.t)) < 0.3)
+    || (!winHints.length && !doorHints.length && glazed(c)));
   /** @type {any[]} */
   const cands = [];
   const segIdx = new GridIndex(4);

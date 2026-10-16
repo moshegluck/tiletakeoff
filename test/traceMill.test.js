@@ -144,3 +144,58 @@ describe('trace — an old mill (line weights, flattened swings, thick brick, hi
     expect(p.bodies[0].a.y).toBeCloseTo(5.2, 3);
   });
 });
+
+describe('trace — the sheet checks the trace', () => {
+  const W = 12, H = 10, t = 5 * IN;
+  const room = () => heavy(wallsToLines(box(W, H, t), [], W, H));
+  const area = (W - t) * (H - t);
+
+  it("a room tag's printed area is the answer key: agreeing rooms are confirmed, others flagged with both numbers", () => {
+    const ok = runTrace({ lines: room(), texts: [{ str: 'OFFICE', x: 6, y: 4 }, { str: `${Math.round(area)} SF`, x: 6, y: 5 }] });
+    expect(ok.verify).toMatchObject({ tags: 1, matched: 1, off: 0 });
+    expect(ok.rooms[0].areaCheck).toBe('match');
+    const off = runTrace({ lines: room(), texts: [{ str: 'OFFICE', x: 6, y: 4 }, { str: '1,457 SF', x: 6, y: 5 }] });
+    expect(off.verify).toMatchObject({ tags: 1, matched: 0, off: 1 });
+    const f = off.flags.find((x) => x.kind === 'area_check');
+    expect(f.msg).toMatch(/plan prints 1,457 SF; the trace has 1\d\d SF/);
+    expect(f.at).toEqual({ x: 6, y: 5 });
+  });
+
+  it('two room tags in one traced room say the rooms merged', () => {
+    const res = runTrace({ lines: room(), texts: [{ str: '60 SF', x: 3, y: 5 }, { str: '50 SF', x: 9, y: 5 }] });
+    expect(res.verify.off).toBe(1);
+    expect(res.flags.find((x) => x.kind === 'area_check').msg).toMatch(/2 room tags \(60 \+ 50 = 110 SF\).*rooms merged/);
+  });
+
+  it('a window drawn as frame lines across the gap is a window (closes the room, stays in wall LF) on a sheet without layers', () => {
+    const T = 8 * IN;
+    const lines = heavy(wallsToLines(box(W, H, T), [{ axis: 'h', c: 0, s: 4, w: 3, t: T }], W, H));
+    // the window symbol: frame + glass lines running across the gap inside the wall
+    lines.push(hline(-1.5 * IN, 4, 7, { w: LIGHT }), hline(1.5 * IN, 4, 7, { w: LIGHT }));
+    const res = runTrace({ lines });
+    expect(res.rooms.length).toBe(1);
+    expect(res.totals.windows).toBe(1);
+    const door = runTrace({ lines: heavy(wallsToLines(box(W, H, T), [{ axis: 'h', c: 0, s: 4, w: 3, t: T }], W, H)) });
+    expect(door.totals.windows).toBe(0);
+  });
+
+  it("a brick wall's piers between window bays add up to one thick wall", () => {
+    const T = 28 * IN;
+    // outer face runs on; the inner face stops at each 3' bay; piers 4' long
+    const lines = [hline(0, 0, 21, { w: 1 })];
+    for (let x = 0; x < 21; x += 7) lines.push(hline(T, x, x + 4, { w: 1 }));
+    const p = pairWalls(lines);
+    expect(p.bodies.filter((b) => Math.abs(b.t - T) < 0.05).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('tries another reading when a rule could be wrong for the sheet, and keeps the one that agrees with it', () => {
+    // a sheet whose partitions are drawn with a light pen and its exterior heavy:
+    // "hairlines are furniture" would lose the partition
+    const lines = heavy(wallsToLines(box(20, 10, 8 * IN), [], 20, 10));
+    lines.push(...wallsToLines([{ x1: 10, y1: 0, x2: 10, y2: 10, t: 4 * IN, capA: 0, capB: 0 }], [], 20, 10).map((l) => ({ ...l, w: LIGHT })));
+    const res = runTrace({ lines, texts: [{ str: 'KITCHEN', x: 5, y: 5 }, { str: 'DINING', x: 15, y: 5 }] });
+    expect(res.readings.map((r) => r.id)).toContain('all-pens');
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['DINING', 'KITCHEN']);
+    expect(res.survey.notes.join(' ')).toMatch(/Read as: every pen can draw a wall/);
+  });
+});

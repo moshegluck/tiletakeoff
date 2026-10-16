@@ -74,6 +74,8 @@ for (const n of pages) {
   console.log(`   scale ${sheetScale.label}${forced ? ' (given)' : ' (read off the sheet)'} · ${res.status.toUpperCase()} · ${res.counts.error} error / ${res.counts.warn} review / ${res.counts.info} info · ${res.stats.ms} ms`);
   console.log(`   ${res.totals.rooms} rooms · ${num(res.totals.floorSf)} SF floor · ${num(res.totals.roomWallLf)} LF wall (room faces) · ${res.totals.doors} doors · ${res.totals.openings - res.totals.doors} openings`);
   if (res.calibration?.msg) console.log(`   ${res.calibration.msg}`);
+  if (res.survey?.notes?.length) console.log(res.survey.notes.map((n) => `   · ${n}`).join('\n'));
+  if (res.verify?.tags) console.log(`   plan's printed areas: ${res.verify.matched} of ${res.verify.tags} rooms agree · ${res.verify.off} off · ${res.verify.unplaced} tag(s) in no traced room`);
   if (res.rooms.length) {
     console.log(`\n   ${pad('room', 26)}${pad('type', 9)}${pad('SF', 9)}${pad('wall LF', 9)}${pad('doors', 7)}status`);
     for (const r of [...res.rooms].sort((a, b) => b.area - a.area)) {
