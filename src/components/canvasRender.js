@@ -9,12 +9,12 @@
 //   transient ones are the current values of those refs, not the refs)
 // ============================================================
 
-import { centroid, polygonArea, bounds, roomArea } from '../engine/geometry.js';
+import { centroid, polygonArea, bounds, roomArea, pointInPolygon } from '../engine/geometry.js';
 import { generateLayout } from '../engine/layouts.js';
 import { formatLength, formatArea } from '../engine/units.js';
 import { markupValue } from '../engine/markups.js';
 import { roomRegions, zonesOf } from '../engine/zones.js';
-import { MONO, hexA } from './canvasUtils.js';
+import { MONO, hexA, fitLabelLines, clusterPins } from './canvasUtils.js';
 import { roundRect } from './canvasUtils.js';
 
 export function renderScene(ctx, W, H, rc) {
@@ -322,8 +322,47 @@ function drawZones(ctx, r, rc) {
   }
 }
 
+// The room's name and area, only as large as fits inside the room on screen
+// (canvasUtils.fitLabelLines): small closets at low zoom show what fits, or
+// nothing, instead of printing over their neighbours. The selected room
+// always shows its label.
+function drawRoomLabel(ctx, r, rc, selected) {
+  const { s, ft2px, toScreen } = rc;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of r.points) {
+    const q = toScreen(ft2px(p.x), ft2px(p.y));
+    if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; if (q.y < y0) y0 = q.y; if (q.y > y1) y1 = q.y;
+  }
+  const lines = [
+    { text: r.name, size: 12, min: 8.5, wrap: true, font: '600 {}px Inter, sans-serif', color: r.color },
+    { text: s.scale ? formatArea(roomArea(r), s.unitSystem) : '', size: 11, min: 8.5, font: '600 {}px ' + MONO, color: hexA(r.color, .9) },
+  ];
+  const fit = selected
+    ? lines.map((l, i) => ({ text: l.text, size: l.size, i })).filter((l) => l.text)
+    : fitLabelLines(lines, x1 - x0, y1 - y0, measureWith(ctx, lines));
+  const c = r.labelAt || centroid(r.points);
+  drawLabelStack(ctx, fit, lines, toScreen(ft2px(c.x), ft2px(c.y)));
+}
+
+const measureWith = (ctx, lines) => (text, size, i) => { ctx.font = lines[i].font.replace('{}', String(size)); return ctx.measureText(text).width; };
+
+// fitted label lines, centred on a point, each with a white halo so it reads over the drawing
+function drawLabelStack(ctx, fit, lines, at) {
+  if (!fit.length) return;
+  let y = at.y - fit.reduce((a, l) => a + l.size * 1.25, 0) / 2;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 3;
+  for (const l of fit) {
+    ctx.font = lines[l.i].font.replace('{}', String(l.size));
+    ctx.strokeText(l.text, at.x, y); ctx.fillStyle = lines[l.i].color; ctx.fillText(l.text, at.x, y);
+    y += l.size * 1.25;
+  }
+  ctx.restore();
+}
+
 export function drawRoom(ctx, r, rc) {
-  const { s, scale, ft2px, toScreen } = rc;
+  const { s, ft2px, toScreen } = rc;
   const inMulti = s.selRooms?.includes(r.id);
   const primary = s.selection.type === 'room' && s.selection.id === r.id;
   const selected = primary || inMulti;
@@ -339,14 +378,7 @@ export function drawRoom(ctx, r, rc) {
     ctx.setLineDash([]);
   }
   drawZones(ctx, r, rc);
-  const c = r.labelAt || centroid(r.points); const cs = toScreen(ft2px(c.x), ft2px(c.y));
-  const area = scale ? roomArea(r) : 0;
-  ctx.fillStyle = r.color; ctx.font = '600 12px Inter, sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(r.name, cs.x, cs.y - 4);
-  if (scale) {
-    ctx.font = '600 11px ' + MONO; ctx.fillStyle = hexA(r.color, .85);
-    ctx.fillText(formatArea(area, s.unitSystem), cs.x, cs.y + 12);
-  }
+  drawRoomLabel(ctx, r, rc, primary);
   // vertex handles only when this room is the sole selection (multi-select
   // moves the group, so per-vertex editing is hidden then)
   if (primary && !s.selZone && s.tool === 'select' && (s.selRooms?.length ?? 0) <= 1) {
@@ -539,6 +571,33 @@ const TR = {
   open: '#c8521f', ok: '#1d7a4d', review: '#b25e00', error: '#b3261e',
 };
 
+// Which traced rooms the takeoff already has a room on (added by hand or by
+// AI Detect): at least half of the traced room, sampled on a grid, lies
+// inside takeoff rooms. Worked out once per trace result + room list.
+const coverCache = new WeakMap();
+function coveredByTakeoff(res, rooms) {
+  const hit = coverCache.get(res);
+  if (hit && hit.rooms === rooms) return hit.fn;
+  const set = new Set();
+  for (const r of res.rooms) {
+    if (!r.poly?.length || !rooms.length) continue;
+    const b = bounds(r.poly);
+    let inRoom = 0, inTakeoff = 0;
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 8; j++) {
+        const x = b.minx + ((i + 0.5) / 8) * b.w, y = b.miny + ((j + 0.5) / 8) * b.h;
+        if (!pointInPolygon(x, y, r.poly)) continue;
+        inRoom++;
+        if (rooms.some((t) => pointInPolygon(x, y, t.points))) inTakeoff++;
+      }
+    }
+    if (inRoom && inTakeoff * 2 >= inRoom) set.add(r.id);
+  }
+  const fn = (r) => set.has(r.id);
+  coverCache.set(res, { rooms, fn });
+  return fn;
+}
+
 export function drawTrace(ctx, rc) {
   const { s, ft2px, toScreen } = rc;
   const res = s.trace?.result;
@@ -550,18 +609,22 @@ export function drawTrace(ctx, rc) {
 
   if (res && s.showTrace) {
     const committed = !!s.trace.committedAt;
+    // a traced room the takeoff already has a room on (added by hand or by AI
+    // Detect) draws as an outline only — one label per room on screen
+    const covered = coveredByTakeoff(res, s.rooms);
     // rooms (only until they've been sent to the takeoff — then the room layer shows them)
     for (const r of res.rooms) {
       const on = focus?.type === 'room' && focus.id === r.id;
       if (committed && !on) continue;
       const col = TR[r.status] || TR.ok;
+      const under = !on && covered(r);
       ctx.beginPath();
       for (const ring of [r.poly, ...(r.holes || [])]) {
         ring.forEach((p, i) => { const q = S(p); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
         ctx.closePath();
       }
-      ctx.fillStyle = hexA(col, on ? 0.2 : 0.09); ctx.fill('evenodd');
-      ctx.strokeStyle = hexA(col, 0.9); ctx.lineWidth = on ? 2.5 : 1.2; ctx.stroke();
+      if (!under) { ctx.fillStyle = hexA(col, on ? 0.2 : 0.09); ctx.fill('evenodd'); }
+      ctx.strokeStyle = hexA(col, under ? 0.5 : 0.9); ctx.lineWidth = on ? 2.5 : 1.2; ctx.stroke();
     }
     // walls as real bodies
     for (const w of res.walls) {
@@ -592,20 +655,17 @@ export function drawTrace(ctx, rc) {
     }
     // room labels before commit
     if (!committed) {
-      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       for (const r of res.rooms) {
-        const c = S(r.center);
+        if (!(focus?.type === 'room' && focus.id === r.id) && covered(r)) continue;
         // only as many lines as fit inside the room on screen
-        let x0 = Infinity, x1 = -Infinity;
-        for (const p of r.poly) { const q = S(p); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); }
-        const room = x1 - x0 - 8;
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (const p of r.poly) { const q = S(p); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
         const lines = [
-          { t: r.name, f: '700 12px Inter, sans-serif', c: TR[r.status] || TR.ok },
-          { t: formatArea(r.area, s.unitSystem), f: '600 10.5px ' + MONO, c: '#33414f' },
-          { t: `${formatLength(r.wallLf, s.unitSystem)} LF`, f: '600 10.5px ' + MONO, c: '#5b6976' },
-        ].filter((l) => { ctx.font = l.f; return ctx.measureText(l.t).width <= room; });
-        let y = c.y - (lines.length - 1) * 7;
-        for (const l of lines) { ctx.font = l.f; ctx.fillStyle = l.c; ctx.fillText(l.t, c.x, y + 4); y += 14; }
+          { text: r.name, size: 12, min: 8.5, wrap: true, font: '700 {}px Inter, sans-serif', color: TR[r.status] || TR.ok },
+          { text: formatArea(r.area, s.unitSystem), size: 10.5, min: 8.5, font: '600 {}px ' + MONO, color: '#33414f' },
+          { text: `${formatLength(r.wallLf, s.unitSystem)} LF`, size: 10.5, min: 8.5, font: '600 {}px ' + MONO, color: '#5b6976' },
+        ];
+        drawLabelStack(ctx, fitLabelLines(lines, x1 - x0, y1 - y0, measureWith(ctx, lines)), lines, S(r.center));
       }
     }
     // auto-fixes: small ticks, only when zoomed in enough to matter
@@ -613,22 +673,31 @@ export function drawTrace(ctx, rc) {
       ctx.fillStyle = 'rgba(29,122,77,.8)';
       for (const r of res.repairs) { if (!r.at || r.kind === 'opening') continue; const p = S(r.at); ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, 7); ctx.fill(); }
     }
-    // flags: pins
-    let n = 0;
+    // flags: pins. Pins that would overlap at this zoom merge into one pin
+    // with a count (the worst flag sets its colour); the focused flag always
+    // gets its own pin with a ring.
+    const pins = [];
+    let focused = null;
     for (const f of res.flags) {
       if (!f.at) continue;
       const on = focus?.type === 'flag' && focus.id === f.id;
-      if (f.severity === 'info' && !on) continue;
-      n++;
+      if (on) { focused = f; continue; }
+      if (f.severity === 'info') continue;
       const p = S(f.at);
-      const col = TR[f.severity] || TR.review;
-      if (on) { ctx.beginPath(); ctx.arc(p.x, p.y, 17, 0, 7); ctx.strokeStyle = hexA(col, 0.5); ctx.lineWidth = 4; ctx.stroke(); }
-      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 7); ctx.fillStyle = col; ctx.fill();
+      pins.push({ x: p.x, y: p.y, severity: f.severity });
+    }
+    const pin = (x, y, col, txt, ring) => {
+      if (ring) { ctx.beginPath(); ctx.arc(x, y, 17, 0, 7); ctx.strokeStyle = hexA(col, 0.5); ctx.lineWidth = 4; ctx.stroke(); }
+      const rad = txt.length > 1 ? 11 : 9;
+      ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fillStyle = col; ctx.fill();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
       ctx.fillStyle = '#fff'; ctx.font = '700 11px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(f.severity === 'info' ? 'i' : '!', p.x, p.y + 0.5);
+      ctx.fillText(txt, x, y + 0.5);
+    };
+    for (const g of clusterPins(pins, 20)) {
+      pin(g.x, g.y, TR[g.severity] || TR.review, g.items.length > 1 ? String(g.items.length) : '!', false);
     }
-    void n;
+    if (focused) { const p = S(focused.at); pin(p.x, p.y, TR[focused.severity] || TR.review, focused.severity === 'info' ? 'i' : '!', true); }
   }
 
   // selected trace area (px rect in plan-image space)
