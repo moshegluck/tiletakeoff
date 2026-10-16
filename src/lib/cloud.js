@@ -180,7 +180,12 @@ export async function uploadPlanFile(projectId, blob, meta) {
   if (!user) return null;
   const path = `${user.id}/${projectId}`;
   const type = meta.type || blob.type || (meta.kind === 'pdf' ? 'application/pdf' : 'image/png');
-  const { error } = await supabase.storage.from(PLAN_BUCKET).upload(path, blob, { upsert: true, contentType: type, cacheControl: '3600' });
+  // Send the bytes with an explicit type. A Blob goes up as a form part typed
+  // by the browser, and a file read back from storage on an iPhone can come
+  // back untyped — which the bucket rejects as not a PDF / image.
+  const bytes = await blob.arrayBuffer();
+  if (!bytes.byteLength) throw new Error('the plan file could not be read on this device');
+  const { error } = await supabase.storage.from(PLAN_BUCKET).upload(path, bytes, { upsert: true, contentType: type, cacheControl: '3600' });
   if (error) throw error;
   return { path, name: meta.name || 'plan', type, kind: meta.kind, page: meta.page || 1, size: blob.size, at: Date.now() };
 }
