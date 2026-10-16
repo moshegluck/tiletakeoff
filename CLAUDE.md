@@ -114,6 +114,17 @@ TileTakeoff works the other way round:
   (arithmetic as a cell note), Total = ROUNDUP(Count × (1+Waste), 1), one SUMIF total over SF rows.
   Floor + border rows and Wall rows equal the estimate's floor / wall SF.
   Job info lives in `state.job` { proposal, customer, address } (Estimate panel; saved everywhere).
+- `src/lib/proposal.js` Export → Proposal (Excel): the priced Artistic proposal (Description | SF/LF/PC |
+  Item | Rate | Total, Total = qty × rate formulas, Subtotal / Sales Tax 0.00% / TOTAL), rate card of
+  #41765 (`ARTISTIC_RATES`: rectified 12X24/24X24 $7.75, large (a side ≥ 30") $8.75, + $2 x-large from
+  48X48, shower floor $185 / $385 from 17 SF, niche $145 (1 per tub / shower unless set), seat $250,
+  window cut $145 (W x H on the room), *OPTIONAL* miter $65/LF = 6.25 a niche + window perimeters,
+  *OPTIONAL* Ram Board at 0.00 with its price in the text, *FOR OFFICE USE* mud-job calc, footer).
+  A line with no tile picked or a size off the rate card gets no rate and a flag — never a guess.
+- Wall split (`takeoffRules.js` `wallParts`): a second wall tile in a room with a shower / tub covers the
+  wet run (W + 2·D a shower, 10 LF a tub) × height (`finish.wetWallMaterialId`, else the second picked;
+  "Shower walls in" on the room card); the rest of the walls carries the doors and the tub's 10 SF.
+  The estimate, quantity list, marked PDF and proposal all use it (no double count).
 - `src/lib/aiReview.js` + `api/detect-plan.js` `mode: 'review'`: "Check the trace with AI" — Claude
   looks at the drawing with the traced model drawn on it (R/O tags) and returns located findings
   (missing / false wall, missed door, window taken as door…) shown as flags. Never geometry.
@@ -122,7 +133,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 375 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 383 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
   room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
@@ -169,8 +180,9 @@ TileTakeoff works the other way round:
 - The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
-- Shower floor tile isn't a material pick yet (quantity list says NA); accent / feature walls
-  (tub BW, 30% waste) and tiled base aren't modelled.
+- Shower floor tile isn't a material pick yet (quantity list says NA; the proposal prices it EA);
+  accent / feature walls (tub BW, 30% waste), pattern labor lines (checkerboard) and tiled base aren't
+  modelled. Three+ wall tiles in one room each price the whole wall (flagged).
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road
