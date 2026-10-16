@@ -8,6 +8,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { nanoid } from 'nanoid';
 import { rectPoly } from '../engine/geometry.js';
 import { WASTE_BY_PATTERN } from '../data/tileCatalog.js';
+import { migrateRoomLayouts } from '../engine/patterns.js';
+import { slimTrace } from './slimTrace.js';
+import { materialFields } from '../lib/library.js';
 
 const KEY = 'tiletakeoff.project.v1';
 
@@ -28,6 +31,7 @@ function blankProject() {
     rooms: [],
     materials: [],
     markups: [],            // measurement markups (length/area/count/rect)
+    layoutsV2: true,        // rooms inherit their tile's pattern (engine/patterns.js)
     taxRate: 8.625,
     laborRatePerSf: 0,
     view: { x: 80, y: 80, zoom: 1 },
@@ -50,10 +54,18 @@ export function defaultTrace() {
   };
 }
 
+// A saved project (raw, as stored) merged over a blank one and brought up to
+// date (see engine/patterns.js). The raw data decides: a blank project
+// already says layoutsV2, so the merged object can't.
+function fromSaved(raw) {
+  const p = { ...blankProject(), ...raw };
+  return raw?.layoutsV2 ? p : { ...p, rooms: migrateRoomLayouts(p.rooms), layoutsV2: true };
+}
+
 function loadProject() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) { const p = JSON.parse(raw); if (p && p.rooms) return { ...blankProject(), ...p }; }
+    if (raw) { const p = JSON.parse(raw); if (p && p.rooms) return fromSaved(p); }
   } catch (_) {}
   return blankProject();
 }
@@ -71,25 +83,13 @@ function localSnapshot(s) {
   return {
     id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
     archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: slimTrace(s.trace),
+    layoutsV2: true,
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
     createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId,
   };
 }
 
-// Keep what the overlay, 3D and re-trace need; drop the solver's debug output.
-function slimTrace(tr) {
-  if (!tr?.result) return tr;
-  const r = tr.result;
-  return {
-    ...tr,
-    result: {
-      ...r, log: [], voids: [],
-      repairs: (r.repairs || []).slice(0, 400),
-      rooms: r.rooms.map(({ centerPoly: _c, edgeIds: _e, labels: _l, ...x }) => x),
-    },
-  };
-}
 
 let warnedQuota = false;
 function persist(get) {
@@ -187,7 +187,7 @@ export const useStore = create((set, get) => ({
   toggle3d: (v) => set({ view3d: v ?? !get().view3d }),
 
   newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select' }); persist(get); },
-  loadSnapshot: (snap) => { set({ ...blankProject(), ...snap, selZone: null }); persist(get); },
+  loadSnapshot: (snap) => { set({ ...fromSaved(snap), selZone: null }); persist(get); },
   setCloudId: (cloudId) => { set({ cloudId }); persist(get); },
   // load a project row fetched from Supabase into the working store
   loadCloudDoc: (row) => {
@@ -196,7 +196,8 @@ export const useStore = create((set, get) => ({
       ...blankProject(),
       id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system,
       scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
-      rooms: doc.rooms || [], materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,
+      rooms: doc.layoutsV2 ? (doc.rooms || []) : migrateRoomLayouts(doc.rooms), layoutsV2: true,
+      materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select',
@@ -217,7 +218,8 @@ export const useStore = create((set, get) => ({
       points,                 // [{x,y}] feet
       assigned: [],
       wallHeight: 8,
-      layout: { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } },
+      // no pattern: the room lays its tile in the tile's own pattern
+      layout: { angleDeg: 0, origin: { x: 0, y: 0 } },
     };
     const floor = get().materials.find((m) => m.type === 'floor');
     if (floor) room.assigned.push(floor.id);
@@ -327,7 +329,7 @@ export const useStore = create((set, get) => ({
         points: t.poly, holes: t.holes || [],
         assigned: p?.assigned || (floor ? [floor.id] : []),
         wallHeight: H,
-        layout: p?.layout || { pattern: 'grid', angleDeg: 0, origin: { x: 0, y: 0 } },
+        layout: p?.layout || { angleDeg: 0, origin: { x: 0, y: 0 } },
         finish: p?.finish,
         zones: p?.zones,
         traceId: t.id, traceName: t.name, roomType: t.type,
@@ -365,8 +367,11 @@ export const useStore = create((set, get) => ({
       let assigned = r.assigned.slice();
       const typeOf = (id) => mats.find((m) => m.id === id)?.type;
       const setOnly = (type, id) => { assigned = assigned.filter((x) => typeOf(x) !== type); if (id) assigned.push(id); };
-      if (patch.floorPreset) { const m = ensure(patch.floorPreset, 'floor'); setOnly('floor', m.id); fin.floor = patch.floorPreset.id; }
-      if (patch.floorMaterialId) setOnly('floor', patch.floorMaterialId);
+      let layout = r.layout;
+      // a floor picked in 3D is laid in its own pattern
+      const dropPattern = () => { if (layout?.pattern) { const { pattern: _p, ...rest } = layout; layout = rest; } };
+      if (patch.floorPreset) { const m = ensure(patch.floorPreset, 'floor'); setOnly('floor', m.id); fin.floor = patch.floorPreset.id; dropPattern(); }
+      if (patch.floorMaterialId) { setOnly('floor', patch.floorMaterialId); dropPattern(); }
       if (patch.paint) fin.paint = patch.paint;
       if (patch.wallTilePreset) {
         const m = ensure(patch.wallTilePreset, 'wall'); setOnly('wall', m.id); fin.wallTile = patch.wallTilePreset.id;
@@ -377,7 +382,7 @@ export const useStore = create((set, get) => ({
         fin.wallTileHeight = patch.wallTileHeight;
         if (patch.wallTileHeight === 0) { setOnly('wall', null); fin.wallTile = null; }
       }
-      return { ...r, finish: fin, assigned };
+      return { ...r, finish: fin, assigned, layout };
     });
     set({ materials: mats, rooms });
     persist(get);
@@ -448,31 +453,63 @@ export const useStore = create((set, get) => ({
     set({ materials: mats, rooms, selection: { type: 'material', id: mat.id }, tab: 'materials', gridMaterialId: isFloor ? mat.id : get().gridMaterialId });
     persist(get);
   },
-  // Create a project material from a saved tile-library row. Mirrors
-  // addMaterial's floor defaults + auto-assign-to-unassigned-rooms behavior.
-  addMaterialFromTile: (tile) => {
-    const num = (v, d) => (Number.isFinite(+v) && +v > 0 ? +v : d);
-    const mat = {
-      id: nanoid(),
-      name: tile.name || 'Library Tile',
-      type: 'floor',
-      color: MAT_FLOOR,
-      tw: num(tile.tw_in, 12), th: num(tile.th_in, 12), grout: 0.125,
-      pattern: 'grid',
-      waste: 10,
-      price: Number.isFinite(+tile.price) ? +tile.price : 0,
-      priceUnit: tile.price_unit || 'sf',
-      sfPerBox: num(tile.sf_per_box, 15),
-      faceCoverage: 1,
-      costMode: 'waste', optimizeWholeJob: false, cutSafetyPct: 5,
-    };
-    const prevMats = get().materials;
-    const rooms = get().rooms.map((r) =>
-      r.assigned.some((id) => prevMats.find((m) => m.id === id)?.type === 'floor')
-        ? r : { ...r, assigned: [...r.assigned, mat.id] });
-    set({ materials: [...prevMats, mat], rooms, selection: { type: 'material', id: mat.id }, tab: 'materials', gridMaterialId: mat.id });
+  /**
+   * Lay a library tile (lib/library.js item) in rooms and floor design zones.
+   * The tile becomes (or updates) one project material; in each target room it
+   * replaces the room's tile of the same kind (floor or wall). Pattern: a room
+   * follows its tile's pattern, so a new tile's pattern is the tile's; but
+   * re-applying a tile in a different pattern must not quietly change rooms
+   * that already use it, so then only the targets get the new pattern.
+   * @param {import('../lib/library.js').LibItem} item
+   * @param {{ rooms?: string[], zones?: {roomId:string, zoneId:string}[] }} [targets]
+   * @returns {{ materialId: string, rooms: number, zones: number }}
+   */
+  applyTile: (item, targets = {}) => {
+    const fields = materialFields(item);
+    const kind = fields.type;
+    const roomIds = new Set(targets.rooms || []);
+    const zoneKeys = new Set((kind === 'floor' ? targets.zones || [] : []).map((z) => `${z.roomId}|${z.zoneId}`));
+    let mats = get().materials;
+    let mat = item.materialId ? mats.find((m) => m.id === item.materialId)
+      : mats.find((m) => m.libKey === item.key && m.type === kind);
+    let roomPatternOverride = null;
+    if (!mat) {
+      mat = { id: nanoid(), ...fields, faceCoverage: 1, costMode: 'waste', optimizeWholeJob: false, cutSafetyPct: 5, libKey: item.key };
+      mats = [...mats, mat];
+    } else {
+      const usedElsewhere = get().rooms.some((r) => !roomIds.has(r.id) && (r.assigned.includes(mat.id) ||
+        (r.zones || []).some((z) => z.materialId === mat.id && !zoneKeys.has(`${r.id}|${z.id}`))));
+      const keepPattern = usedElsewhere && (mat.pattern || 'grid') !== fields.pattern;
+      if (keepPattern) roomPatternOverride = fields.pattern;
+      mat = { ...mat, ...fields, name: mat.name, ...(keepPattern ? { pattern: mat.pattern } : {}) };
+      mats = mats.map((m) => (m.id === mat.id ? mat : m));
+    }
+    const typeOf = (id) => mats.find((m) => m.id === id)?.type;
+    let nRooms = 0, nZones = 0;
+    const rooms = get().rooms.map((r) => {
+      let next = r;
+      if (roomIds.has(r.id)) {
+        nRooms++;
+        const assigned = [...r.assigned.filter((id) => typeOf(id) !== kind), mat.id];
+        let layout = { ...(r.layout || {}) };
+        if (kind === 'floor') {
+          if (roomPatternOverride) layout.pattern = roomPatternOverride; else delete layout.pattern;
+          layout.angleDeg = +item.angleDeg || 0;
+        }
+        next = { ...next, assigned, layout };
+      }
+      if (zoneKeys.size && (r.zones || []).some((z) => zoneKeys.has(`${r.id}|${z.id}`))) {
+        next = { ...next, zones: next.zones.map((z) => {
+          if (!zoneKeys.has(`${r.id}|${z.id}`)) return z;
+          nZones++;
+          return { ...z, materialId: mat.id, layout: { ...(z.layout || {}), pattern: fields.pattern, angleDeg: +item.angleDeg || 0 } };
+        }) };
+      }
+      return next;
+    });
+    set({ materials: mats, rooms, gridMaterialId: kind === 'floor' ? mat.id : get().gridMaterialId });
     persist(get);
-    return mat.id;
+    return { materialId: mat.id, rooms: nRooms, zones: nZones };
   },
   updateMaterial: (id, patch) => {
     // if pattern changes, suggest waste

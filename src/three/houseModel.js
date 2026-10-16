@@ -8,6 +8,7 @@ import { roomTypeOf } from '../engine/trace/analyze.js';
 import { roomArea } from '../engine/geometry.js';
 import { interiorPoint } from '../engine/trace/vec.js';
 import { roomRegions, zonesOf } from '../engine/zones.js';
+import { roomPattern } from '../engine/patterns.js';
 
 const specOf = (p) => (p ? { style: p.style, color: p.color, tw: p.tw, th: p.th, grout: p.grout ?? 0.125, pattern: p.pattern || 'grid' } : null);
 
@@ -27,7 +28,7 @@ function zoneSurfaces(r, mats) {
   const reg = roomRegions(r);
   const spec = (z) => {
     const m = mats.find((x) => x.id === z.materialId);
-    return m ? specFromMaterial(m) : { style: 'stone', color: z.color || '#7a3fa0', tw: 12, th: 12, grout: 0.125, pattern: 'grid' };
+    return m ? { ...specFromMaterial(m), pattern: z.layout?.pattern || m.pattern || 'grid' } : { style: 'stone', color: z.color || '#7a3fa0', tw: 12, th: 12, grout: 0.125, pattern: 'grid' };
   };
   return [
     ...reg.bands.map((b) => ({ id: b.zone.id, poly: b.outer, holes: b.holes, spec: spec(b.zone), lift: 0.01 })),
@@ -48,7 +49,7 @@ function toRoom(r, mats) {
     zones: zoneSurfaces(r, mats),
     center: r.labelAt || interiorPoint(r.points),
     area: roomArea(r),
-    floor: floorMat ? specFromMaterial(floorMat) : specOf(presetById(fin.floor)) || specOf(presetById('oak-plank')),
+    floor: floorMat ? { ...specFromMaterial(floorMat), pattern: roomPattern(r, floorMat) } : specOf(presetById(fin.floor)) || specOf(presetById('oak-plank')),
     floorName: floorMat ? floorMat.name : presetById(fin.floor)?.name,
     floorPriced: !!floorMat,
     wallTile,
