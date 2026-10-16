@@ -10,6 +10,9 @@ import { rectPoly } from '../engine/geometry.js';
 import { WASTE_BY_PATTERN } from '../data/tileCatalog.js';
 import { migrateRoomLayouts } from '../engine/patterns.js';
 import { slimTrace } from './slimTrace.js';
+import { slimPages } from './pages.js';
+
+export { allRooms, allMarkups, wholeProject, otherPages, slimPages } from './pages.js';
 import { materialFields } from '../lib/library.js';
 import { createHistory } from './history.js';
 
@@ -41,6 +44,11 @@ function blankProject() {
     planHeight: 0,         // pixel height of loaded plan image
     planDpi: 0,            // px per paper-inch of the plan (72 * pdf renderScale); 0 = unknown
     trace: null,           // reconstructed wall model: { result, settings, manual, removed, region, source, committedAt }
+    // rooms / markups / trace / scale above belong to the plan page on screen
+    // (pdfPage); every other page's are parked here: { [page]: { rooms,
+    // markups, trace, scale, archScale } }. See switchPage / allRooms.
+    pageData: {},
+    pdfPage: 1,
     cloudId: null,         // supabase project id when saved to cloud
     planFile: null,        // the plan file kept in the cloud: { path, name, type, kind, page, size, at }
     createdAt: Date.now(),
@@ -60,7 +68,8 @@ export function defaultTrace() {
 // date (see engine/patterns.js). The raw data decides: a blank project
 // already says layoutsV2, so the merged object can't.
 function fromSaved(raw) {
-  const p = { ...blankProject(), ...raw };
+  // saved before pages were tracked: its takeoff sits on the page the plan was on
+  const p = { ...blankProject(), ...raw, pdfPage: raw?.pdfPage || raw?.planFile?.page || 1, pageKnown: raw?.pdfPage != null };
   return raw?.layoutsV2 ? p : { ...p, rooms: migrateRoomLayouts(p.rooms), layoutsV2: true };
 }
 
@@ -85,6 +94,7 @@ function localSnapshot(s) {
   return {
     id: s.id, name: s.name, unitSystem: s.unitSystem, scale: s.scale,
     archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: slimTrace(s.trace),
+    pageData: slimPages(s.pageData), pdfPage: s.pdfPage || 1,
     layoutsV2: true,
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
@@ -116,6 +126,7 @@ function persist(get) {
 const history = createHistory();
 
 export const useStore = create((rawSet, get) => {
+  const initial = loadProject();
   // every change goes through here so undo / redo can record it
   const set = (partial, replace) => {
     const before = get();
@@ -143,7 +154,7 @@ export const useStore = create((rawSet, get) => {
     return true;
   };
   return {
-  ...loadProject(),
+  ...initial,
 
   // ---- undo / redo (state/history.js) ----
   undoCount: 0,
@@ -164,7 +175,7 @@ export const useStore = create((rawSet, get) => {
   view3d: false,
   pdfDoc: null,        // loaded pdf.js doc (runtime only)
   pdfPages: 0,
-  pdfPage: 1,
+  pdfPage: initial.pdfPage || 1,
   showTrace: true,
   traceBusy: false,
   traceFocus: null,      // { type: 'flag' | 'room', id }
@@ -191,8 +202,36 @@ export const useStore = create((rawSet, get) => {
     set({ planImage: d, planWidth: w || 0, planHeight: h || 0 });
     persist(get);
   },
-  setPdf: (doc, pages) => set({ pdfDoc: doc, pdfPages: pages, pdfPage: 1 }),
-  setPdfPage: (n) => set({ pdfPage: n }),
+  setPdf: (doc, pages) => set({ pdfDoc: doc, pdfPages: pages }),
+  // the page on screen, when its takeoff is already the one loaded (restoring a plan)
+  setPdfPage: (n) => { set({ pdfPage: n, pageKnown: true }); persist(get); },
+  /**
+   * Go to another page of the plan: this page's rooms, markups, trace and
+   * scale are parked and that page's come back. A page not worked on yet
+   * starts empty and keeps the current scale (sets usually share one; the
+   * sheet's own scale note replaces it, see App). Undo doesn't cross pages.
+   * @returns {boolean} true when the page had no takeoff of its own yet
+   */
+  switchPage: (n) => {
+    const st = get(), cur = st.pdfPage || 1;
+    if (n === cur) return false;
+    const pd = { ...st.pageData };
+    if (st.rooms.length || st.markups.length || st.trace || st.scale) {
+      pd[cur] = { rooms: st.rooms, markups: st.markups, trace: st.trace, scale: st.scale, archScale: st.archScale };
+    } else delete pd[cur];
+    const next = pd[n];
+    delete pd[n];
+    rawSet({
+      pageData: pd, pdfPage: n, pageKnown: true,
+      rooms: next?.rooms || [], markups: next?.markups || [], trace: next?.trace || null,
+      scale: next?.scale ?? st.scale, archScale: next?.scale ? next.archScale : st.archScale,
+      selection: { type: null, id: null }, selRooms: [], selZone: null, traceFocus: null,
+    });
+    history.clear();
+    rawSet(history.counts());
+    persist(get);
+    return !next?.scale;
+  },
   // who is signed in (set by AccountBar; the phone menu shows it)
   authUser: null,
   setAuthUser: (u) => set({ authUser: u }),
@@ -202,7 +241,8 @@ export const useStore = create((rawSet, get) => {
   // a restored plan keeps the saved view instead of fitting (Canvas2D)
   keepView: false,
   keepViewOnce: () => set({ keepView: true }),
-  clearPdf: () => set({ pdfDoc: null, pdfPages: 0, pdfPage: 1 }),
+  // an image plan has one page: the first
+  clearPdf: () => { if ((get().pdfPage || 1) !== 1) get().switchPage(1); set({ pdfDoc: null, pdfPages: 0 }); },
   setTool: (tool) => set({ tool }),
   setTab: (tab) => set({ tab }),
   // Selecting a single room mirrors it into selRooms so the two stay in sync;
@@ -235,7 +275,7 @@ export const useStore = create((rawSet, get) => {
   setGridMaterial: (id) => set({ gridMaterialId: id }),
   toggle3d: (v) => set({ view3d: v ?? !get().view3d }),
 
-  newProject: () => { const p = blankProject(); set({ ...p, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select' }); persist(get); },
+  newProject: () => { const p = blankProject(); set({ ...p, pageKnown: true, pdfDoc: null, pdfPages: 0, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select' }); persist(get); },
   loadSnapshot: (snap) => { set({ ...fromSaved(snap), selZone: null }); persist(get); },
   setCloudId: (cloudId) => { set({ cloudId }); persist(get); },
   setPlanFile: (planFile) => { set({ planFile }); persist(get); },
@@ -248,6 +288,7 @@ export const useStore = create((rawSet, get) => {
       scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
       rooms: doc.layoutsV2 ? (doc.rooms || []) : migrateRoomLayouts(doc.rooms), layoutsV2: true,
       materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,
+      pageData: doc.pageData || {}, pdfPage: doc.pdfPage || doc.planFile?.page || 1, pageKnown: doc.pdfPage != null,
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select',
@@ -370,7 +411,8 @@ export const useStore = create((rawSet, get) => {
     const floor = get().materials.find((m) => m.type === 'floor');
     const H = tr.settings?.ceilingHeight ?? 8;
     const DH = tr.settings?.doorHeight ?? 6 + 8 / 12;
-    const rooms = res.rooms.map((t, i) => {
+    // a space that is no floor (unexcavated, a shaft) stays in the model, not the takeoff
+    const rooms = res.rooms.filter((t) => t.type !== 'nofloor').map((t, i) => {
       const p = matchPrev(t);
       return {
         id: p?.id || nanoid(),

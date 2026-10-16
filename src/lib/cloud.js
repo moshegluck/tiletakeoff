@@ -9,6 +9,7 @@ import { supabase, cloudEnabled } from './supabase.js';
 import { estimateProject } from '../engine/estimate.js';
 import { polygonArea } from '../engine/geometry.js';
 import { slimTrace } from '../state/slimTrace.js';
+import { wholeProject, slimPages } from '../state/pages.js';
 
 // ---- auth ----
 export async function getUser() {
@@ -105,11 +106,13 @@ function toDoc(state) {
     scale: state.scale, archScale: state.archScale,
     rooms: state.rooms, materials: state.materials, markups: state.markups,
     trace: slimTrace(state.trace), layoutsV2: true, planFile: state.planFile || null,
+    pageData: slimPages(state.pageData), pdfPage: state.pdfPage || 1,
     taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
     view: state.view, planImage: keepImage ? state.planImage : null,
   };
 }
 function headline(state) {
+  state = wholeProject(state);
   const floorSf = state.rooms.reduce((s, r) => s + (state.scale ? polygonArea(r.points) : 0), 0);
   let total = 0;
   try { total = estimateProject(state).total; } catch (_) {}

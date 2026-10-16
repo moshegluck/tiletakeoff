@@ -21,6 +21,7 @@
     "@upstash/redis": "^1.38.0",
     "exceljs": "^4.4.0",
     "nanoid": "^5.1.16",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.149",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

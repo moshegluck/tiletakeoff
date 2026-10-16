@@ -93,4 +93,30 @@ describe('api/detect-plan', () => {
     expect(res.payload.rooms).toEqual([]);
     expect(res.payload.warning).toMatch(/declined/);
   });
+
+  it('review mode: shows Claude the traced model and keeps only findings on real tags', async () => {
+    const review = { findings: [
+      { kind: 'window_as_door', room: 'R1', opening: 'O2', x: 400, y: -30, note: 'O2 is a casement window (R3553 CAS), not a door', confidence: 0.9 },
+      { kind: 'false_wall', room: 'R9', opening: 'O7', x: 50, y: 60, note: 'stair break line', confidence: 0.8 },
+      { kind: 'made_up', room: 'R1', opening: '', x: 1, y: 1, note: 'x', confidence: 1 },
+      { kind: 'outline_off', room: 'R2', opening: '', x: 10, y: 10, note: 'unsure', confidence: 0.1 },
+    ], rooms_ok: ['R2', 'R5'] };
+    queue.push({ model: 'claude-opus-5-5', stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(review) }] });
+    const res = await call({
+      mode: 'review', imageBase64: 'aGVsbG8=', mediaType: 'image/jpeg', imageWidth: 1800, imageHeight: 1200, pxPerFt: 36,
+      rooms: [{ tag: 'R1', name: 'SPACE 1', x: 300, y: 200, areaSf: 36.6, wallLf: 16.4 }, { tag: 'R2', name: 'GYM', x: 900, y: 600, areaSf: 142.6, wallLf: 39.8 }],
+      openings: [{ tag: 'O1', type: 'door', x: 100, y: 100, widthFt: 2.5 }, { tag: 'O2', type: 'opening', x: 400, y: 10, widthFt: 6.6 }],
+    });
+    expect(res.code).toBe(200);
+    const { params } = calls[0];
+    expect(params.system).toMatch(/never supplies|Never invent/i);
+    expect(params.output_config.format.schema.properties.findings).toBeTruthy();
+    expect(params.messages[0].content[1].text).toMatch(/R1.*SPACE 1/);
+    expect(params.messages[0].content[1].text).toMatch(/O2.*opening/);
+    expect(res.payload.findings).toEqual([
+      { kind: 'window_as_door', room: 'R1', opening: 'O2', x: 400, y: 0, note: 'O2 is a casement window (R3553 CAS), not a door', confidence: 0.9 },
+      { kind: 'false_wall', room: '', opening: '', x: 50, y: 60, note: 'stair break line', confidence: 0.8 },
+    ]);
+    expect(res.payload.roomsOk).toEqual(['R2']);
+  });
 });

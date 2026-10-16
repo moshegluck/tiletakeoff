@@ -6,6 +6,8 @@ import { estimateProject } from '../engine/estimate.js';
 import { roomArea, roomWallLf } from '../engine/geometry.js';
 import { round } from '../engine/units.js';
 import { roomRegions } from '../engine/zones.js';
+import { isMeasured, markupValue, markupUnit, markupCost, MARKUP_TYPES } from '../engine/markups.js';
+import { wholeProject, slimPages } from '../state/pages.js';
 
 // One row per floor design zone (border band / inlay) across all rooms.
 const ZONE_HEAD = ['Room', 'Design', 'Kind', 'Material', 'Area SF', 'Run LF', 'From Wall FT', 'Width FT'];
@@ -18,6 +20,15 @@ function zoneRows(state) {
     for (const z of reg.inlays) rows.push([r.name, z.zone.name, 'inlay', matName(z.zone.materialId), round(z.area, 2), '', '', '']);
   }
   return rows;
+}
+
+// One row per measured markup (length / area / count) on every page.
+const MARKUP_HEAD = ['Page', 'Markup', 'Type', 'Quantity', 'Unit', 'Unit Cost', 'Cost', 'Note'];
+function markupRows(state) {
+  return state.markups.filter((m) => isMeasured(m.type)).map((m) => [
+    m.page, m.name || MARKUP_TYPES[m.type]?.label || m.type, m.type,
+    round(markupValue(m), 2), markupUnit(m), round(m.unitCost || 0, 2), round(markupCost(m), 2), m.note || '',
+  ]);
 }
 
 function downloadBlob(content, type, filename) {
@@ -39,6 +50,8 @@ export function exportJSON(state) {
     // markups are durable takeoff data — include them so the measurement log
     // survives an export/re-import round-trip.
     markups: state.markups,
+    // the takeoff on the plan's other pages
+    pageData: slimPages(state.pageData), pdfPage: state.pdfPage || 1,
     taxRate: state.taxRate, laborRatePerSf: state.laborRatePerSf,
     exportedAt: new Date().toISOString(),
   };
@@ -76,6 +89,7 @@ function toCSV(rows) {
 }
 
 export function exportCSV(state) {
+  state = wholeProject(state);
   const e = estimateProject(state);
   const rows = [
     ['TileTakeoff Estimate', state.name],
@@ -96,14 +110,16 @@ export function exportCSV(state) {
   rows.push(['', '', '', '', '', '', '', '', '', '', 'TOTAL', round(e.total, 2)]);
   rows.push([]);
   rows.push(['Rooms']);
-  rows.push(['Name', 'Area SF', 'Wall LF', 'Wall Height', 'Materials']);
+  rows.push(['Page', 'Name', 'Area SF', 'Wall LF', 'Wall Height', 'Materials']);
   state.rooms.forEach((r) => rows.push([
-    r.name, round(roomArea(r), 2), round(roomWallLf(r), 2),
+    r.page, r.name, round(roomArea(r), 2), round(roomWallLf(r), 2),
     r.wallHeight ?? 8,
     r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
   ]));
   const zones = zoneRows(state);
   if (zones.length) rows.push([], ['Floor design (borders & inlays)'], ZONE_HEAD, ...zones);
+  const mks = markupRows(state);
+  if (mks.length) rows.push([], ['Markups'], MARKUP_HEAD, ...mks);
   downloadBlob(toCSV(rows), 'text/csv', `${safe(state.name)}_estimate.csv`);
 }
 
@@ -112,6 +128,7 @@ export function exportCSV(state) {
 // typed string/number — a value like "=cmd|..." is stored as text, not a
 // formula — so the workbook is not a formula-injection vector.
 export async function exportXLSX(state) {
+  state = wholeProject(state);
   const mod = await import('exceljs');
   const ExcelJS = mod.default ?? mod;
   const e = estimateProject(state);
@@ -134,9 +151,9 @@ export async function exportXLSX(state) {
   ]);
 
   wb.addWorksheet('Rooms').addRows([
-    ['Name', 'Area SF', 'Wall LF', 'Wall Height', 'Pattern', 'Materials'],
+    ['Page', 'Name', 'Area SF', 'Wall LF', 'Wall Height', 'Pattern', 'Materials'],
     ...state.rooms.map((r) => [
-      r.name, round(roomArea(r), 2), round(roomWallLf(r), 2),
+      r.page, r.name, round(roomArea(r), 2), round(roomWallLf(r), 2),
       r.wallHeight ?? 8, r.layout?.pattern ?? 'grid',
       r.assigned.map((id) => state.materials.find((m) => m.id === id)?.name).filter(Boolean).join(' | '),
     ]),
@@ -144,6 +161,8 @@ export async function exportXLSX(state) {
 
   const zones = zoneRows(state);
   if (zones.length) wb.addWorksheet('Floor Design').addRows([ZONE_HEAD, ...zones]);
+  const mks = markupRows(state);
+  if (mks.length) wb.addWorksheet('Markups').addRows([MARKUP_HEAD, ...mks]);
 
   wb.addWorksheet('Materials').addRows([
     ['Name', 'Type', 'W in', 'H in', 'Grout in', 'Pattern', 'Waste %', 'Price', 'Unit', 'SF/Box'],

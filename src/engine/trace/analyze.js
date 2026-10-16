@@ -10,7 +10,7 @@
 // ============================================================
 
 import {
-  sub, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp,
+  sub, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex,
 } from './vec.js';
 import { traceFaces, stripSpurs, splitPinches, fmtIn } from './graph.js';
 // (dist, signedArea etc. come from vec.js above)
@@ -19,6 +19,8 @@ const IN = 1 / 12;
 
 /** @type {[string, RegExp][]} */
 export const ROOM_TYPES = [
+  // not floor at all: walled in, but nothing to finish
+  ['nofloor', /\b(unexcavated|unexc|crawl\s*space|crawlspace|open\s+to\s+below|shaft|chase)\b/i],
   ['bath', /\b(bath|bathroom|bth|wc|w\.c\.?|powder|pwdr|toilet|lav|lavatory|ensuite|en-suite|shower|restroom|half bath|1\/2 bath)\b/i],
   ['closet', /\b(closet|clos|clo|cl|wic|w\.i\.c\.?|walk-?in|linen|lin|pantry|pan|storage|stor|wardrobe)\b/i],
   ['kitchen', /\b(kitchen|kit|kitch|kitchenette)\b/i],
@@ -227,10 +229,43 @@ export function analyzeGraph(g, ctx = {}) {
   }
 
   // ---- rooms ----
+  // a window is wall at the floor: the floor stops at its face, wall LF runs under it
+  const isDoorway = (e) => e.kind === 'opening' && e.opening?.openingType !== 'window';
+  // a furring layer the wall model left out (its face shared with the wall
+  // behind it): a wall-layer face 1"–8" in from the wall along most of the
+  // edge is the room's true face
+  const innerFaces = ctx.faces || [];
+  const faceIdx = new GridIndex(4);
+  innerFaces.forEach((f, i) => faceIdx.insert(i, Math.min(f.a.x, f.b.x), Math.min(f.a.y, f.b.y), Math.max(f.a.x, f.b.x), Math.max(f.a.y, f.b.y)));
+  const furred = (h, base) => {
+    if (!innerFaces.length) return base;
+    const p = nodes[h.from], q = nodes[h.to], L = dist(p, q);
+    if (L < 1) return base;
+    const u = norm(sub(q, p)), n = perp(u);
+    // pieces of face at the same depth add up (a window breaks the furring's line)
+    const byDepth = new Map();
+    const r = base + 0.7;
+    for (const i of faceIdx.query(Math.min(p.x, q.x) - r, Math.min(p.y, q.y) - r, Math.max(p.x, q.x) + r, Math.max(p.y, q.y) + r)) {
+      const f = innerFaces[i];
+      const fu = norm(sub(f.b, f.a));
+      if (Math.abs(cross(u, fu)) > 0.02) continue;
+      const o = (dot(sub(f.a, p), n) + dot(sub(f.b, p), n)) / 2;
+      if (o < base + 1 / 12 || o > base + 8 / 12) continue;
+      const s0 = dot(sub(f.a, p), u), s1 = dot(sub(f.b, p), u);
+      const cover = Math.min(L, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1));
+      if (cover <= 0) continue;
+      const key = Math.round(o * 24);   // ½" bins
+      const cur = byDepth.get(key) || { o: 0, cover: 0 };
+      byDepth.set(key, { o: Math.max(cur.o, o), cover: cur.cover + cover });
+    }
+    let best = base;
+    for (const { o, cover } of byDepth.values()) if (cover >= 0.5 * L && (best === base || o < best)) best = o;
+    return best;
+  };
   const distFor = (h) => {
     const e = h.e;
-    if (e.kind === 'opening') return opt.floorAtDoor === 'face' ? (e.t || 0) / 2 : 0;
-    return (e.t || 0) / 2;
+    if (isDoorway(e)) return opt.floorAtDoor === 'face' ? (e.t || 0) / 2 : 0;
+    return furred(h, (e.t || 0) / 2);
   };
   const rooms = [];
   const voids = [];
@@ -277,7 +312,7 @@ export function analyzeGraph(g, ctx = {}) {
     for (const p of parts.concat(holes)) {
       p.edges.forEach((e, i) => {
         const l = p.segLen[i];
-        if (e.kind === 'opening') openingLf += l; else wallLf += l;
+        if (isDoorway(e)) openingLf += l; else wallLf += l;
         edgeLfs.push({ e, l });
       });
     }
@@ -351,6 +386,7 @@ export function analyzeGraph(g, ctx = {}) {
     room.name = near.length ? [...new Set(near.map((t) => t.str.trim()))].join(' ') : null;
     // the room's type comes from its own anchor label, not a neighbour's stray tag
     room.type = anchor && roomTypeOf(anchor.str) !== 'room' ? roomTypeOf(anchor.str) : roomTypeOf(room.name || '');
+    if (room.type === 'nofloor') flag('warn', 'not_floor', room.center, `${room.name} is no floor — left out of the floor total and the takeoff. Include it by renaming it.`, { roomId: room.id });
     // two different room names far apart in one face → merged rooms
     const typed = lbls.filter((t) => roomTypeOf(t.str) !== 'room');
     const far = typed.filter((t) => anchor && dist(t, anchor) >= 6 && roomTypeOf(t.str) !== roomTypeOf(anchor.str));
@@ -393,7 +429,7 @@ export function analyzeGraph(g, ctx = {}) {
       const ra = roomOf(fa), rb = roomOf(fb);
       const op = {
         id: `o${e.id}`, edgeId: e.id, a: { ...a }, b: { ...b }, t: e.t, width: o.width ?? dist(a, b), openingType: o.openingType || 'opening',
-        conf: o.conf ?? 0.6, arcs: o.arcs || [], exterior, rooms: [ra?.id || null, rb?.id || null], jambs: o.jambs,
+        conf: o.conf ?? 0.6, arcs: o.arcs || [], hint: !!o.hint, exterior, rooms: [ra?.id || null, rb?.id || null], jambs: o.jambs,
       };
       openings.push(op);
       for (const r of [ra, rb]) if (r) r.openings.push({ id: op.id, width: op.width, type: op.openingType, to: (r === ra ? rb : ra)?.name || (exterior ? 'Exterior' : null) });
@@ -415,8 +451,12 @@ export function analyzeGraph(g, ctx = {}) {
     const h = halfInto.get(`${e.id}:${n}`);
     const f = h ? faceOfHalf.get(h.id) : null;
     const room = roomOf(f);
-    if (room) flag('info', 'spur', nodes[n], `Free-standing wall end in ${room.name} (partition / pony wall) — both faces counted in wall LF`, { roomId: room.id });
-    else flag('error', 'open_end', nodes[n], 'Wall ends without connecting to anything — the trace is open here (missing wall, unbridged door, or unclear drawing)');
+    if (room) {
+      // it changes the room's wall LF: say by how much, and how to undo it if it's no wall
+      const sp = (room.spurs || []).find((x) => dist(x.b, nodes[n]) < 0.1 || dist(x.a, nodes[n]) < 0.1);
+      const add = sp ? ` (+${fmtIn(sp.lf)} of wall LF)` : '';
+      flag('warn', 'spur', nodes[n], `Wall dead-ends in ${room.name} — counted as a partition, both faces${add}. If it's a rail, cabinet or a line on the drawing, erase it.`, { roomId: room.id });
+    } else flag('error', 'open_end', nodes[n], 'Wall ends without connecting to anything — the trace is open here (missing wall, unbridged door, or unclear drawing)');
   }
 
   // 4-way crossings: the trace crosses itself
@@ -459,8 +499,10 @@ function checkOpenings(openings, rooms, schedule, flag, swingsReadable) {
   if (!swingsReadable && openings.length) flag('info', 'no_swings', null, 'Door swings could not be read on this sheet — door widths come from the wall gaps');
   const byId = new Map(rooms.map((r) => [r.id, r]));
   for (const o of openings) {
+    if (o.openingType === 'window') continue;   // not a way in: no door checks
     const at = mid(o.a, o.b);
     const rs = o.rooms.map((id) => (id ? byId.get(id) : null));
+    if (!rs.some(Boolean)) continue;               // outside on both sides: no room's numbers depend on it
     const types = rs.map((r) => (r ? r.type : o.exterior ? 'exterior' : 'room'));
     const names = rs.map((r) => (r ? r.name : o.exterior ? 'exterior' : '?'));
     const w = o.width;
@@ -474,7 +516,7 @@ function checkOpenings(openings, rooms, schedule, flag, swingsReadable) {
     } else if (types.includes('bedroom') && !types.includes('exterior') && !types.includes('closet') && !types.includes('bath') && w > 4 && !isDouble) {
       flag('warn', 'door_width', at, `${label} is wide for a single room entry — door or cased opening? confirm`);
     } else if (!types.includes('exterior') && w > 8 && o.arcs.length === 0) {
-      flag('info', 'inferred_opening', at, `${label}: wide cased opening inferred — confirm it's open and not a missing wall`);
+      flag('warn', 'inferred_opening', at, `${label}: inferred, nothing drawn across it — ${fmtIn(w)} is off both rooms' wall LF. If it's a wall, draw it in.`);
     }
     if (swingsReadable && o.openingType === 'opening' && w <= 4 && !types.includes('closet')) {
       flag('info', 'no_swing', at, `${label}: no door swing found (pocket / bifold / cased?) — width taken from the wall gap`);

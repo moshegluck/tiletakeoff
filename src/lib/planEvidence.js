@@ -8,7 +8,7 @@
 
 import { arcFromBezier, isDoorSwing } from '../engine/trace/arcs.js';
 import { parseScaleNote } from '../engine/trace/analyze.js';
-import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer } from '../engine/trace/layers.js';
+import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 
 const VECTOR_MIN_LINES = 150;
@@ -87,8 +87,9 @@ export function evidenceToFeet(ev, scale, region = null) {
   const k = scale;
   const P = (p) => ({ x: p.x * k, y: p.y * k });
   const layered = hasWallLayers(ev.lines);
+  // wl: drawn on a wall layer (a sheet that names them) — the architect's own walls
   const lines = wallCandidates(ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region)))
-    .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k }));
+    .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall' }));
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
   const arcs = [];
   for (const c of ev.curves || []) {
@@ -96,14 +97,17 @@ export function evidenceToFeet(ev, scale, region = null) {
     const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
     if (isDoorSwing(arc)) arcs.push(arc);
   }
-  // door / window linework: where the sheet says a doorway or window is
+  // door / window linework: where the sheet says a doorway or a window is
+  // (kind: door | window | opening = a layer holding both)
   const hints = [];
   for (const l of ev.lines) {
-    if (l.layer != null && classifyLayer(l.layer) === 'opening' && inRegion(l.a, region)) hints.push({ a: P(l.a), b: P(l.b) });
+    const kind = l.layer != null ? classifyLayer(l.layer) : null;
+    if (isOpeningLayer(kind) && inRegion(l.a, region)) hints.push({ a: P(l.a), b: P(l.b), kind });
   }
   for (const c of ev.curves || []) {
-    if (c.layer == null || classifyLayer(c.layer) !== 'opening' || !inRegion(c.pieces[0].p0, region)) continue;
-    for (const pc of c.pieces) hints.push({ a: P(pc.p0), b: P(pc.p3) });
+    const kind = c.layer != null ? classifyLayer(c.layer) : null;
+    if (!isOpeningLayer(kind) || !inRegion(c.pieces[0].p0, region)) continue;
+    for (const pc of c.pieces) hints.push({ a: P(pc.p0), b: P(pc.p3), kind });
   }
   const inR = ev.texts.filter((t) => inRegion(t, region));
   const texts = inR.map((t) => ({ str: t.str, ...P(t) }));

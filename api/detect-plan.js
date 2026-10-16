@@ -117,6 +117,114 @@ const LABEL_SCHEMA = {
   },
 };
 
+// ---- trace review (mode: 'review') ----
+// The trace engine built the walls, rooms and openings; this asks Claude to
+// LOOK at the drawing with that model drawn over it and say where they
+// disagree. Findings come back as located notes for the estimator — the
+// model never supplies geometry, and the takeoff numbers stay the engine's.
+export const REVIEW_KINDS = ['missing_wall', 'false_wall', 'missed_door', 'false_opening', 'window_as_door', 'door_as_window', 'outline_off', 'merged_rooms', 'not_floor', 'name_mismatch'];
+const REVIEW_SYSTEM = `You check a flooring takeoff against the architectural drawing it was traced from.
+
+The image is part of a floor plan with the traced model drawn over it:
+- each traced room is outlined in purple with a tag R1, R2, … at its centre;
+- each place the trace treats as a gap in a wall is a thick bar with a tag O1, O2, …:
+  blue = door, orange = opening with no door (cased opening, closet front), teal = window
+  (a window stays in the wall's linear footage; a door or opening is taken off it);
+- every other wall the trace found is where the purple outlines run.
+
+Compare the model with the drawing underneath and report only real disagreements you can see:
+- missing_wall: the drawing has a wall where the model has none (two spaces share one outline, an outline crosses a wall).
+- false_wall: the model closes or cuts a room along something that is not a wall (stair lines, a handrail, cabinets, counters, a dimension or break line, a furniture edge).
+- missed_door: the drawing has a doorway or opening where the model runs a solid wall.
+- false_opening: the model has a gap (an O tag) where the drawing has a solid wall.
+- window_as_door: an O tag marked door/opening is actually a window in the drawing.
+- door_as_window: an O tag marked window is actually a door or opening.
+- outline_off: a room's outline doesn't follow the inside face of its walls (runs into a wall, misses a recess or a furring layer, cuts a corner).
+- merged_rooms: one outline holds two rooms the drawing separates.
+- not_floor: a traced room isn't finished floor (unexcavated, open to below, shaft, mechanical chase).
+- name_mismatch: the room's printed name differs from the name given for its tag.
+
+For each finding give the room tag and/or opening tag it concerns ("" if none), the pixel position on this image where the problem is, a short note an estimator understands (what is wrong and what the drawing shows), and your confidence 0–1. Do not report things that are right. If everything matches, return no findings. Never invent rooms, walls or doors that are not drawn.`;
+
+const REVIEW_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['findings', 'rooms_ok'],
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['kind', 'room', 'opening', 'x', 'y', 'note', 'confidence'],
+        properties: {
+          kind: { type: 'string', enum: REVIEW_KINDS },
+          room: { type: 'string' },
+          opening: { type: 'string' },
+          x: { type: 'number' },
+          y: { type: 'number' },
+          note: { type: 'string' },
+          confidence: { type: 'number' },
+        },
+      },
+    },
+    rooms_ok: { type: 'array', items: { type: 'string' } },
+  },
+};
+
+/** Coerce the model's review against the tags and image it was given. */
+export function cleanReview(parsed, { W, H, rooms, openings }) {
+  const rTags = new Set(rooms.map((r) => r.tag)), oTags = new Set(openings.map((o) => o.tag));
+  const findings = (Array.isArray(parsed?.findings) ? parsed.findings : []).filter((f) => f && REVIEW_KINDS.includes(f.kind))
+    .map((f) => ({
+      kind: f.kind,
+      room: rTags.has(String(f.room)) ? String(f.room) : '',
+      opening: oTags.has(String(f.opening)) ? String(f.opening) : '',
+      x: Math.min(W, Math.max(0, +f.x || 0)), y: Math.min(H, Math.max(0, +f.y || 0)),
+      note: String(f.note || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      confidence: Math.min(1, Math.max(0, +f.confidence || 0)),
+    }))
+    .filter((f) => f.note && f.confidence >= 0.35)
+    .slice(0, 80);
+  const roomsOk = (Array.isArray(parsed?.rooms_ok) ? parsed.rooms_ok : []).map(String).filter((t) => rTags.has(t));
+  return { findings, roomsOk };
+}
+
+async function reviewTrace(body, key, res) {
+  const W = Math.round(+body.imageWidth), H = Math.round(+body.imageHeight);
+  if (!(W >= 16 && H >= 16 && W <= MAX_EDGE && H <= MAX_EDGE)) return res.status(400).json({ error: `imageWidth/imageHeight required (16–${MAX_EDGE} px).` });
+  const tag = (s) => String(s || '').slice(0, 8);
+  const rooms = (Array.isArray(body.rooms) ? body.rooms : []).slice(0, 150).map((r) => ({
+    tag: tag(r.tag), name: String(r.name || '').slice(0, 40), x: Math.round(+r.x || 0), y: Math.round(+r.y || 0),
+    sf: Math.round((+r.areaSf || 0) * 10) / 10, wallLf: Math.round((+r.wallLf || 0) * 10) / 10,
+  }));
+  const openings = (Array.isArray(body.openings) ? body.openings : []).slice(0, 300).map((o) => ({
+    tag: tag(o.tag), type: ['door', 'opening', 'window'].includes(o.type) ? o.type : 'opening', x: Math.round(+o.x || 0), y: Math.round(+o.y || 0), widthFt: Math.round((+o.widthFt || 0) * 100) / 100,
+  }));
+  if (!rooms.length) return res.status(400).json({ error: 'rooms required' });
+  const ppf = +body.pxPerFt > 0 ? ` About ${(+body.pxPerFt).toFixed(1)} pixels per foot.` : '';
+  const anthropic = new Anthropic({ apiKey: key, timeout: 140_000, maxRetries: 1 });
+  let msg;
+  try {
+    msg = await askClaude(anthropic, {
+      max_tokens: 16000,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high', format: { type: 'json_schema', schema: REVIEW_SCHEMA } },
+      system: REVIEW_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: body.mediaType || 'image/jpeg', data: body.imageBase64 } },
+          { type: 'text', text: `This image is ${W} × ${H} pixels.${ppf}\nTraced rooms (tag, name, centre px, floor SF, wall LF): ${JSON.stringify(rooms)}\nGaps in walls (tag, type, centre px, width ft): ${JSON.stringify(openings)}` },
+        ],
+      }],
+    });
+  } catch (err) {
+    console.error(`[detect-plan:review] Anthropic SDK error ${err?.status || ''}:`, err?.message);
+    return res.status(502).json({ error: sdkErrorText(err, 'The AI check failed. Please try again.') });
+  }
+  if (msg.stop_reason === 'refusal') return res.status(200).json({ findings: [], roomsOk: [], warning: 'The AI declined to read this plan.' });
+  const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
+  let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ findings: [], roomsOk: [], warning: 'The AI returned an unreadable answer. Try again.' }); }
+  return res.status(200).json({ ...cleanReview(parsed, { W, H, rooms, openings }), model: msg.model });
+}
+
 const ALLOWED_MEDIA = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 // Vercel caps a function request body at 4.5 MB; ~4.2M base64 chars ≈ 3 MB
 // decoded leaves room for the JSON around it. The client sends ~0.5–2 MB.
@@ -356,6 +464,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Unsupported image type. Use PNG, JPEG, WebP or GIF.' });
     }
     if (mode === 'label') return await labelRooms(req.body, key, res);
+    if (mode === 'review') return await reviewTrace(req.body, key, res);
 
     const W = Math.round(+imageWidth), H = Math.round(+imageHeight);
     if (!(W >= 16 && H >= 16 && W <= MAX_EDGE && H <= MAX_EDGE)) {

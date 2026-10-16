@@ -95,6 +95,7 @@ export function createHouseScene(canvas, { onPick, onRoom, onMode } = {}) {
   });
   const extMat = matFor('ext', () => new THREE.MeshStandardMaterial({ color: 0xe8e2d6, roughness: 0.92 }));
   const capMat = matFor('cap', () => new THREE.MeshStandardMaterial({ color: 0xf0ede6, roughness: 0.9 }));
+  const glassMat = matFor('glass', () => new THREE.MeshStandardMaterial({ color: 0xbfd9e6, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.35 }));
   const trimMat = matFor('trim', () => new THREE.MeshStandardMaterial({ color: 0xf7f6f2, roughness: 0.45 }));
   const ceilMat = matFor('ceil', () => new THREE.MeshStandardMaterial({ color: 0xfbfaf7, roughness: 0.95, side: THREE.BackSide }));
   const doorMat = matFor('door', () => new THREE.MeshStandardMaterial({ color: 0xf3f1ec, roughness: 0.5 }));
@@ -188,6 +189,22 @@ export function createHouseScene(canvas, { onPick, onRoom, onMode } = {}) {
         mesh.rotation.y = -Math.atan2(dy, dx);
         mesh.castShadow = true; mesh.receiveShadow = true;
         house.add(mesh);
+      }
+      // a window: wall below the sill, glass to the head, and no way through
+      if (o.openingType === 'window') {
+        const sill = Math.min(3, Math.max(0.5, DH - 1));
+        const part = (y0, y1, mat, depth) => {
+          const g = new THREE.BoxGeometry(L, y1 - y0, depth);
+          const mesh = new THREE.Mesh(g, mat);
+          mesh.position.set((o.a.x + o.b.x) / 2, (y0 + y1) / 2, (o.a.y + o.b.y) / 2);
+          mesh.rotation.y = -Math.atan2(dy, dx);
+          mesh.receiveShadow = true;
+          house.add(mesh);
+        };
+        part(0, sill, capMat, t);
+        part(sill, DH, glassMat, 0.04);
+        colliders.push({ a: o.a, b: o.b, r: t / 2 });
+        continue;
       }
       // casing trim around the opening, both faces
       addCasing(o, t, DH);

@@ -46,7 +46,7 @@ function prep(raw, opt) {
     const s0 = dot(r.a, u), s1 = dot(r.b, u);
     out.push({
       th, u, n, rho: (dot(r.a, n) + dot(r.b, n)) / 2,
-      s0: Math.min(s0, s1), s1: Math.max(s0, s1), w: r.w || 0, src: r.src || 'vector',
+      s0: Math.min(s0, s1), s1: Math.max(s0, s1), w: r.w || 0, wl: !!r.wl, src: r.src || 'vector',
     });
   }
   return out;
@@ -76,7 +76,7 @@ export function mergeCollinear(raw, options = {}) {
       const pa = { x: l.u.x * l.s0 + l.n.x * l.rho, y: l.u.y * l.s0 + l.n.y * l.rho };
       const pb = { x: l.u.x * l.s1 + l.n.x * l.rho, y: l.u.y * l.s1 + l.n.y * l.rho };
       const a = dot(pa, u), b = dot(pb, u);
-      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, src: l.src, orig: { a: pa, b: pb } };
+      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, wl: !!l.wl, src: l.src, orig: { a: pa, b: pb } };
     }).sort((p, q) => p.rho - q.rho);
     // band by rho (again anchored on the band's first line)
     let band = [];
@@ -85,26 +85,26 @@ export function mergeCollinear(raw, options = {}) {
       if (band.length === 1) {
         // a line with nothing to merge with is emitted exactly as drawn
         const o = band[0].orig;
-        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, dup: 1 });
+        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, wl: band[0].wl, dup: 1 });
         band = [];
         return;
       }
       const rho = band.reduce((s, l) => s + l.rho * (l.s1 - l.s0), 0) / band.reduce((s, l) => s + (l.s1 - l.s0), 0);
       band.sort((p, q) => p.s0 - q.s0);
-      let a = band[0].s0, b = band[0].s1, w = band[0].w, cnt = 1;
+      let a = band[0].s0, b = band[0].s1, w = band[0].w, wl = band[0].wl, cnt = 1;
       const emit = () => merged.push({
         a: { x: u.x * a + n.x * rho, y: u.y * a + n.y * rho },
-        b: { x: u.x * b + n.x * rho, y: u.y * b + n.y * rho }, w, dup: cnt,
+        b: { x: u.x * b + n.x * rho, y: u.y * b + n.y * rho }, w, wl, dup: cnt,
       });
       let first = band[0];
       const emitRun = () => {
-        if (cnt === 1) merged.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, w, dup: 1 });
+        if (cnt === 1) merged.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, w, wl, dup: 1 });
         else emit();
       };
       for (let i = 1; i < band.length; i++) {
         const l = band[i];
-        if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); w = Math.max(w, l.w); cnt++; }
-        else { emitRun(); a = l.s0; b = l.s1; w = l.w; cnt = 1; first = l; }
+        if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); w = Math.max(w, l.w); wl = wl || l.wl; cnt++; }
+        else { emitRun(); a = l.s0; b = l.s1; w = l.w; wl = l.wl; cnt = 1; first = l; }
       }
       emitRun();
       band = [];
@@ -146,7 +146,7 @@ function addInterval(cov, a, b) {
 
 /**
  * Pair parallel lines into wall bodies.
- * @returns {{ bodies: {a,b,t,conf,w}[], lines: object[], hatch: Set<number>, stats: object }}
+ * @returns {{ bodies: {a,b,t,conf,w}[], faces: {a,b}[], lines: object[], hatch: Set<number>, stats: object }}
  */
 export function pairWalls(rawLines, options = {}) {
   const opt = { ...WALL_DEFAULTS, ...options };
@@ -315,8 +315,23 @@ export function pairWalls(rawLines, options = {}) {
     }
   }
 
+  // ---- faces left over: lines on the sheet's wall layers that no wall took
+  // (a furring layer's inner face beside a foundation wall: the shared middle
+  // line went to one wall). analyze.js moves a room's edge in to such a face.
+  const faces = [];
+  for (const l of lines) {
+    if (!l.wl || hatch.has(l.id)) continue;
+    const s0 = dot(l.a, l.u), s1 = dot(l.b, l.u), lp = dot(l.a, perp(l.u));
+    for (const [a, b] of subtractIntervals(Math.min(s0, s1), Math.max(s0, s1), l.cov)) {
+      if (b - a < 1) continue;
+      const P = (sv) => ({ x: l.u.x * sv + perp(l.u).x * lp, y: l.u.y * sv + perp(l.u).y * lp });
+      faces.push({ a: P(a), b: P(b) });
+    }
+  }
+
   return {
     bodies: dropInside(mergeBodies(mergeLayers(mergeBodies(bodies)))),
+    faces,
     lines,
     hatch,
     stats: {
@@ -371,7 +386,7 @@ export function mergeBodies(bodies, { angTol = 1 * Math.PI / 180, offTol = 1.0 *
  * side. Left as two, the room would leak into the seam between them and their
  * corners would never meet. Repeats until stable (three layers → one wall).
  */
-export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1.0 * IN, minOverlap = 1.5 } = {}) {
+export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1.0 * IN, cavity = 3 * IN, minOverlap = 0.75 } = {}) {
   let items = bodies.filter((b) => b && b.a && b.b && dist(b.a, b.b) > 1e-3 && Number.isFinite(b.t));
   for (let guard = 0; guard < 8; guard++) {
     const idx = new GridIndex(4);
@@ -390,7 +405,10 @@ export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1
         const q = items[j];
         if (angleDiff(th, lineAngle(q.a, q.b)) > angTol) continue;
         const rp = dot(p.a, n), rq = (dot(q.a, n) + dot(q.b, n)) / 2;
-        if (Math.abs(Math.abs(rq - rp) - (p.t + q.t) / 2) > touchTol) continue;
+        // face to face, or with an air gap between them (a new stud wall built
+        // 1–3" inside a foundation wall): one wall, the gap is no floor
+        const gap = Math.abs(rq - rp) - (p.t + q.t) / 2;
+        if (gap < -touchTol || gap > cavity) continue;
         const ps = [dot(p.a, u), dot(p.b, u)].sort((a, b) => a - b);
         const qs = [dot(q.a, u), dot(q.b, u)].sort((a, b) => a - b);
         const lo = Math.max(ps[0], qs[0]), hi = Math.min(ps[1], qs[1]);
@@ -400,10 +418,12 @@ export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1
         const rc = (f0 + f1) / 2;
         const at = (s, r) => ({ x: u.x * s + n.x * r, y: u.y * s + n.y * r });
         out.push({ ...p, a: at(lo, rc), b: at(hi, rc), t: f1 - f0, conf: Math.max(p.conf ?? 0, q.conf ?? 0), typical: true, layered: true });
-        // what runs on past the shared stretch stays as it was
+        // what runs on past the shared stretch stays as it was, joined to the
+        // combined wall by the step its face takes where the other layer stops
         for (const [b, ss, r] of [[p, ps, rp], [q, qs, rq]]) {
-          if (lo - ss[0] > 0.05) out.push({ ...b, a: at(ss[0], r), b: at(lo, r) });
-          if (ss[1] - hi > 0.05) out.push({ ...b, a: at(hi, r), b: at(ss[1], r) });
+          const step = (s) => { if (Math.abs(r - rc) > 0.02) out.push({ ...b, a: at(s, r), b: at(s, rc), t: Math.min(p.t, q.t), typical: false, step: true }); };
+          if (lo - ss[0] > 0.05) { out.push({ ...b, a: at(ss[0], r), b: at(lo, r) }); step(lo); }
+          if (ss[1] - hi > 0.05) { out.push({ ...b, a: at(hi, r), b: at(ss[1], r) }); step(hi); }
         }
         dead.add(i); dead.add(j);
         merged++;
@@ -435,7 +455,7 @@ export function dropInside(bodies, { tol = 1.0 * IN, maxLen = 3 } = {}) {
   };
   return bodies.filter((b, i) => {
     const L = dist(b.a, b.b);
-    if (L > maxLen) return true;
+    if (L > maxLen || b.step) return true;
     const reach = 3 * IN;   // a corner tick often stops in the junction, just past one wall's end
     const hosts = [...idx.query(Math.min(b.a.x, b.b.x) - reach, Math.min(b.a.y, b.b.y) - reach, Math.max(b.a.x, b.b.x) + reach, Math.max(b.a.y, b.b.y) + reach)]
       .filter((j) => j !== i && dist(bodies[j].a, bodies[j].b) >= 2 * L);

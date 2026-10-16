@@ -5,6 +5,12 @@ import { formatArea, formatLength, ARCH_SCALES } from '../engine/units.js';
 const SEV = { error: 0, warn: 1, info: 2 };
 const SEV_LABEL = { error: 'Needs input', warn: 'Check', info: 'Note' };
 
+// "2 openings · 1 window": windows are listed but never taken off wall LF
+function openingsTag(ops) {
+  const w = ops.filter((o) => o.type === 'window').length, n = ops.length - w;
+  return [n && `${n} opening${n > 1 ? 's' : ''}`, w && `${w} window${w > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+}
+
 export default function TracePanel() {
   const s = useProject();
   const tr = s.trace || defaultTrace();
@@ -13,14 +19,12 @@ export default function TracePanel() {
   const [sheet, setSheet] = useState(null);     // detected sheet scale
   const [showInfo, setShowInfo] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [checkBusy, setCheckBusy] = useState(false);
   const hasPlan = !!(s.pdfDoc || s.planImage);
   const editsKey = `${tr.manual.length}:${tr.removed.length}:${JSON.stringify(tr.region)}:${tr.settings.floorAtDoor}:${tr.settings.maxOpening}`;
   const lastEdits = useRef(editsKey);
   const runSeq = useRef(0);
   const pending = useRef(false);
-
-  // the scale this panel last took off a sheet by itself (not one the user set)
-  const autoScale = useRef(null);
 
   // read the sheet once a plan is loaded: is there a scale note?
   useEffect(() => {
@@ -33,14 +37,12 @@ export default function TracePanel() {
         const { sheetScale } = await readPlan(useStore.getState());
         if (!alive) return;
         setSheet(sheetScale);
-        // the sheet states its scale and none is set yet → just use it. A page
-        // with a different scale (a 1/8" site plan, then a 1/4" floor plan)
-        // replaces one we read off the last page — never one the user set.
+        // the sheet states its scale and none is set yet → just use it (each
+        // page keeps its own scale; a page opened for the first time reads
+        // its sheet in App)
         const st = useStore.getState();
-        const wasAuto = autoScale.current != null && st.scale && Math.abs(st.scale - autoScale.current) < 1e-12;
-        if (sheetScale && (!st.scale || (wasAuto && Math.abs(sheetScale.scale - st.scale) > 1e-12))) {
+        if (sheetScale && !st.scale) {
           st.setScale(sheetScale.scale); st.setArchScale(sheetScale.id);
-          autoScale.current = sheetScale.scale;
           window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Scale read from sheet · ${sheetScale.label}`, ok: true } }));
         }
       } catch (_) { /* reading is best-effort */ }
@@ -54,6 +56,7 @@ export default function TracePanel() {
     // one solve at a time; a fix made mid-solve re-runs right after, never lost
     if (st.traceBusy) { pending.current = true; return; }
     const my = ++runSeq.current;
+    const page = st.pdfPage;
     setErr(''); st.setTraceBusy(true);
     try {
       const cur = st.trace || defaultTrace();
@@ -63,11 +66,13 @@ export default function TracePanel() {
         options: { floorAtDoor: cur.settings.floorAtDoor, maxOpening: cur.settings.maxOpening },
         manual: cur.manual, removed: cur.removed,
       });
-      if (my !== runSeq.current) return;
+      // a newer run, or the user went to another page meanwhile: this result is stale
+      if (my !== runSeq.current || useStore.getState().pdfPage !== page) return;
       // carry over names the user (or AI) already gave rooms in a previous run
       const names = cur.names || {};
       for (const r of result.rooms) { const k = nameKey(r); if (names[k]) { r.name = names[k]; } }
-      st.setTrace({ result, source: { mode: evidence.mode, page: st.pdfPage, stats: evidence.stats, input, at: Date.now() } });
+      // a new model: an earlier AI check was of the old one
+      st.setTrace({ result, aiReview: null, source: { mode: evidence.mode, page: st.pdfPage, stats: evidence.stats, input, at: Date.now() } });
       st.setShowTrace(true);
       if (cur.settings.ceilingHeight == null) st.setTraceSettings({ ceilingHeight: 8 });
       if (result.schedule?.doorHeight && !cur.settings.doorHeightSet) st.setTraceSettings({ doorHeight: result.schedule.doorHeight });
@@ -103,7 +108,9 @@ export default function TracePanel() {
     try {
       const { labelRoomsWithAI } = await import('../lib/aiLabel.js');
       const st = useStore.getState();
+      const page = st.pdfPage;
       const out = await labelRoomsWithAI(st, res.rooms);
+      if (useStore.getState().pdfPage !== page) return;   // went to another page meanwhile
       const names = { ...(st.trace.names || {}) };
       const rooms = res.rooms.map((r) => {
         const n = out[r.id];
@@ -115,6 +122,23 @@ export default function TracePanel() {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `AI named ${Object.keys(out).length} rooms`, ok: true } }));
     } catch (e) { setErr(e.message || 'AI naming failed'); }
     finally { setAiBusy(false); }
+  }
+
+  // the AI looks at the drawing with the model on it and says where they disagree
+  async function aiCheck() {
+    setCheckBusy(true); setErr('');
+    try {
+      const { reviewTraceWithAI } = await import('../lib/aiReview.js');
+      const st = useStore.getState();
+      const page = st.pdfPage, result = st.trace?.result;
+      const out = await reviewTraceWithAI(st);
+      const now = useStore.getState();
+      if (now.pdfPage !== page || now.trace?.result !== result) return;   // the model changed meanwhile
+      now.setTrace({ aiReview: out });
+      const n = out.flags.length;
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: out.warning || (n ? `AI check: ${n} thing${n > 1 ? 's' : ''} to look at — listed under What needs a look` : 'AI check: the model matches the drawing'), ok: !out.warning } }));
+    } catch (e) { setErr(e.message || 'AI check failed'); }
+    finally { setCheckBusy(false); }
   }
 
   function renameRoom(r, name) {
@@ -139,7 +163,11 @@ export default function TracePanel() {
     );
   }
 
-  const flags = res ? [...res.flags].sort((a, b) => SEV[a.severity] - SEV[b.severity]) : [];
+  // the engine's flags, then what the AI check found (never mixed into the numbers)
+  const ai = tr?.aiReview;
+  const flags = res ? [...res.flags, ...(ai?.flags || [])].sort((a, b) => SEV[a.severity] - SEV[b.severity]) : [];
+  const aiRooms = new Set((ai?.flags || []).map((f) => f.roomId).filter(Boolean));
+  const aiOk = new Set(ai?.okIds || []);
   const mainFlags = flags.filter((f) => f.severity !== 'info');
   const infoFlags = flags.filter((f) => f.severity === 'info');
   const u = s.unitSystem;
@@ -203,7 +231,8 @@ export default function TracePanel() {
               <span><b>{res.totals.rooms}</b> rooms</span>
               <span><b>{formatArea(res.totals.floorSf, u)}</b> floor</span>
               <span><b>{formatLength(res.totals.roomWallLf, u)}</b> wall LF</span>
-              <span><b>{res.totals.openings}</b> openings</span>
+              <span><b>{res.totals.openings}</b> doors / openings</span>
+              {res.totals.windows > 0 && <span><b>{res.totals.windows}</b> windows</span>}
             </div>
             {res.calibration?.verdict !== 'unknown' && <div className="tr-cal">{res.calibration.msg}</div>}
           </div>
@@ -258,11 +287,18 @@ export default function TracePanel() {
                 <div className="tr-room-nums">
                   <span className="tr-num">{formatArea(r.area, u)}</span>
                   <span className="tr-num">{formatLength(r.wallLf, u)} wall LF</span>
+                  {aiRooms.has(r.id) && <span className="tr-tag ai" title="The AI check found something here — see What needs a look">AI: check</span>}
+                  {ai && !aiRooms.has(r.id) && aiOk.has(r.id) && <span className="tr-tag ok" title="The AI check found this room matches the drawing">AI ✓</span>}
+                  {r.type === 'nofloor' && <span className="tr-tag" title="Unexcavated / shaft / open to below: kept in the wall model, left out of the floor total and the takeoff">no floor · not in takeoff</span>}
                   {r.spurLf > 0 && <span className="tr-tag" title="Includes both faces of partitions that dead-end in this room">+ returns {formatLength(r.spurLf, u)}</span>}
-                  {r.openings.length > 0 && <span className="tr-tag" title={r.openings.map((o) => `${formatLength(o.width, u)} → ${o.to || '?'}`).join('\n')}>{r.openings.length} opening{r.openings.length > 1 ? 's' : ''}</span>}
+                  {r.openings.length > 0 && <span className="tr-tag" title={r.openings.map((o) => `${o.type === 'window' ? 'window ' : ''}${formatLength(o.width, u)} → ${o.to || '?'}`).join('\n')}>{openingsTag(r.openings)}</span>}
                 </div>
               </div>
             ))}
+            <button className="tbtn tr-ai" disabled={checkBusy} onClick={aiCheck} title="Claude looks at the drawing with the traced model on it and lists where they disagree. The numbers stay the trace's.">
+              {checkBusy ? 'AI is checking the model against the drawing…' : ai ? 'Check again with AI' : 'Check the trace with AI'}
+            </button>
+            {ai && <div className="note">AI checked {new Date(ai.at).toLocaleTimeString()} · {ai.flags.length ? `${ai.flags.length} finding${ai.flags.length > 1 ? 's' : ''}` : 'no disagreements'} · {aiOk.size} room{aiOk.size === 1 ? '' : 's'} confirmed</div>}
             {res.rooms.some((r) => /^Space \d+$/.test(r.name)) && (
               <button className="tbtn tr-ai" disabled={aiBusy} onClick={aiName}>{aiBusy ? 'Reading labels…' : 'Name rooms with AI'}</button>
             )}
@@ -270,7 +306,7 @@ export default function TracePanel() {
 
           <div className="tr-sec tr-actions">
             <button className="tbtn primary" onClick={commit}>
-              {tr.committedAt ? 'Update takeoff rooms' : `Send ${res.rooms.length} rooms to takeoff`}
+              {tr.committedAt ? 'Update takeoff rooms' : `Send ${res.rooms.filter((r) => r.type !== 'nofloor').length} rooms to takeoff`}
             </button>
             <button className="tbtn" onClick={() => { if (!tr.committedAt) commit(); s.toggle3d(true); }}>Walk through in 3D</button>
             <label className="tr-check"><input type="checkbox" checked={s.showTrace} onChange={(e) => s.setShowTrace(e.target.checked)} /> Show traced model on plan</label>

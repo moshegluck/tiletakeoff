@@ -33,6 +33,21 @@ export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor
  * @param {{x0,y0,x1,y1}} [input.sheet] page extent in feet (lets the engine recognise a sheet border)
  * @param {object} [input.options]
  */
+/** Ends of the inferred openings that close off an unnamed alcove (see runTrace). */
+function alcoveMouths(res) {
+  const inferred = (o) => o.openingType === 'opening' && !o.arcs.length && !o.hint;
+  const named = new Set(res.rooms.filter((r) => r.labels.length).map((r) => r.id));
+  const out = [];
+  for (const r of res.rooms) {
+    if (named.has(r.id)) continue;
+    const ops = res.openings.filter((o) => o.rooms.includes(r.id));
+    if (!ops.length || !ops.every(inferred)) continue;
+    if (!ops.every((o) => named.has(o.rooms.find((id) => id !== r.id)))) continue;
+    for (const o of ops) out.push({ ...o.a }, { ...o.b });
+  }
+  return out;
+}
+
 export function runTrace(input = {}) {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const opt = { ...TRACE_DEFAULTS, ...(input.options || {}) };
@@ -41,7 +56,7 @@ export function runTrace(input = {}) {
   const arcs = input.arcs || [];
 
   // 1. linework → wall bodies
-  const paired = input.lines?.length ? pairWalls(input.lines, opt) : { bodies: [], stats: {} };
+  const paired = input.lines?.length ? pairWalls(input.lines, opt) : { bodies: [], faces: [], stats: {} };
   let bodies = mergeBodies([
     ...paired.bodies,
     ...(input.bodies || []).map((b) => ({ conf: 0.75, src: 'given', ...b })),
@@ -59,23 +74,42 @@ export function runTrace(input = {}) {
   bodies = bodies.concat(manual).map((b) => ({ ...b, kind: 'wall' }))
     .filter((b) => Number.isFinite(b.a?.x) && Number.isFinite(b.a?.y) && Number.isFinite(b.b?.x) && Number.isFinite(b.b?.y) && Number.isFinite(b.t) && b.t > 0 && dist(b.a, b.b) > 0.05);
 
-  // 2. join corners / tees / drafting gaps
-  const joined = joinWalls(bodies, opt, log);
-  const { segs, ends } = dropDetached(joined.segs, joined.ends, opt, log);
-
-  // 3. bridge doors & openings so rooms can close
-  const openings = bridgeOpenings(segs, ends, arcs, opt, log, input.hints || []);
-
-  // 4. planar graph, cleaned
-  const g0 = buildGraph(segs.concat(openings), opt, log);
-  const g = pruneGraph(g0, opt, log);
-
-  // 5. faces → rooms, LF, flags
+  // 2–5. join, bridge openings, build the graph, trace rooms
   const schedule = input.schedule !== undefined ? input.schedule : parseDoorSchedule(texts);
-  const res = analyzeGraph(g, { texts: input.labels || texts, arcs, schedule, options: opt, sheet: input.sheet || null });
+  const solve = (keepOpen, lg) => {
+    const o2 = keepOpen.length ? { ...opt, keepOpen } : opt;
+    // 2. join corners / tees / drafting gaps
+    const joined = joinWalls(bodies, o2, lg);
+    const { segs, ends } = dropDetached(joined.segs, joined.ends, o2, lg);
+    // 3. bridge doors & openings so rooms can close
+    const openings = bridgeOpenings(segs, ends, arcs, o2, lg, input.hints || []);
+    // 4. planar graph, cleaned
+    const g0 = buildGraph(segs.concat(openings), o2, lg);
+    const g = pruneGraph(g0, o2, lg);
+    // 5. faces → rooms, LF, flags
+    const res = analyzeGraph(g, { texts: input.labels || texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [] });
+    return { g, res };
+  };
+  let { g, res } = solve([], log);
+  // An unnamed space that only opens into named rooms through openings the
+  // trace inferred (no door, nothing drawn across) is part of the room it
+  // opens into — a study's alcove of built-ins, a nook — not a room of its
+  // own: leave its mouth open and solve again.
+  const mouths = alcoveMouths(res);
+  if (mouths.length) {
+    const log2 = [];
+    const again = solve(mouths, log2);
+    if (again.res.rooms.length) {
+      ({ g, res } = again);
+      log.length = 0; log.push(...log2);
+      log.push({ kind: 'opening', at: mouths[0], note: `${mouths.length / 2} alcove${mouths.length > 2 ? 's' : ''} kept open to the room around ${mouths.length > 2 ? 'them' : 'it'}` });
+    }
+  }
 
-  const floorSf = res.rooms.reduce((s, r) => s + r.area, 0);
-  const wallLf = res.rooms.reduce((s, r) => s + r.wallLf, 0);
+  // an unexcavated area, a shaft: walled in but no floor to finish
+  const floorRooms = res.rooms.filter((r) => r.type !== 'nofloor');
+  const floorSf = floorRooms.reduce((s, r) => s + r.area, 0);
+  const wallLf = floorRooms.reduce((s, r) => s + r.wallLf, 0);
   const centerLf = res.walls.reduce((s, w) => s + w.length, 0);
   const extLf = res.walls.filter((w) => w.exterior).reduce((s, w) => s + w.length, 0);
   const counts = { error: 0, warn: 0, info: 0 };
@@ -94,8 +128,10 @@ export function runTrace(input = {}) {
     calibration: res.calibration,
     schedule,
     totals: {
-      rooms: res.rooms.length, floorSf, roomWallLf: wallLf, wallCenterLf: centerLf, exteriorLf: extLf,
-      openings: res.openings.length, doors: res.openings.filter((o) => o.openingType !== 'opening').length,
+      rooms: floorRooms.length, floorSf, roomWallLf: wallLf, wallCenterLf: centerLf, exteriorLf: extLf,
+      openings: res.openings.filter((o) => o.openingType !== 'window').length,
+      doors: res.openings.filter((o) => o.openingType === 'door' || o.openingType === 'double_door').length,
+      windows: res.openings.filter((o) => o.openingType === 'window').length,
     },
     status: counts.error ? 'needs_input' : counts.warn ? 'review' : 'coherent',
     counts,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { useStore, useProject } from './state/store.js';
+import { useStore, useProject, allRooms } from './state/store.js';
 import Canvas2D from './components/Canvas2D.jsx';
 import { Panels } from './components/Panels.jsx';
 import AccountBar from './components/AccountBar.jsx';
@@ -97,11 +97,13 @@ export default function App() {
     if (!doc) return;
     setPdfBusy(true);
     try {
-      const { renderPage } = await import('./lib/pdf.js');
-      const out = await renderPage(doc, page, 2000);
+      const { renderPage, PLAN_RENDER_WIDTH } = await import('./lib/pdf.js');
+      const out = await renderPage(doc, page, PLAN_RENDER_WIDTH);
       s.setPlanImage(out.dataUrl, out.width, out.height);
       s.setPlanDpi(72 * out.renderScale);
-      s.setPdfPage(page);
+      // this page's takeoff comes up; the last page's is kept with that page
+      const fresh = useStore.getState().switchPage(page);
+      if (fresh) readSheetScale(page);
       setPlanPage(planKey(useStore.getState()), page).catch(() => {});
       const pf = useStore.getState().planFile;
       if (pf && pf.page !== page) useStore.getState().setPlanFile({ ...pf, page });
@@ -110,6 +112,49 @@ export default function App() {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'PDF render failed: ' + e.message } }));
     } finally { setPdfBusy(false); }
   }
+
+  // a page not worked on yet: its own scale note beats the one carried over
+  async function readSheetScale(page) {
+    try {
+      const { readPlan } = await import('./lib/traceClient.js');
+      const { sheetScale } = await readPlan(useStore.getState());
+      const st = useStore.getState();
+      if (st.pdfPage !== page) return;
+      if (sheetScale && Math.abs((st.scale || 0) - sheetScale.scale) > 1e-12) {
+        st.setScale(sheetScale.scale); st.setArchScale(sheetScale.id);
+        window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Page ${page}: scale read from the sheet · ${sheetScale.label}`, ok: true } }));
+      } else if (!sheetScale && st.scale) {
+        window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Page ${page}: no scale on the sheet — using the last page's. Check it before measuring.` } }));
+      }
+    } catch (_) { /* reading is best-effort */ }
+  }
+
+  // download the takeoff marked up on the plan (header, phone menu, estimate)
+  useEffect(() => {
+    let busy = false;
+    const run = async () => {
+      if (busy) return;
+      busy = true;
+      const toast = (msg, ok) => window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg, ok } }));
+      toast('Building the marked-up PDF…', true);
+      try {
+        const { downloadMarkedPdf } = await import('./lib/markedPdf.js');
+        const out = await downloadMarkedPdf(useStore.getState());
+        toast(`Marked-up PDF ready · ${out.pages} page${out.pages > 1 ? 's' : ''} + summary${out.plan ? '' : ' (plan file not on this device: takeoff only)'}`, true);
+      } catch (e) {
+        toast('Could not build the PDF: ' + (e?.message || e));
+      } finally { busy = false; }
+    };
+    window.addEventListener('tt:export-marked', run);
+    return () => window.removeEventListener('tt:export-marked', run);
+  }, []);
+
+  // a list's "also on pg N" button
+  useEffect(() => {
+    const go = (e) => { const n = +e.detail; if (n >= 1 && n <= (useStore.getState().pdfPages || 1)) loadPdfPage(n); };
+    window.addEventListener('tt:page', go);
+    return () => window.removeEventListener('tt:page', go);
+  });
 
   async function onPdfPick(e) {
     const file = e.target.files?.[0]; e.target.value = '';
@@ -188,6 +233,8 @@ export default function App() {
   }
 
   const totalSf = s.rooms.reduce((a, r) => a + (s.scale ? roomArea(r) : 0), 0);
+  // the whole job, when other pages hold rooms too
+  const jobSf = Object.keys(s.pageData || {}).length ? allRooms(s).reduce((a, r) => a + roomArea(r), 0) : totalSf;
 
   return (
     <div className="app">
@@ -226,9 +273,7 @@ export default function App() {
         <button className={'tbtn hdr-full' + (s.view3d ? ' on' : '')} onClick={() => s.toggle3d()} title={s.view3d ? '2D plan' : '3D view'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l9 5v10l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v10" /></svg><span className="tbtn-label">{s.view3d ? '2D' : '3D'}</span>
         </button>
-        <button className="tbtn hdr-full" onClick={() => exportCSV(s)} title="Export CSV">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg><span className="tbtn-label">Export</span>
-        </button>
+        <ExportMenu />
         <button className="tbtn primary hdr-full" title="New takeoff" onClick={() => { if (confirm('Start a new takeoff? Current work is saved in this browser.')) s.newProject(); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg><span className="tbtn-label">New</span>
         </button>
@@ -258,7 +303,7 @@ export default function App() {
             <Viewer3D />
           </Suspense>
         ) : (
-          <StageWrap totalSf={totalSf} onPdfPage={loadPdfPage} pdfBusy={pdfBusy} />
+          <StageWrap totalSf={totalSf} jobSf={jobSf} onPdfPage={loadPdfPage} pdfBusy={pdfBusy} />
         )}
 
         <aside className={'right' + (sheet ? ' open' : '')}>
@@ -290,7 +335,43 @@ export default function App() {
   );
 }
 
-function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
+// Export: the marked-up plan first (what goes to the customer / the office),
+// then the estimate spreadsheets and the project file.
+function ExportMenu() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (!e.target.closest?.('.export-menu')) setOpen(false); };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [open]);
+  const go = (fn) => () => { setOpen(false); fn(); };
+  return (
+    <div className="export-menu hdr-full">
+      <button className={'tbtn' + (open ? ' on' : '')} onClick={() => setOpen(!open)} title="Download the takeoff" aria-expanded={open}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg><span className="tbtn-label">Export</span>
+      </button>
+      {open && (
+        <div className="export-pop" role="menu">
+          <button role="menuitem" onClick={go(() => window.dispatchEvent(new Event('tt:export-marked')))}>
+            <b>Marked-up plan (PDF)</b><span>Every page with its takeoff drawn on it, plus a summary</span>
+          </button>
+          <button role="menuitem" onClick={go(() => import('./lib/export.js').then((m) => m.exportXLSX(useStore.getState())))}>
+            <b>Estimate (Excel)</b><span>Estimate, rooms by page, markups, materials</span>
+          </button>
+          <button role="menuitem" onClick={go(() => exportCSV(useStore.getState()))}>
+            <b>Estimate (CSV)</b><span>The same as one sheet</span>
+          </button>
+          <button role="menuitem" onClick={go(() => import('./lib/export.js').then((m) => m.exportJSON(useStore.getState())))}>
+            <b>Project file (JSON)</b><span>Re-open this takeoff later</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StageWrap({ totalSf, jobSf, onPdfPage, pdfBusy }) {
   const s = useStore();
   const coarse = useMedia('(pointer: coarse)');
   return (
@@ -311,7 +392,7 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
           <button className={'chip toggle' + (s.snapOn ? ' on' : '')} onClick={s.toggleSnap}
             title="Snap points to the plan's corners, line ends and edges (hold Alt to place freely)">⌖ Snap</button>
         )}
-        {totalSf > 0 && <span className="chip">{totalSf.toFixed(1)} sf total</span>}
+        {totalSf > 0 && <span className="chip">{totalSf.toFixed(1)} sf {jobSf > totalSf + 0.05 ? `this page · ${jobSf.toFixed(1)} sf job` : 'total'}</span>}
         {pdfBusy && <span className="chip">rendering PDF…</span>}
       </div>
       <SelectionBar s={s} />

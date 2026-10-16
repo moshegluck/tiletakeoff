@@ -51,10 +51,12 @@ const isImage = (f) => /^image\/(png|jpe?g|webp|gif)$/i.test(f.type) || /\.(png|
 export async function openPlanFile(file) {
   const st = useStore.getState();
   if (isPdf(file)) {
-    const { loadPdf, renderPage } = await import('./pdf.js');
+    const { loadPdf, renderPage, PLAN_RENDER_WIDTH } = await import('./pdf.js');
     const { doc, numPages } = await loadPdf(file);
     st.setPdf(doc, numPages);
-    const out = await renderPage(doc, 1, 2000);
+    // a new plan opens on its first page: that page's takeoff comes up with it
+    if ((useStore.getState().pdfPage || 1) !== 1) useStore.getState().switchPage(1);
+    const out = await renderPage(doc, 1, PLAN_RENDER_WIDTH);
     st.setPlanImage(out.dataUrl, out.width, out.height);
     st.setPlanDpi(72 * out.renderScale);
     remember(st, file, 'pdf');
@@ -101,10 +103,11 @@ export async function restorePlan() {
   if (!rec?.blob) return false;
   const stillWanted = () => { const now = useStore.getState(); return planKey(now) === key && !now.planImage; };
   if (rec.kind === 'pdf') {
-    const { loadPdf, renderPage } = await import('./pdf.js');
+    const { loadPdf, renderPage, PLAN_RENDER_WIDTH } = await import('./pdf.js');
     const { doc, numPages } = await loadPdf(rec.blob);
-    const page = Math.min(Math.max(1, rec.page || 1), numPages);
-    const out = await renderPage(doc, page, 2000);
+    // the page the takeoff on screen belongs to (older saves: the page the plan was on)
+    const page = Math.min(Math.max(1, (st0.pageKnown ? st0.pdfPage : rec.page) || 1), numPages);
+    const out = await renderPage(doc, page, PLAN_RENDER_WIDTH);
     if (!stillWanted()) return false;
     const st = useStore.getState();
     st.setPdf(doc, numPages);
