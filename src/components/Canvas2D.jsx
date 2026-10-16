@@ -476,12 +476,27 @@ export default function Canvas2D() {
       if (f) { s.setTraceFocus({ type: 'flag', id: f.id }); s.setTab('trace'); schedule(); return; }
       const hit = hitTest(sp);
       const cur = useStore.getState().selRooms;
+      const touch = e.pointerType === 'touch';
+      // Touch: the first touch on a room / inlay selects it (the selection bar
+      // offers Edit / Delete) and a drag from there moves the plan — a room
+      // only moves once it is already selected. The panel stays shut.
+      if (hit && touch) {
+        const st = useStore.getState();
+        const selected = hit.zone ? st.selZone === hit.zone.id : (cur.includes(hit.room.id) && !st.selZone);
+        if (!selected) {
+          if (hit.zone) s.selectZone(hit.room.id, hit.zone.id, false);
+          else s.select('room', hit.room.id);
+          pan.current = { x: s.view.x, y: s.view.y, sp };
+          schedule(); return;
+        }
+      }
+      const openPanel = () => { if (!touch) s.setTab('rooms'); };
       if (hit) {
         // shift-click toggles membership without starting a drag
-        if (e.shiftKey) { s.toggleRoomSel(hit.room.id); s.setTab('rooms'); schedule(); return; }
+        if (e.shiftKey) { s.toggleRoomSel(hit.room.id); openPanel(); schedule(); return; }
         // an inlay: select it; drag a corner to reshape, drag inside to move
         if (hit.zone) {
-          s.selectZone(hit.room.id, hit.zone.id);
+          s.selectZone(hit.room.id, hit.zone.id, !touch);
           drag.current = hit.vertex != null
             ? { mode: 'zvertex', roomId: hit.room.id, zoneId: hit.zone.id, idx: hit.vertex }
             : { mode: 'zmove', roomId: hit.room.id, zoneId: hit.zone.id, mp, start: hit.zone.points.map((p) => ({ ...p })) };
@@ -490,14 +505,14 @@ export default function Canvas2D() {
         if (useStore.getState().selZone) s.clearZoneSel();
         // vertex editing only when this room is the sole selection
         if (hit.vertex != null && cur.length <= 1) {
-          s.select('room', hit.room.id); s.setTab('rooms');
+          s.select('room', hit.room.id); openPanel();
           drag.current = { room: hit.room, mode: 'vertex', idx: hit.vertex, mp };
           schedule(); return;
         }
         // drag-move: keep the group if the hit room is already in it, else select just it
         let ids = cur.includes(hit.room.id) ? cur : [hit.room.id];
         if (!cur.includes(hit.room.id)) s.select('room', hit.room.id);
-        s.setTab('rooms');
+        openPanel();
         const byId = new Map(s.rooms.map((r) => [r.id, r]));
         const starts = {}, zstarts = {};
         ids.forEach((id) => {

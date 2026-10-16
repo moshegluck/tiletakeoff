@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useProject } from '../state/store.js';
+import Modal from './Modal.jsx';
 import { detectRooms } from '../lib/aiDetect.js';
 import { capturePlan } from '../lib/planCapture.js';
 import { openPlanFile } from '../lib/planLoad.js';
@@ -162,9 +163,7 @@ export default function DetectModal({ onClose }) {
   const mark = cap ? Math.max(cap.width, cap.height) / 55 : 20; // badge radius in image px
 
   return (
-    <div className="modal-bg" onClick={phase === 'busy' ? undefined : onClose}>
-      <div className="modal det" onClick={(e) => e.stopPropagation()}>
-        <h3>AI room detection</h3>
+    <Modal title="AI room detection" className="det" onClose={() => { if (phase !== 'busy') onClose(); }} closeOnBackdrop={phase !== 'busy'}>
         <div className="body">
           {phase === 'pick' && (
             <>
@@ -304,7 +303,6 @@ export default function DetectModal({ onClose }) {
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

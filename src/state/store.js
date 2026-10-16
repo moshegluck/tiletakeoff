@@ -193,6 +193,9 @@ export const useStore = create((rawSet, get) => {
   },
   setPdf: (doc, pages) => set({ pdfDoc: doc, pdfPages: pages, pdfPage: 1 }),
   setPdfPage: (n) => set({ pdfPage: n }),
+  // who is signed in (set by AccountBar; the phone menu shows it)
+  authUser: null,
+  setAuthUser: (u) => set({ authUser: u }),
   // snap drawing points to the plan's lines (a preference, kept per device)
   snapOn: (() => { try { return localStorage.getItem('tt.snap') !== '0'; } catch (_) { return true; } })(),
   toggleSnap: () => { const v = !get().snapOn; set({ snapOn: v }); try { localStorage.setItem('tt.snap', v ? '1' : '0'); } catch (_) { /* private mode */ } },
@@ -474,8 +477,8 @@ export const useStore = create((rawSet, get) => {
     persist(get);
   },
   clearZoneSel: () => set({ selZone: null }),
-  selectZone: (roomId, zoneId) => set({
-    selection: { type: 'room', id: roomId }, selRooms: [roomId], selZone: zoneId, tab: 'rooms',
+  selectZone: (roomId, zoneId, openPanel = true) => set({
+    selection: { type: 'room', id: roomId }, selRooms: [roomId], selZone: zoneId, ...(openPanel ? { tab: 'rooms' } : {}),
   }),
 
   // ---- materials ----

@@ -15,7 +15,9 @@ input,select{font-family:inherit}
 ::-webkit-scrollbar-thumb{background:#c3ccd4;border-radius:6px;border:2px solid var(--paper)}
 
 /* ── APP SHELL ── */
-.app{display:grid;grid-template-rows:auto 1fr;height:100vh;height:100dvh}
+/* minmax(0,1fr): a column never grows past the screen to fit a wide child
+   (on a phone that made the whole app lay out wider than the display) */
+.app{display:grid;grid-template-rows:auto 1fr;grid-template-columns:minmax(0,1fr);height:100vh;height:100dvh}
 header.top{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(180deg,#fff,#fbfcfd);border-bottom:1px solid var(--line);z-index:30;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:9px;user-select:none}
 .brand svg{width:26px;height:26px}
@@ -34,7 +36,7 @@ header.top{display:flex;align-items:center;gap:8px;padding:8px 12px;background:l
 .unit-sel{border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px;font-size:12.5px;color:var(--ink-2);background:#fff}
 
 /* ── MAIN GRID ── */
-main{display:grid;grid-template-columns:56px 1fr 348px;min-height:0;position:relative}
+.app>main{display:grid;grid-template-columns:56px 1fr 348px;min-height:0;position:relative}
 
 /* ── TOOLBAR (left) ── */
 .toolbar{background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;z-index:20}
@@ -73,8 +75,10 @@ main{display:grid;grid-template-columns:56px 1fr 348px;min-height:0;position:rel
 .selbar b{color:var(--accent-2)}
 .selbar button{border:none;border-radius:16px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;background:rgba(255,255,255,.16);color:#fff}
 .selbar button:hover{background:rgba(255,255,255,.28)}
-.selbar button:first-of-type{background:var(--accent);color:#fff}
-.selbar button:first-of-type:hover{background:var(--accent-2)}
+.selbar-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.selbar button.danger{background:#b3261e}
+.selbar button.danger:hover{background:#cf3a2f}
+.touch-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:9;pointer-events:none;background:rgba(16,23,31,.72);color:#fff;font-size:12px;font-weight:500;padding:6px 12px;border-radius:16px;white-space:nowrap}
 
 /* ── RIGHT PANEL ── */
 aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
@@ -132,16 +136,24 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(12px);background:var(--ink);color:#fff;padding:10px 18px;border-radius:22px;font-size:13px;font-weight:500;z-index:99;opacity:0;pointer-events:none;transition:.2s;box-shadow:0 4px 16px rgba(0,0,0,.2);white-space:nowrap}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.ok{background:var(--ok)}
+.toast-act{margin-left:10px;border:none;background:rgba(255,255,255,.22);color:#fff;font:700 13px var(--sans);padding:5px 12px;border-radius:14px;cursor:pointer}
+.toast.show{pointer-events:auto}
+.icon-btn.danger:hover{color:var(--bad)}
 
 /* ── MODALS (Sign in, AI Detect, Projects, Tile Library) ── */
 /* markup is: .modal-bg > .modal > (h3, .body, .foot) */
 .modal-bg{position:fixed;inset:0;background:rgba(16,23,31,.55);z-index:50;display:grid;place-items:center;padding:20px}
-.modal{background:#fff;border-radius:12px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 70px rgba(16,23,31,.35);animation:modalIn .16s ease-out}
+.modal{background:#fff;border-radius:12px;width:100%;max-width:520px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 70px rgba(16,23,31,.35);animation:modalIn .16s ease-out}
 @keyframes modalIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
-.modal>h3{margin:0;padding:18px 22px 14px;font-size:17px;font-weight:700;border-bottom:1px solid var(--line)}
-.modal .body{padding:16px 22px 18px}
+.modal-head{display:flex;align-items:center;gap:8px;padding:12px 12px 10px 22px;border-bottom:1px solid var(--line);flex:none}
+.modal-head h3{margin:0;flex:1;min-width:0;font-size:17px;font-weight:700}
+.modal-x{width:38px;height:38px;flex:none;display:grid;place-items:center;border:none;background:transparent;color:var(--ink-2);border-radius:8px;cursor:pointer}
+.modal-x:hover{background:var(--line-2);color:var(--ink)}
+.modal-x svg{width:20px;height:20px}
+.modal>form{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.modal .body{padding:16px 22px 18px;overflow-y:auto;flex:1 1 auto;min-height:0;-webkit-overflow-scrolling:touch}
 .modal .body>:first-child{margin-top:0}
-.modal .foot{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.modal .foot{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;flex:none;background:#fff}
 
 /* hint / helper text (also used across the right panel) */
 .note{font-size:12px;color:var(--ink-2);line-height:1.5;margin-top:8px}
@@ -191,11 +203,15 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .det-row .det-name{flex:1;min-width:90px}
 .det-dim{font:600 12px var(--mono);color:var(--ink-2);white-space:nowrap}
 @media(max-width:768px){
-  .modal-bg{padding:10px;place-items:end center}
-  .modal{max-height:94vh}
+  /* dialogs fill the phone: title bar with ✕ on top, scrolling body,
+     buttons along the bottom (above the home indicator) */
+  .modal-bg{padding:0;place-items:stretch}
+  .modal{max-width:none!important;width:100%;height:100%;max-height:none;border-radius:0;animation:sheetIn .2s ease-out}
+  .modal-head{padding:calc(8px + env(safe-area-inset-top)) 6px 8px 16px}
+  .modal .body{padding:14px 16px 18px}
+  .modal .foot{padding:10px 12px calc(10px + env(safe-area-inset-bottom));flex-wrap:nowrap}
+  .modal .foot .tbtn{flex:1;justify-content:center;padding:12px 10px;font-size:15px}
   .modal.det .body{padding:12px 14px 14px}
-  .modal>h3{padding:14px 16px 12px}
-  .modal .foot{padding:10px 14px}
   .det-prev{width:min(100%, calc(38vh * var(--ar, 1.4)))}
   .det-row{flex-wrap:wrap}
 }
@@ -212,74 +228,63 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
    Panel slides up over stage when active
 ───────────────────────────────────────── */
 @media(max-width:768px){
+  /* ── header: one row — logo, name, undo/redo, open plan, menu ── */
+  header.top{flex-wrap:nowrap;padding:6px 8px;padding-top:calc(6px + env(safe-area-inset-top));gap:4px}
+  .hdr-full,.acct-btns{display:none!important}
+  header.top .brand b{display:none}
+  .brand svg{width:26px;height:26px}
+  .docname{flex:1;min-width:0;max-width:none;font-size:16px;padding:6px 6px}
+  .tbtn-label{display:none}
+  .tbtn{padding:8px}
+  .tbtn svg{width:19px;height:19px}
+  .undo-redo{gap:0}
 
-  /* shrink header */
-  header.top{padding:6px 10px;gap:6px}
-  .docname{max-width:110px;font-size:13px}
-  .tbtn-label{display:none}         /* hide text labels in header buttons */
-  .tbtn{padding:7px 8px}
-  .unit-sel{padding:6px 6px;font-size:12px}
+  /* ── plan full width; tools along the bottom, above the panel's tabs ── */
+  .app>main{grid-template-columns:minmax(0,1fr);padding-bottom:calc(116px + env(safe-area-inset-bottom))}
+  .toolbar{position:fixed;left:0;right:0;bottom:calc(60px + env(safe-area-inset-bottom));height:56px;z-index:25;
+    flex-direction:row;align-items:center;justify-content:flex-start;gap:4px;padding:6px 8px;
+    border-right:none;border-top:1px solid var(--line);overflow-x:auto;overflow-y:hidden;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .toolbar::-webkit-scrollbar{display:none}
+  .tool{flex:none;width:44px;height:44px}
+  .toolsep{flex:none;width:1px;height:28px;margin:0 3px}
+  .tool .tip{display:none} /* no hover tooltips on touch */
 
-  /* 2-col main: narrow toolbar + canvas; the bottom 60px is the sheet's tab strip */
-  main{grid-template-columns:48px 1fr;padding-bottom:60px}
-
-  /* right panel as a bottom sheet: closed = only its handle + tabs show */
+  /* ── the panel: a bottom sheet; closed = its tab strip; swipe or tap ── */
   aside.right{
-    position:fixed;
-    bottom:0; left:0; right:0;
-    height:62vh; height:62dvh;
-    border-left:none;
-    border-top:1px solid var(--line);
-    border-radius:14px 14px 0 0;
+    position:fixed;bottom:0;left:0;right:0;
+    height:64vh;height:64dvh;
+    padding-bottom:env(safe-area-inset-bottom);
+    border-left:none;border-top:1px solid var(--line);border-radius:14px 14px 0 0;
     box-shadow:0 -6px 30px rgba(16,23,31,.14);
-    transform:translateY(calc(100% - 60px));
+    transform:translateY(calc(100% - 60px - env(safe-area-inset-bottom)));
     transition:transform .25s cubic-bezier(.4,0,.2,1);
     z-index:30;
   }
   aside.right.open{transform:translateY(0)}
+  .sheet-handle{display:block;width:100%;height:22px;border:none;background:transparent;padding:0;flex:none;cursor:pointer;touch-action:none}
+  .sheet-handle::after{content:'';display:block;width:40px;height:5px;background:#c9d2da;border-radius:3px;margin:8px auto 0}
+  .tabs{overflow-x:auto;flex:none;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{flex:none;padding:10px 14px}
+  .icon-btn{width:36px;height:36px}
+  .icon-btn svg{width:18px;height:18px}
 
-  /* pull-handle on the sheet (tap to open/close) */
-  .sheet-handle{display:block;width:100%;height:18px;border:none;background:transparent;padding:0;flex:none;cursor:pointer}
-  .sheet-handle::after{content:'';display:block;width:36px;height:4px;background:var(--line);border-radius:2px;margin:7px auto 0}
-  /* five tabs: let the strip scroll rather than squash */
-  .tabs{overflow-x:auto;flex:none}
-  .tab{flex:none;padding:10px 12px}
-
-  /* toolbar: tighter, scrolls when the tools outgrow the screen */
-  .toolbar{padding:8px 0;overflow-y:auto;min-height:0}
-  .tool{width:40px;height:40px}
-  .tool .tip{display:none} /* no hover tooltips on touch */
-
-  /* bottom nav bar */
-  .mobile-nav{
-    display:flex;
-    position:fixed;
-    bottom:0;left:0;right:0;
-    height:56px;
-    background:#fff;
-    border-top:1px solid var(--line);
-    z-index:40;
-  }
-  .mobile-nav button{
-    flex:1;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:2px;
-    border:none;background:transparent;
-    font-size:10px;font-weight:600;
-    color:var(--ink-2);
-    padding:0;
-  }
-  .mobile-nav button.active{color:var(--accent)}
-  .mobile-nav button svg{width:22px;height:22px}
-
-  /* toast above the drawer's tab bar */
-  .toast{bottom:76px}
-
-  /* bigger tap targets on zoom */
+  /* ── on the plan: readouts on top, zoom on the right, selection at the bottom ── */
+  .hud{top:6px;bottom:auto;left:6px;right:52px;flex-wrap:wrap}
+  .zoomwrap{right:6px;top:6px;bottom:auto}
   .zbtn{width:40px;height:40px;font-size:20px}
-  .zoomwrap{right:6px;bottom:6px}
-  .hud{bottom:6px;left:6px;right:54px;flex-wrap:wrap-reverse}
   .hud-sel{max-width:150px}
+  .selbar{top:auto;bottom:10px;left:8px;right:8px;transform:none;justify-content:space-between;padding:6px 6px 6px 14px}
+  .selbar button{padding:9px 13px;font-size:13.5px}
+  .touch-hint{bottom:10px}
+  .pdfnav{top:auto;bottom:60px}
+
+  /* toast above the tools and the tab strip */
+  .toast{bottom:calc(128px + env(safe-area-inset-bottom));max-width:calc(100% - 24px);white-space:normal}
+
+  /* 16px text in fields: iPhones zoom the page into smaller ones */
+  input,select,textarea,.inp{font-size:16px}
 }
 
 /* Desktop: hide mobile nav */
@@ -473,7 +478,9 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .pat-opt.on{border-color:var(--accent);color:var(--accent);background:#fffaf7}
 .linkbtn{border:none;background:none;color:var(--accent);font-size:12px;font-weight:600;padding:4px 0 0}
 @media(max-width:768px){
-  .modal.lib{max-height:94vh}
+  .modal.lib{max-height:none}
+  .lib-row select{padding-left:8px;padding-right:2px}
+  .lib-row input,.lib-row select{height:40px;box-sizing:border-box}
   .lib-body{grid-template-columns:1fr}
   .lib-body.has-sel .lib-list{display:none}
   .lib-body:not(.has-sel) .lib-detail{display:none}
@@ -490,3 +497,30 @@ aside.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-
 .tbtn.icon{padding:6px 7px}
 .tbtn.icon svg{width:16px;height:16px}
 .tbtn:disabled{opacity:.4;cursor:default}
+
+/* ── phone header items / menu ── */
+.hdr-phone{display:none}
+@media(max-width:768px){ .hdr-phone{display:inline-flex} }
+@keyframes sheetIn{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
+.pm-bg{position:fixed;inset:0;z-index:60;background:rgba(16,23,31,.45);display:flex;align-items:flex-end;animation:fadeIn .15s ease-out}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.pm{width:100%;max-height:88vh;overflow-y:auto;background:#fff;border-radius:16px 16px 0 0;padding:6px 10px calc(10px + env(safe-area-inset-bottom));animation:sheetIn .2s ease-out;-webkit-overflow-scrolling:touch}
+.pm-grab{width:40px;height:5px;border-radius:3px;background:#c9d2da;margin:6px auto 8px}
+.pm-group{display:flex;flex-direction:column;border-bottom:1px solid var(--line-2);padding:4px 0}
+.pm-group:last-of-type{border-bottom:none}
+.pm-item{display:flex;align-items:center;gap:14px;width:100%;border:none;background:none;text-align:left;padding:13px 10px;font:500 16px var(--sans);color:var(--ink);border-radius:10px}
+.pm-item:active{background:var(--line-2)}
+.pm-item svg{width:22px;height:22px;flex:none;color:var(--ink-2)}
+.pm-item.strong{color:var(--accent);font-weight:700}.pm-item.strong svg{color:var(--accent)}
+.pm-who{display:flex;align-items:center;gap:14px;padding:10px 10px 6px;font-size:14px;color:var(--ink-2)}
+.pm-who svg{width:22px;height:22px;flex:none}
+.pm-who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pm-select select{margin-left:auto;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:500 15px var(--sans);background:#fff;max-width:55%}
+.pm-close{display:block;width:100%;margin-top:6px;border:none;border-radius:12px;background:var(--line-2);padding:14px;font:600 16px var(--sans);color:var(--ink)}
+/* the home page scrolls as one column (nothing overlaps on a phone) */
+.landing>*{flex-shrink:0}
+.landing-hero{flex:1 0 auto}
+.landing-top{padding-top:calc(16px + env(safe-area-inset-top))}
+.landing-foot{padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+/* no page zoom from pinching the header or panels; the plan has its own */
+html{touch-action:pan-x pan-y}

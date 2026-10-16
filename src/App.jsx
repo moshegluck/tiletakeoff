@@ -11,6 +11,10 @@ import Landing from './components/Landing.jsx';
 import ScaleControl from './components/ScaleControl.jsx';
 import { openPlanFile, restorePlan, planKey } from './lib/planLoad.js';
 import { setPlanPage } from './lib/planStore.js';
+import { useBackLayer } from './lib/backStack.js';
+import { zonesOf } from './engine/zones.js';
+import { formatArea } from './engine/units.js';
+import PhoneMenu from './components/PhoneMenu.jsx';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
 const Library = lazy(() => import('./components/Library.jsx'));
@@ -46,7 +50,22 @@ export default function App() {
   const [toast, setToast] = useState(null);
   // phones: the right panel is a bottom sheet; tabs open/close it
   const [sheet, setSheet] = useState(false);
+  const phone = useMedia('(max-width: 768px)');
   const isPhone = () => window.matchMedia('(max-width: 768px)').matches;
+  const [menu, setMenu] = useState(false);
+  const fileRef = useRef(null);
+  const [landing, setLanding] = useState(() => {
+    try { return localStorage.getItem('tt.entered') !== '1'; } catch (_) { return true; }
+  });
+  // Back closes the panel (phone) and the 3D view, instead of leaving the app
+  useBackLayer(!landing && sheet && phone, () => setSheet(false));
+  useBackLayer(!landing && !!s.view3d, () => s.toggle3d(false));
+  // "Edit" on a selection opens its panel
+  useEffect(() => {
+    const open = (e) => { s.setTab(e.detail); setSheet(true); };
+    window.addEventListener('tt:panel', open);
+    return () => window.removeEventListener('tt:panel', open);
+  }, [s]);
   const onTab = (id) => {
     if (!isPhone()) { s.setTab(id); return; }
     if (sheet && s.tab === id) setSheet(false);
@@ -55,13 +74,6 @@ export default function App() {
   // picking a drawing tool (e.g. "Trace inlay" in the panel) drops the sheet
   // so the plan is free to draw on
   useEffect(() => { if (s.tool !== 'select') setSheet(false); }, [s.tool]);
-  // a tab opened by the app (loading a plan opens Trace; adding a zone opens
-  // Rooms) brings the sheet up too — but not on first load
-  const firstTab = useRef(true);
-  useEffect(() => {
-    if (firstTab.current) { firstTab.current = false; return; }
-    setSheet(true);
-  }, [s.tab]);
   const [pdfBusy, setPdfBusy] = useState(false);
   // the plan file is kept per project (lib/planStore.js): bring it back on
   // reload and whenever another project is opened
@@ -73,9 +85,12 @@ export default function App() {
       .catch((e) => console.warn('plan restore failed:', e?.message));
     return () => { live = false; };
   }, [projectKey]);
-  const [landing, setLanding] = useState(() => {
-    try { return localStorage.getItem('tt.entered') !== '1'; } catch (_) { return true; }
-  });
+  // came in from the home page: Back returns there; and the other way, the
+  // logo opens the home page from the app and Back returns to the app
+  const [fromLanding, setFromLanding] = useState(false);
+  const [fromApp, setFromApp] = useState(false);
+  useBackLayer(!landing && fromLanding, () => { setFromLanding(false); setLanding(true); });
+  useBackLayer(landing && fromApp, () => { setFromApp(false); setLanding(false); });
 
   async function loadPdfPage(page) {
     const doc = useStore.getState().pdfDoc;
@@ -105,6 +120,7 @@ export default function App() {
       s.clearTrace();
       import('./lib/planEvidence.js').then((m) => m.clearEvidenceCache());
       s.setTab('trace');
+      setSheet(true);   // the scale and Trace are the next step
       const what = out.kind === 'pdf' ? `PDF loaded · ${out.pages} page${out.pages > 1 ? 's' : ''}` : 'Plan image loaded';
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}. Check the scale, then Trace plan or AI Detect.`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
@@ -114,7 +130,12 @@ export default function App() {
   }
 
   useEffect(() => {
-    const onToast = (e) => { setToast(e.detail); setTimeout(() => setToast(null), 2200); };
+    let t = 0;
+    const onToast = (e) => {
+      clearTimeout(t);
+      setToast(e.detail);
+      t = setTimeout(() => setToast(null), e.detail?.action ? 5000 : 2400);
+    };
     window.addEventListener('tt:toast', onToast);
     const onKey = (e) => {
       if (/input|select|textarea/i.test(e.target.tagName)) return;
@@ -158,6 +179,8 @@ export default function App() {
   if (landing) {
     const enter = (signin) => {
       try { localStorage.setItem('tt.entered', '1'); } catch (_) {}
+      if (fromApp) setFromApp(false);   // its Back entry becomes the app's
+      else setFromLanding(true);
       setLanding(false);
       if (signin) setTimeout(() => window.dispatchEvent(new Event('tt:signin')), 60);
     };
@@ -169,7 +192,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <div className="brand" onClick={() => setLanding(true)} style={{ cursor: 'pointer' }} title="Back to home">
+        <div className="brand" onClick={() => { setMenu(false); setFromApp(true); setLanding(true); }} style={{ cursor: 'pointer' }} title="Back to home">
           <svg viewBox="0 0 32 32"><rect x="2" y="2" width="13" height="13" rx="2" fill="#0f2f47" /><rect x="17" y="2" width="13" height="13" rx="2" fill="#c8521f" /><rect x="2" y="17" width="13" height="13" rx="2" fill="#c8521f" /><rect x="17" y="17" width="13" height="13" rx="2" fill="#0f2f47" /></svg>
           <b>Tile<span>Takeoff</span></b>
         </div>
@@ -182,32 +205,38 @@ export default function App() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14l5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg>
           </button>
         </div>
-        <select className="unit-sel" value={s.unitSystem} onChange={(e) => s.setUnitSystem(e.target.value)}>
+        <select className="unit-sel hdr-full" value={s.unitSystem} onChange={(e) => s.setUnitSystem(e.target.value)}>
           {Object.values(UNIT_SYSTEMS).map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
         </select>
         <div className="spacer" />
-        <button className="tbtn" onClick={() => setLib({})} title="Tiles, sizes and patterns — lay them in rooms">
+        <button className="tbtn hdr-full" onClick={() => setLib({})} title="Tiles, sizes and patterns — lay them in rooms">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" /><rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" /></svg><span className="tbtn-label">Library</span>
         </button>
         <AccountBar />
-        <label className="tbtn" style={{ cursor: 'pointer' }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2h9l5 5v15H6zM15 2v5h5" /><path d="M9 13h6M9 17h4" /></svg>PDF
-          <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={onPdfPick} />
+        <label className="tbtn hdr-plan" style={{ cursor: 'pointer' }} title="Open a plan (PDF or image)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2h9l5 5v15H6zM15 2v5h5" /><path d="M9 13h6M9 17h4" /></svg><span className="tbtn-label">PDF</span>
+          <input ref={fileRef} type="file" accept="application/pdf,image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={onPdfPick} />
         </label>
-        <button className={'tbtn' + (s.tab === 'trace' ? ' on' : '')} onClick={() => s.setTab('trace')} title="Rebuild the walls from the plan and take off from the model">
+        <button className={'tbtn hdr-full' + (s.tab === 'trace' ? ' on' : '')} onClick={() => s.setTab('trace')} title="Rebuild the walls from the plan and take off from the model">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 20V8l6-4 6 4v4h4v8z" /><path d="M10 20v-6h4v6" /></svg>Trace
         </button>
-        <button className="tbtn" onClick={() => setDetect(true)}>
+        <button className="tbtn hdr-full" onClick={() => setDetect(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19" /><circle cx="12" cy="12" r="3" /></svg>AI Detect
         </button>
-        <button className={'tbtn' + (s.view3d ? ' on' : '')} onClick={() => s.toggle3d()} title={s.view3d ? '2D plan' : '3D view'}>
+        <button className={'tbtn hdr-full' + (s.view3d ? ' on' : '')} onClick={() => s.toggle3d()} title={s.view3d ? '2D plan' : '3D view'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l9 5v10l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v10" /></svg><span className="tbtn-label">{s.view3d ? '2D' : '3D'}</span>
         </button>
-        <button className="tbtn" onClick={() => exportCSV(s)} title="Export CSV">
+        <button className="tbtn hdr-full" onClick={() => exportCSV(s)} title="Export CSV">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg><span className="tbtn-label">Export</span>
         </button>
-        <button className="tbtn primary" title="New takeoff" onClick={() => { if (confirm('Start a new takeoff? Current work is saved in this browser.')) s.newProject(); }}>
+        <button className="tbtn primary hdr-full" title="New takeoff" onClick={() => { if (confirm('Start a new takeoff? Current work is saved in this browser.')) s.newProject(); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg><span className="tbtn-label">New</span>
+        </button>
+        {s.view3d && (
+          <button className="tbtn hdr-phone" onClick={() => s.toggle3d(false)} title="Back to the 2D plan">2D</button>
+        )}
+        <button className="tbtn icon hdr-phone hdr-menu" onClick={() => setMenu(true)} aria-label="Menu">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
         </button>
       </header>
 
@@ -233,7 +262,7 @@ export default function App() {
         )}
 
         <aside className={'right' + (sheet ? ' open' : '')}>
-          <button className="sheet-handle" aria-label={sheet ? 'Close panel' : 'Open panel'} onClick={() => setSheet(!sheet)} />
+          <button className="sheet-handle" aria-label={sheet ? 'Close panel' : 'Open panel'} {...sheetSwipe(sheet, setSheet)} />
           <div className="tabs">
             {[['trace', 'Trace', s.trace?.result ? (s.trace.result.counts.error || s.trace.result.counts.warn || null) : null], ['rooms', 'Rooms', s.rooms.length], ['materials', 'Materials', s.materials.length], ['markups', 'Markups', s.markups.length], ['estimate', 'Estimate', null]].map(([id, label, ct]) => (
               <button key={id} className={'tab' + (s.tab === id ? ' active' : '')} onClick={() => onTab(id)}>
@@ -247,13 +276,23 @@ export default function App() {
 
       {detect && <Suspense fallback={null}><DetectModal onClose={() => setDetect(false)} /></Suspense>}
       {lib && <Suspense fallback={null}><Library target={lib} onClose={() => setLib(null)} /></Suspense>}
-      {toast && <div className={'toast show' + (toast.ok ? ' ok' : '')}>{toast.ok && <b>✓</b>} {toast.msg}</div>}
+      {toast && (
+        <div className={'toast show' + (toast.ok ? ' ok' : '')} role="status">
+          {toast.ok && <b>✓</b>} {toast.msg}
+          {toast.action && <button className="toast-act" onClick={() => { toast.action.run(); setToast(null); }}>{toast.action.label}</button>}
+        </div>
+      )}
+      {menu && (
+        <PhoneMenu onClose={() => setMenu(false)} onOpenPlan={() => fileRef.current?.click()} onLibrary={() => setLib({})}
+          onDetect={() => setDetect(true)} onHome={() => { setFromApp(true); setLanding(true); }} />
+      )}
     </div>
   );
 }
 
 function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
   const s = useStore();
+  const coarse = useMedia('(pointer: coarse)');
   return (
     <div style={{ position: 'relative', minWidth: 0 }}>
       <Canvas2D />
@@ -275,12 +314,9 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
         {totalSf > 0 && <span className="chip">{totalSf.toFixed(1)} sf total</span>}
         {pdfBusy && <span className="chip">rendering PDF…</span>}
       </div>
-      {s.selRooms.length > 1 && (
-        <div className="selbar">
-          <span><b>{s.selRooms.length}</b> rooms selected</span>
-          <button onClick={() => { if (confirm(`Delete ${s.selRooms.length} rooms?`)) s.deleteRooms(s.selRooms); }}>Delete</button>
-          <button onClick={() => s.clearRoomSel()}>Clear</button>
-        </div>
+      <SelectionBar s={s} />
+      {coarse && s.tool !== 'select' && s.tool !== 'pan' && !s.selection.type && !s.selRooms.length && (
+        <div className="touch-hint">Two fingers: move &amp; zoom</div>
       )}
       {s.pdfPages > 1 && (
         <div className="pdfnav">
@@ -294,6 +330,75 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
         <button className="zbtn" title="Zoom out (Ctrl −)" onClick={() => window.dispatchEvent(new CustomEvent('tt:zoomby', { detail: 1 / 1.4 }))}>−</button>
         <button className="zbtn" title="Fit (F or Ctrl 0)" onClick={() => window.dispatchEvent(new Event('tt:fit'))}><small>FIT</small></button>
       </div>
+    </div>
+  );
+}
+
+
+// true while a media query matches (re-renders when it changes)
+function useMedia(q) {
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const on = () => setM(mq.matches);
+    on();
+    mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on); };
+  }, [q]);
+  return m;
+}
+
+// The sheet's handle: a tap toggles it; a swipe up opens, a swipe down closes.
+function sheetSwipe(open, setOpen) {
+  let y0 = null;
+  return {
+    onPointerDown: (e) => { y0 = e.clientY; e.currentTarget.setPointerCapture?.(e.pointerId); },
+    onPointerUp: (e) => {
+      if (y0 == null) return;
+      const dy = e.clientY - y0; y0 = null;
+      if (Math.abs(dy) < 10) setOpen(!open);
+      else setOpen(dy < 0);
+    },
+    onPointerCancel: () => { y0 = null; },
+  };
+}
+
+// What is selected on the plan, with what you can do to it — the way to edit
+// or delete on a phone (no keyboard), and a quicker one on a desktop.
+function SelectionBar({ s }) {
+  const multi = s.selRooms.length > 1;
+  const room = !multi && s.selection.type === 'room' ? s.rooms.find((r) => r.id === s.selection.id) : null;
+  const zone = room && s.selZone ? zonesOf(room).find((z) => z.id === s.selZone) : null;
+  const markup = s.selection.type === 'markup' ? s.markups.find((m) => m.id === s.selection.id) : null;
+  if (!multi && !room && !markup) return null;
+  const undoToast = (msg) => window.dispatchEvent(new CustomEvent('tt:toast', {
+    detail: { msg, ok: true, action: { label: 'Undo', run: () => useStore.getState().undo() } },
+  }));
+  const st = useStore.getState();
+  let label, del, tab;
+  if (multi) {
+    label = <><b>{s.selRooms.length}</b> rooms</>;
+    del = () => { const n = s.selRooms.length; st.historyEnd(); st.deleteRooms(s.selRooms); undoToast(`Deleted ${n} rooms`); };
+    tab = 'rooms';
+  } else if (zone) {
+    label = <><b>{zone.name}</b> · {room.name}</>;
+    del = () => { st.historyEnd(); st.deleteZone(room.id, zone.id); undoToast(`Deleted ${zone.name}`); };
+    tab = 'rooms';
+  } else if (room) {
+    label = <><b>{room.name}</b>{s.scale ? ` · ${formatArea(roomArea(room), s.unitSystem)}` : ''}</>;
+    del = () => { st.historyEnd(); st.deleteRoom(room.id); undoToast(`Deleted ${room.name}`); };
+    tab = 'rooms';
+  } else {
+    label = <b>{markup.name || 'Markup'}</b>;
+    del = () => { st.historyEnd(); st.deleteMarkup(markup.id); undoToast(`Deleted ${markup.name || 'markup'}`); };
+    tab = 'markups';
+  }
+  return (
+    <div className="selbar" role="toolbar" aria-label="Selection">
+      <span className="selbar-label">{label}</span>
+      <button onClick={() => window.dispatchEvent(new CustomEvent('tt:panel', { detail: tab }))}>Edit</button>
+      <button className="danger" onClick={del}>Delete</button>
+      <button onClick={() => { st.select(null, null); st.clearRoomSel(); }}>Done</button>
     </div>
   );
 }
