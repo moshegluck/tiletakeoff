@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { extractPageVectors } from '../src/lib/pdfVectors.js';
+import { extractPageVectors, readLayers } from '../src/lib/pdfVectors.js';
 import { evidenceToFeet, detectSheetScale } from '../src/lib/planEvidence.js';
 import { runTrace } from '../src/engine/trace/index.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../src/engine/units.js';
@@ -40,6 +40,7 @@ function scaleFromArg(id) {
 }
 
 const doc = await pdfjs.getDocument({ data: new Uint8Array(readFileSync(file)), disableFontFace: true, verbosity: 0 }).promise;
+const layers = await readLayers(doc);
 const pageArg = opt('page') || 'all';
 const pages = pageArg === 'all' ? Array.from({ length: doc.numPages }, (_, i) => i + 1) : pageArg.split(',').map(Number);
 const forced = scaleFromArg(opt('scale'));
@@ -52,8 +53,8 @@ console.log(`${basename(file)} — ${doc.numPages} page(s)\n`);
 
 for (const n of pages) {
   const page = await doc.getPage(n);
-  const ev = await extractPageVectors(page, RENDER_SCALE, pdfjs.OPS);
-  const head = `── page ${n}  (${ev.stats.lines} lines, ${ev.stats.curves} curves, ${ev.stats.texts} texts)`;
+  const ev = await extractPageVectors(page, RENDER_SCALE, pdfjs.OPS, { layers });
+  const head = `── page ${n}  (${ev.stats.lines} lines, ${ev.stats.curves} curves, ${ev.stats.texts} texts${layers ? `, ${Object.keys(layers.names).length} CAD layers` : ''})`;
   if (ev.lines.length < VECTOR_MIN_LINES) {
     console.log(`${head}\n   scanned / too little linework — trace it in the app (raster mode)\n`);
     report.pages.push({ page: n, skipped: 'raster' });

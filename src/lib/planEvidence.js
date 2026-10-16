@@ -8,6 +8,7 @@
 
 import { arcFromBezier, isDoorSwing } from '../engine/trace/arcs.js';
 import { parseScaleNote } from '../engine/trace/analyze.js';
+import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 
 const VECTOR_MIN_LINES = 150;
@@ -25,9 +26,9 @@ export async function gatherEvidence({ doc, pageNum, renderScale, planImage, pxP
   let vec = null;
   if (doc) {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const { extractPageVectors } = await import('./pdfVectors.js');
+    const { extractPageVectors, readLayers } = await import('./pdfVectors.js');
     const page = await doc.getPage(pageNum);
-    vec = await extractPageVectors(page, renderScale, pdfjs.OPS);
+    vec = await extractPageVectors(page, renderScale, pdfjs.OPS, { layers: await readLayers(doc) });
   }
 
   let ev;
@@ -75,11 +76,19 @@ function loadImage(src) {
 
 const inRegion = (p, r) => !r || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
 
-/** px evidence → feet input for runTrace. region is a px rect {x0,y0,x1,y1} or null. */
+/**
+ * px evidence → feet input for runTrace. region is a px rect {x0,y0,x1,y1} or null.
+ * A CAD sheet that names its wall layers gives only those lines (and lines on
+ * layers we can't name) to the wall finder, and only room-label text to room
+ * naming — dimensions, beams overhead, demolished walls, furniture and the
+ * title block never become walls or room names.
+ */
 export function evidenceToFeet(ev, scale, region = null) {
   const k = scale;
   const P = (p) => ({ x: p.x * k, y: p.y * k });
-  const lines = ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region)).map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k }));
+  const layered = hasWallLayers(ev.lines);
+  const lines = wallCandidates(ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region)))
+    .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k }));
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
   const arcs = [];
   for (const c of ev.curves || []) {
@@ -87,8 +96,19 @@ export function evidenceToFeet(ev, scale, region = null) {
     const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
     if (isDoorSwing(arc)) arcs.push(arc);
   }
-  const texts = ev.texts.filter((t) => inRegion(t, region)).map((t) => ({ str: t.str, ...P(t) }));
-  return { lines, bodies, arcs, texts };
+  // door / window linework: where the sheet says a doorway or window is
+  const hints = [];
+  for (const l of ev.lines) {
+    if (l.layer != null && classifyLayer(l.layer) === 'opening' && inRegion(l.a, region)) hints.push({ a: P(l.a), b: P(l.b) });
+  }
+  for (const c of ev.curves || []) {
+    if (c.layer == null || classifyLayer(c.layer) !== 'opening' || !inRegion(c.pieces[0].p0, region)) continue;
+    for (const pc of c.pieces) hints.push({ a: P(pc.p0), b: P(pc.p3) });
+  }
+  const inR = ev.texts.filter((t) => inRegion(t, region));
+  const texts = inR.map((t) => ({ str: t.str, ...P(t) }));
+  const labels = labelCandidates(inR).map((t) => ({ str: t.str, ...P(t) }));
+  return { lines, bodies, arcs, texts, labels, hints, layered };
 }
 
 /** Try to read the drawing scale off the sheet. Returns { id, label, scale } or null. */

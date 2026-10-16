@@ -18,21 +18,54 @@ const mult = (m, n) => [
 const apply = (m, x, y) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] });
 
 /**
+ * The CAD layers (PDF optional-content groups) a document carries, if any:
+ * { names: { [id]: name }, hidden: Set<id> } — or null for a plain PDF.
+ * AutoCAD and Revit exports keep their layers ("A-WALL", "A-DOOR",
+ * "T - DIMS", …), which tell walls apart from everything else.
+ * @param {object} doc  pdf.js PDFDocumentProxy
+ */
+export async function readLayers(doc) {
+  try {
+    const cfg = await doc.getOptionalContentConfig();
+    if (!cfg) return null;
+    const names = {}, hidden = new Set();
+    let n = 0;
+    for (const [id, g] of cfg) {
+      names[id] = g?.name || String(id);
+      if (cfg.isVisible && !cfg.isVisible(g)) hidden.add(id);
+      n++;
+    }
+    return n ? { names, hidden } : null;
+  } catch (_) { return null; }
+}
+
+/**
  * @param {object} page   pdf.js PDFPageProxy
  * @param {number} renderScale  the scale the page image was rendered at
  * @param {object} OPS    pdfjs OPS table
- * @returns {Promise<{lines, curves, texts, stats}>} px coordinates (image space)
+ * @param {{ maxOps?: number, layers?: { names: object, hidden: Set<any> } | null }} [opts]
+ * @returns {Promise<{lines, curves, texts, stats}>} px coordinates (image space);
+ *   each line / curve / text carries its CAD `layer` name when the PDF has layers
  */
-export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_000_000 } = {}) {
+export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_000_000, layers = null } = {}) {
   const viewport = page.getViewport({ scale: renderScale });
   const vt = viewport.transform;
   const ops = await page.getOperatorList();
   const lines = [];
   const curves = [];
+  const opTexts = [];          // text read straight off the drawing operators (with its layer)
   let ctm = [1, 0, 0, 1, 0, 0];
   let lw = 1;
   const stack = [];
+  // marked content: the layer each path / text belongs to (name null = not a layer)
+  /** @type {{ name: string|null, hidden: boolean }[]} */
+  const mc = [];
+  const layerNow = () => { for (let k = mc.length - 1; k >= 0; k--) if (mc[k].name !== null) return mc[k].name; return null; };
+  let hiddenDepth = 0;
   let painted = 0, clipOnly = 0;
+  // text state
+  let tm = [1, 0, 0, 1, 0, 0], lm = [1, 0, 0, 1, 0, 0];
+  let fs = 0, cs = 0, ws = 0, hs = 1, leading = 0;
 
   const n = Math.min(ops.fnArray.length, maxOps);
   for (let i = 0; i < n; i++) {
@@ -45,31 +78,100 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       case OPS.paintFormXObjectBegin: stack.push([ctm, lw]); if (Array.isArray(args?.[0]) || ArrayBuffer.isView(args?.[0])) ctm = mult(ctm, Array.from(args[0])); break;
       case OPS.paintFormXObjectEnd: if (stack.length) [ctm, lw] = stack.pop(); break;
       case OPS.setLineWidth: lw = args[0]; break;
+      case OPS.beginMarkedContentProps: {
+        const id = args?.[0] === 'OC' ? args?.[1]?.id : null;
+        const hidden = id != null && !!layers?.hidden.has(id);
+        mc.push({ name: id != null && layers ? (layers.names[id] ?? String(id)) : null, hidden });
+        if (hidden) hiddenDepth++;
+        break;
+      }
+      case OPS.beginMarkedContent: mc.push({ name: null, hidden: false }); break;
+      case OPS.endMarkedContent: {
+        const top = mc.pop();
+        if (top?.hidden) hiddenDepth = Math.max(0, hiddenDepth - 1);
+        break;
+      }
       case OPS.constructPath: {
         const paintOp = args[0];
         if (paintOp === OPS.endPath) { clipOnly++; break; } // clipping path, not drawn
+        if (hiddenDepth) break;                               // a layer that's switched off
         const data = Array.isArray(args[1]) ? args[1][0] : args[1];
         if (!data) break;
         const m = mult(vt, ctm);
         const scaleK = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
         const wpx = Math.max(0, lw * scaleK);
         painted++;
+        const l0 = lines.length, c0 = curves.length;
         walkPath(data, m, wpx, lines, curves, paintOp !== OPS.stroke && paintOp !== OPS.closeStroke);
+        const layer = layerNow();
+        if (layer !== null) {
+          for (let k = l0; k < lines.length; k++) lines[k].layer = layer;
+          for (let k = c0; k < curves.length; k++) curves[k].layer = layer;
+        }
+        break;
+      }
+      // ---- text, read off the operators (position + layer) ----
+      case OPS.beginText: tm = [1, 0, 0, 1, 0, 0]; lm = [1, 0, 0, 1, 0, 0]; break;
+      case OPS.setFont: fs = Number(args?.[1]) || 0; break;
+      case OPS.setCharSpacing: cs = Number(args?.[0]) || 0; break;
+      case OPS.setWordSpacing: ws = Number(args?.[0]) || 0; break;
+      case OPS.setHScale: hs = (Number(args?.[0]) || 100) / 100; break;
+      case OPS.setLeading: leading = Number(args?.[0]) || 0; break;
+      case OPS.setTextMatrix: {
+        const t = args?.length >= 6 ? args : Array.from(args?.[0] || []);
+        if (t.length >= 6) { tm = t.slice(0, 6).map(Number); lm = tm.slice(); }
+        break;
+      }
+      case OPS.moveText: case OPS.setLeadingMoveText: {
+        const tx = Number(args?.[0]) || 0, ty = Number(args?.[1]) || 0;
+        if (fn === OPS.setLeadingMoveText) leading = -ty;
+        lm = [lm[0], lm[1], lm[2], lm[3], lm[0] * tx + lm[2] * ty + lm[4], lm[1] * tx + lm[3] * ty + lm[5]];
+        tm = lm.slice();
+        break;
+      }
+      case OPS.nextLine: {
+        lm = [lm[0], lm[1], lm[2], lm[3], -lm[2] * leading + lm[4], -lm[3] * leading + lm[5]];
+        tm = lm.slice();
+        break;
+      }
+      case OPS.showText: {
+        const glyphs = args?.[0];
+        if (!Array.isArray(glyphs) || hiddenDepth) break;
+        let str = '', adv = 0;
+        for (const g of glyphs) {
+          if (typeof g === 'number') {
+            adv -= (g * fs) / 1000;
+            if (g < -250) str += ' ';              // a word gap set by kerning
+            continue;
+          }
+          if (!g) continue;
+          str += g.unicode ?? '';
+          adv += ((g.width || 0) * fs) / 1000 + cs + (g.isSpace ? ws : 0);
+        }
+        const M = mult(vt, mult(ctm, tm));
+        const h = Math.hypot(M[2], M[3]) * Math.abs(fs);
+        const c = apply(M, (adv * hs) / 2, fs * 0.35);
+        if (str.trim()) opTexts.push({ str: str.trim(), x: c.x, y: c.y, h, layer: layerNow() });
+        // advance the text matrix past this run
+        tm = [tm[0], tm[1], tm[2], tm[3], tm[0] * adv * hs + tm[4], tm[1] * adv * hs + tm[5]];
         break;
       }
       default: break;
     }
   }
 
-  // text
-  const texts = [];
+  // text: pdf.js's own text reader first (best spacing / ordering); each item
+  // takes the layer of the operator-read text it matches. If that reader
+  // fails or finds nothing, the operator-read text stands in.
+  let texts = [];
+  let textError = null;
   try {
     const tc = await page.getTextContent();
     for (const it of tc.items) {
       const str = (it.str || '').trim();
       if (!str) continue;
-      const tm = mult(vt, it.transform);
-      const h = Math.hypot(tm[2], tm[3]);
+      const tmx = mult(vt, it.transform);
+      const h = Math.hypot(tmx[2], tmx[3]);
       const wUser = it.width || 0;
       // centre of the text run: start + width/2 along the baseline, up half the height
       const dirx = it.transform[0], diry = it.transform[1];
@@ -79,12 +181,28 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       const c = apply(vt, cxUser, cyUser);
       texts.push({ str, x: c.x, y: c.y - h * 0.35, h });
     }
-  } catch (_) { /* text is optional */ }
+  } catch (e) { textError = e?.message || String(e); }
+  let textSource = 'content';
+  if (!texts.length && opTexts.length) { texts = opTexts; textSource = 'operators'; }
+  else if (layers && opTexts.length) {
+    for (const t of texts) {
+      let best = null, bd = Infinity;
+      for (const o of opTexts) {
+        if (o.str !== t.str && !o.str.startsWith(t.str) && !t.str.startsWith(o.str)) continue;
+        const d = Math.hypot(o.x - t.x, o.y - t.y);
+        if (d < bd) { bd = d; best = o; }
+      }
+      if (best && bd <= Math.max(4, t.h * 1.5) && best.layer != null) t.layer = best.layer;
+    }
+  }
 
   return {
     lines, curves, texts,
     width: Math.ceil(viewport.width), height: Math.ceil(viewport.height),
-    stats: { ops: ops.fnArray.length, painted, clipOnly, lines: lines.length, curves: curves.length, texts: texts.length },
+    stats: {
+      ops: ops.fnArray.length, painted, clipOnly, lines: lines.length, curves: curves.length, texts: texts.length,
+      textSource, ...(textError ? { textError } : {}), layered: !!layers,
+    },
   };
 }
 

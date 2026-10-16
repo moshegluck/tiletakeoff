@@ -32,6 +32,9 @@ export const ROOM_TYPES = [
   ['mech', /\b(mech|mechanical|boiler|elec|electrical|furnace|hvac|wh|water heater)\b/i],
 ];
 
+// above these a closet / bath / laundry label names a merged space, not the room
+const SMALL_TYPE_SF = { closet: 120, bath: 160, laundry: 140 };
+
 const DIM_RE = /^\s*\d+\s*['’]\s*-?\s*\d*\s*(\d+\/\d+)?\s*["”]?\s*$|^\s*\d+(\.\d+)?\s*["”]\s*$|^\s*\d+\s*['’]\s*$/;
 const AREA_RE = /\b\d+(\.\d+)?\s*(sf|sq\.?\s*ft|s\.f\.)\b/i;
 const NOISE_RE = /^(up|dn|down|n|ref|dw|w|d|ov|mw|ac|hb|fd|ht|typ|sim|eq|clg|ceil|ceiling|tile|wood|vinyl|carpet|lvt|lvp|hwd|cpt|ct|vct|new|exist|existing|demo)$/i;
@@ -336,9 +339,14 @@ export function analyzeGraph(g, ctx = {}) {
       const s = t.str.trim();
       if (!nameParts.some((x) => x.toLowerCase() === s.toLowerCase())) nameParts.push(s);
     }
-    // keep labels that sit together (within ~4 ft of the first room-type label)
-    const typedL = lbls.filter((t) => roomTypeOf(t.str) !== 'room');
-    const anchor = (typedL.length ? typedL : lbls).slice().sort((a, b) => dist(a, room.center) - dist(b, room.center))[0];
+    // keep labels that sit together (within ~4 ft of the first room-type label).
+    // A closet / bath label can't name a space far too big to be one when the
+    // space has a label that fits (a closet whose walls didn't close, inside
+    // the open play area around it, mustn't rename the play area).
+    const fitsArea = (t) => !(SMALL_TYPE_SF[roomTypeOf(t.str)] && area > SMALL_TYPE_SF[roomTypeOf(t.str)]);
+    const lblsFit = lbls.some(fitsArea) ? lbls.filter(fitsArea) : lbls;
+    const typedL = lblsFit.filter((t) => roomTypeOf(t.str) !== 'room');
+    const anchor = (typedL.length ? typedL : lblsFit).slice().sort((a, b) => dist(a, room.center) - dist(b, room.center))[0];
     const near = anchor ? lbls.filter((t) => dist(t, anchor) < 4.5) : [];
     room.name = near.length ? [...new Set(near.map((t) => t.str.trim()))].join(' ') : null;
     // the room's type comes from its own anchor label, not a neighbour's stray tag
@@ -503,7 +511,8 @@ export function calibrateFromDoors(arcs) {
 export function parseScaleNote(texts) {
   const joined = texts.map((t) => t.str).join(' ');
   const counts = new Map();
-  const re = /(\d+\s*-?\s*\d*\/?\d*)\s*["”]\s*=\s*1\s*['’]\s*-?\s*0?\s*["”]?/g;
+  // 1/4" = 1'-0", and the dashed form some offices print: 1/4"-1'-0"
+  const re = /(\d+\s*-?\s*\d*\/?\d*)\s*["”]\s*[=\-–—]\s*1\s*['’]\s*-?\s*0?\s*["”]?/g;
   let m;
   while ((m = re.exec(joined))) {
     const raw = m[1].replace(/\s+/g, ' ').trim();

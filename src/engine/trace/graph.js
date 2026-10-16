@@ -113,7 +113,11 @@ export function joinWalls(inSegs, options = {}, log = []) {
       const L = dist(s.a, s.b);
       const along = hit.u * L;
       if (along < -e.t / 2 - opt.snapTol || along > L + e.t / 2 + opt.snapTol) continue;
-      if (hit.s > s.t * opt.stubFactor + opt.snapTol || hit.s < -s.t - opt.snapTol) continue;
+      // reaches the wall: within its stub reach of the centerline, or stopping
+      // short of its face by less than a drafting gap (a missing scrap of an
+      // inner wall layer — anything narrower than a door is not a doorway)
+      const shortOfFace = hit.s - s.t / 2;
+      if ((hit.s > s.t * opt.stubFactor + opt.snapTol && shortOfFace > Math.min(opt.draftGap, opt.minOpening)) || hit.s < -s.t - opt.snapTol) continue;
       if (!best || Math.abs(hit.s) < Math.abs(best.s)) best = { s: hit.s, pt: hit.pt, j };
     }
     if (best) {
@@ -198,9 +202,62 @@ function collinearGap(e1, e2) {
 // 2. OPENINGS — bridge door / cased openings so rooms can close
 // ---------------------------------------------------------------------------
 
-export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
+/**
+ * How much of the gap a→b has door / window drawing across it (0..1): the
+ * share of its length that linework from the sheet's door and window layers
+ * (bifold leaves, slider panels, window sashes, swing arcs) covers, within
+ * `reach` of the gap line.
+ */
+function hintCoverage(a, b, hints, hintIdx, reach) {
+  const W = dist(a, b);
+  if (!hints.length || W < 1e-6) return 0;
+  const u = norm(sub(b, a)), n = perp(u);
+  const ivs = [];
+  const q = hintIdx.query(Math.min(a.x, b.x) - reach, Math.min(a.y, b.y) - reach, Math.max(a.x, b.x) + reach, Math.max(a.y, b.y) + reach);
+  for (const i of q) {
+    const h = hints[i];
+    const s0 = dot(sub(h.a, a), u), s1 = dot(sub(h.b, a), u);
+    const d0 = dot(sub(h.a, a), n), d1 = dot(sub(h.b, a), n);
+    // the part of the hint inside the band |d| <= reach
+    let t0 = 0, t1 = 1;
+    if (Math.abs(d1 - d0) < 1e-9) { if (Math.abs(d0) > reach) continue; }
+    else {
+      const ta = (-reach - d0) / (d1 - d0), tb = (reach - d0) / (d1 - d0);
+      t0 = Math.max(0, Math.min(ta, tb)); t1 = Math.min(1, Math.max(ta, tb));
+      if (t1 <= t0) continue;
+    }
+    const lo = Math.max(0, Math.min(s0 + (s1 - s0) * t0, s0 + (s1 - s0) * t1));
+    const hi = Math.min(W, Math.max(s0 + (s1 - s0) * t0, s0 + (s1 - s0) * t1));
+    if (hi > lo) ivs.push([lo, hi]);
+  }
+  ivs.sort((p, q2) => p[0] - q2[0]);
+  let cov = 0, end = -Infinity;
+  for (const [lo, hi] of ivs) {
+    if (hi <= end) continue;
+    cov += hi - Math.max(lo, end);
+    end = hi;
+  }
+  return cov / W;
+}
+
+/**
+ * @param {object[]} segs  wall segments
+ * @param {object[]} ends  wall ends
+ * @param {object[]} [arcs]  door swings
+ * @param {object} [options]
+ * @param {object[]} [log]
+ * @param {{a,b}[]} [hints]  linework from the sheet's door / window layers (ft):
+ *   evidence that a gap is a doorway / window. With it, a gap can close across
+ *   two wall ends that aren't in line (a closet front between two partitions)
+ *   or from a wall end sideways to another wall, and one wall end can carry a
+ *   door on each side.
+ */
+export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hints = []) {
   const opt = { ...GRAPH_DEFAULTS, ...options };
   const free = ends.filter((e) => !e.joined);
+  const hintIdx = new GridIndex(4);
+  hints.forEach((h, i) => hintIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
+  const hinted = (a, b, t) => hints.length > 0 && hintCoverage(a, b, hints, hintIdx, Math.max(1.25, (t || 0) / 2 + 0.75)) >= 0.6;
   /** @type {any[]} */
   const cands = [];
   const segIdx = new GridIndex(4);
@@ -218,6 +275,60 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
   };
   const endIdx = new GridIndex(Math.max(4, opt.maxOpening / 2));
   free.forEach((e, i) => endIdx.insert(i, e.p.x, e.p.y, e.p.x, e.p.y));
+  // wall ends that already turn a corner (a closet's side wall meeting its front)
+  // (only a plain L: the end of a tee's stem looks across the wall it meets)
+  const plainL = (e) => {
+    let n = 0;
+    for (const j of segsNear(e.p, e.p)) {
+      if (j === e.bi) continue;
+      const sg = segs[j];
+      const c = closestOnSeg(e.p, sg.a, sg.b);
+      if (c.d > Math.max(e.t, sg.t, 0.3)) continue;
+      const L = dist(sg.a, sg.b);
+      if (c.t * L > sg.t && (1 - c.t) * L > sg.t) return false;   // runs on past it: a tee
+      const v = norm(sub(sg.b, sg.a));
+      if (Math.abs(dot(v, e.dir)) > Math.cos(45 * DEG)) return false;
+      n++;
+    }
+    return n === 1;
+  };
+  const corners = ends.filter((e) => e.joined && plainL(e));
+  const isCorner = new Set(corners);
+  const joinedEnd = new Set(ends.filter((e) => e.joined).map((e) => `${e.bi}:${e.w}`));
+
+  // door / window drawing across the gap, or a matching swing
+  const evidenced = (c) => { c.arcs = matchArcs(c, arcs); c.hint = hinted(c.jambs[0], c.jambs[1], c.t); return c.hint || c.arcs.length > 0; };
+  // a doorway spans one gap: it never runs past another wall end (two closet
+  // fronts side by side are two openings, each between its own jambs)
+  const passesJamb = (a, b, skip) => {
+    const L = dist(a, b);
+    for (const k of endIdx.query(Math.min(a.x, b.x) - 0.6, Math.min(a.y, b.y) - 0.6, Math.max(a.x, b.x) + 0.6, Math.max(a.y, b.y) + 0.6)) {
+      const f = free[k];
+      if (skip.includes(f)) continue;
+      const c = closestOnSeg(f.p, a, b);
+      if (c.d <= Math.max(0.5, f.t) && c.t * L > 0.5 && (1 - c.t) * L > 0.5) return true;
+    }
+    return false;
+  };
+  // ...and its span is clear: no wall runs alongside it inside the gap (the
+  // side wall of the closet next door is not part of this closet's front)
+  const alongside = (a, b, skip) => {
+    const L = dist(a, b), band = 1.0;
+    if (L < 1e-6) return false;
+    const u = norm(sub(b, a)), n = perp(u);
+    let run = 0;
+    for (const i of segIdx.query(Math.min(a.x, b.x) - band, Math.min(a.y, b.y) - band, Math.max(a.x, b.x) + band, Math.max(a.y, b.y) + band)) {
+      if (skip.includes(i)) continue;
+      const sg = segs[i];
+      const sl = dist(sg.a, sg.b);
+      if (sl < 1e-6 || Math.abs(dot(u, sub(sg.b, sg.a))) / sl < Math.cos(30 * DEG)) continue;
+      const d0 = dot(sub(sg.a, a), n), d1 = dot(sub(sg.b, a), n);
+      if (Math.abs(d0) > band || Math.abs(d1) > band) continue;
+      const s0 = dot(sub(sg.a, a), u), s1 = dot(sub(sg.b, a), u);
+      run += Math.max(0, Math.min(L, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1)));
+    }
+    return run > Math.min(0.75, 0.25 * L);
+  };
 
   // (a) collinear: two free ends facing each other across a gap
   for (let i = 0; i < free.length; i++) {
@@ -232,8 +343,35 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
       cands.push({ type: 'collinear', e1, e2, a: e1.p, b: e2.p, width: g.gap, t: (e1.t + e2.t) / 2, jambs: [e1.p, e2.p] });
     }
   }
-  // (b) end → perpendicular wall (door beside a corner, opening onto a hall)
-  for (const e of free) {
+  // ...or where the wall turns a corner at one or both jambs (a closet whose
+  // side walls meet its front): only with a door drawn there, since two
+  // corners face each other across every hallway too
+  if (hints.length || arcs.length) {
+    const cornerIdx = new GridIndex(Math.max(4, opt.maxOpening / 2));
+    corners.forEach((e, i) => cornerIdx.insert(i, e.p.x, e.p.y, e.p.x, e.p.y));
+    const R = opt.maxOpening;
+    const tryPair = (e1, e2) => {
+      if (e1.bi === e2.bi) return;
+      const g = collinearGap(e1, e2);
+      if (!g) return;
+      const jamb = (e) => (isCorner.has(e) ? add(e.p, mul(e.dir, e.t / 2)) : e.p);
+      const width = g.gap - (isCorner.has(e1) ? e1.t / 2 : 0) - (isCorner.has(e2) ? e2.t / 2 : 0);
+      if (width < opt.minOpening || width > opt.maxOpening) return;
+      const c = { type: 'collinear', e1, e2, a: e1.p, b: e2.p, width, t: (e1.t + e2.t) / 2, jambs: [jamb(e1), jamb(e2)] };
+      if (blocked(e1.p, e2.p, [e1.bi, e2.bi]) || !evidenced(c) || passesJamb(e1.p, e2.p, [e1, e2])) return;
+      cands.push(c);
+    };
+    corners.forEach((e1, i) => {
+      const p = e1.p;
+      for (const k of cornerIdx.query(p.x - R, p.y - R, p.x + R, p.y + R)) if (k > i) tryPair(e1, corners[k]);
+      for (const k of endIdx.query(p.x - R, p.y - R, p.x + R, p.y + R)) tryPair(free[k], e1);
+    });
+  }
+  // (b) end → perpendicular wall (door beside a corner, opening onto a hall);
+  //     from a corner only with a door drawn there (a closet front running on
+  //     from the wall that turns)
+  for (const e of hints.length || arcs.length ? free.concat(corners) : free) {
+    const fromCorner = isCorner.has(e);
     let best = null;
     const far = { x: e.p.x + e.dir.x * (opt.maxOpening + 2), y: e.p.y + e.dir.y * (opt.maxOpening + 2) };
     for (const j of segsNear(e.p, far)) {
@@ -242,27 +380,116 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = []) {
       if (angleDiff(lineAngle(segs[e.bi].a, segs[e.bi].b), lineAngle(s.a, s.b)) < 30 * DEG) continue;
       const hit = lineIntersect(e.p, e.dir, s.a, sub(s.b, s.a));
       if (!hit || hit.u < -0.001 || hit.u > 1.001) continue;
-      const width = hit.s - s.t / 2;
-      if (width < opt.minOpening || width > opt.maxOpening) continue;
+      if (fromCorner && hit.s < e.t) continue;                    // the wall it turns into
+      const width = hit.s - s.t / 2 - (fromCorner ? e.t / 2 : 0);
+      if (width < opt.minOpening || width > (fromCorner ? Math.min(opt.maxOpening, 10) : opt.maxOpening)) continue;
       if (!best || hit.s < best.s) best = { s: hit.s, pt: hit.pt, j, width, t: s.t };
     }
     if (!best) continue;
-    if (blocked(e.p, best.pt, [e.bi, best.j])) continue;
+    if (blocked(e.p, best.pt, [e.bi, best.j]) || passesJamb(e.p, best.pt, [e])) continue;
     const jamb2 = sub(best.pt, mul(e.dir, best.t / 2));
-    cands.push({ type: 'ray', e1: e, a: e.p, b: best.pt, width: best.width, t: e.t, jambs: [e.p, jamb2], hitBody: best.j });
+    const c = { type: 'ray', e1: e, a: e.p, b: best.pt, width: best.width, t: e.t, jambs: [fromCorner ? add(e.p, mul(e.dir, e.t / 2)) : e.p, jamb2], hitBody: best.j };
+    if (fromCorner && (!evidenced(c) || alongside(e.p, best.pt, [e.bi, best.j]))) continue;
+    cands.push(c);
   }
 
-  // door-swing evidence makes a candidate much more trustworthy
+  // (c) across, with door / window drawing or a door swing as evidence: two
+  //     wall ends not in line (a closet front between two partitions, a door
+  //     between two wall stubs), or a wall end sideways to another wall
+  const maxAcross = Math.min(opt.maxOpening, 10);   // bifolds, sliders, cased openings
+  if (hints.length || arcs.length) {
+    for (let i = 0; i < free.length; i++) {
+      const e1 = free[i], p = e1.p, R = opt.maxOpening;
+      for (const k of endIdx.query(p.x - R, p.y - R, p.x + R, p.y + R)) {
+        if (k === i) continue;
+        const e2 = free[k];
+        if (k < i || e1.bi === e2.bi) continue;
+        const w = dist(e1.p, e2.p);
+        if (w < opt.minOpening || w > maxAcross) continue;
+        if (collinearGap(e1, e2)) continue;                    // (a) has it
+        // a doorway runs square to its walls: across, not on a slant
+        const across = norm(sub(e2.p, e1.p));
+        const square = (e) => Math.abs(dot(across, e.dir)) < Math.sin(15 * DEG) || Math.abs(dot(across, e.dir)) > Math.cos(15 * DEG);
+        if (!square(e1) || !square(e2)) continue;
+        const t = (e1.t + e2.t) / 2;
+        // between two parallel wall ends the doorway is the clear gap between their faces
+        const perpTo = (e) => Math.abs(dot(across, e.dir)) < Math.sin(15 * DEG);
+        const clear = perpTo(e1) && perpTo(e2) ? w - t : w;
+        if (clear < opt.minOpening) continue;
+        const jambs = perpTo(e1) && perpTo(e2)
+          ? [add(e1.p, mul(across, e1.t / 2)), sub(e2.p, mul(across, e2.t / 2))]
+          : [e1.p, e2.p];
+        // off square (one end set back from the other) costs its offset
+        const skew = (e) => { const d = Math.abs(dot(across, e.dir)); return Math.min(d, Math.sqrt(Math.max(0, 1 - d * d))); };
+        const c = { type: 'across', e1, e2, a: e1.p, b: e2.p, width: clear, t, jambs, skew: w * Math.max(skew(e1), skew(e2)) };
+        if (!evidenced(c) || blocked(e1.p, e2.p, [e1.bi, e2.bi]) || passesJamb(e1.p, e2.p, [e1, e2]) || alongside(e1.p, e2.p, [e1.bi, e2.bi])) continue;
+        cands.push(c);
+      }
+      for (const side of [1, -1]) {
+        const dir = mul(perp(e1.dir), side);
+        const far = { x: p.x + dir.x * (R + 2), y: p.y + dir.y * (R + 2) };
+        let best = null;
+        for (const j of segsNear(p, far)) {
+          const s = segs[j];
+          if (j === e1.bi) continue;
+          const hit = lineIntersect(p, dir, s.a, sub(s.b, s.a));
+          if (!hit || hit.s <= 0) continue;
+          // a wall's corner fills out past its centreline end: a door can
+          // run up to the face of a corner the ray just grazes
+          const len = dist(s.a, s.b), slack = Math.max(0.5, s.t) / Math.max(len, 1e-6);
+          if (hit.u < -0.001 && !(hit.u >= -slack && joinedEnd.has(`${j}:0`))) continue;
+          if (hit.u > 1.001 && !(hit.u <= 1 + slack && joinedEnd.has(`${j}:1`))) continue;
+          const pt = hit.u < 0 ? { ...s.a } : hit.u > 1 ? { ...s.b } : hit.pt;
+          // clear width: from this wall's side face to the other wall's face
+          const width = hit.s - s.t / 2 - e1.t / 2;
+          if (width < opt.minOpening || width > maxAcross) continue;
+          if (!best || hit.s < best.s) best = { s: hit.s, pt, j, width, t: s.t };
+        }
+        if (!best) continue;
+        const stop = add(p, mul(dir, best.s - best.t / 2));
+        const c = { type: 'side', e1, a: p, b: best.pt, width: best.width, t: e1.t, jambs: [add(p, mul(dir, e1.t / 2)), stop], hitBody: best.j };
+        // landing on the other wall's own free end: that end is this door's jamb too
+        const e2 = free.find((f) => f.bi === best.j && dist(f.p, best.pt) <= Math.max(segs[best.j].t, 0.5));
+        if (!evidenced(c) || blocked(p, best.pt, [e1.bi, best.j]) || passesJamb(p, best.pt, [e1, e2].filter(Boolean)) || alongside(p, best.pt, [e1.bi, best.j])) continue;
+        if (e2) c.e2 = e2;
+        cands.push(c);
+      }
+    }
+  }
+
+  // door-swing evidence makes a candidate much more trustworthy; door / window
+  // drawing across the gap nearly as much
   for (const c of cands) {
-    c.arcs = matchArcs(c, arcs);
-    c.cost = c.width - (c.arcs.length ? 100 : 0) + (c.type === 'ray' ? 0.5 : 0);
+    if (c.hint === undefined) { c.arcs = matchArcs(c, arcs); c.hint = hinted(c.jambs[0], c.jambs[1], c.t); }
+    c.cost = c.width - (c.arcs.length ? 100 : 0) - (c.hint ? 60 : 0) + (c.type === 'ray' || c.type === 'side' ? 0.5 : 0) + (c.skew || 0);
   }
   cands.sort((p, q) => p.cost - q.cost);
+  if (Array.isArray(opt._debugCands)) opt._debugCands.push(...cands);
 
+  // An end takes one opening — or, with door drawing / a swing as evidence,
+  // one per direction (the end of a partition between two closets is a jamb
+  // of both).
+  const dirFrom = (e, c) => norm(sub(e === c.e1 ? c.b : c.a, e.p));
+  const clash = (e, c) => {
+    if (!e.joined) return false;
+    if (!(c.hint || c.arcs.length)) return true;
+    if (!e.used) return !isCorner.has(e);       // a corner end can still be a door's jamb
+    return e.used.some((d) => dot(d, dirFrom(e, c)) > Math.cos(45 * DEG));
+  };
   const openings = [];
+  const usedArcs = new Set();   // each swing is one door
   for (const c of cands) {
-    if (c.e1.joined || (c.e2 && c.e2.joined)) continue;
-    c.e1.joined = true; if (c.e2) c.e2.joined = true;
+    if (c.arcs.some((a) => usedArcs.has(a))) {
+      c.arcs = c.arcs.filter((a) => !usedArcs.has(a));
+      if (c.arcs.length === 1 && Math.abs(c.arcs[0].r - c.width) / c.width >= 0.25) c.arcs = [];
+    }
+    if (clash(c.e1, c) || (c.e2 && clash(c.e2, c))) continue;
+    for (const a of c.arcs) usedArcs.add(a);
+    for (const e of [c.e1, c.e2]) {
+      if (!e) continue;
+      e.joined = true;
+      (e.used ||= []).push(dirFrom(e, c));
+    }
     const nArc = c.arcs.length;
     const kind = nArc >= 2 ? 'double_door' : nArc === 1 ? 'door' : 'opening';
     let width = c.width;
@@ -291,13 +518,16 @@ function matchArcs(c, arcs) {
     const tol = Math.max(0.6, c.t + 0.35);
     const nearJamb = c.jambs.some((j) => dist(j, arc.c) <= tol);
     if (!nearJamb) continue;
-    const single = Math.abs(arc.r - c.width) / c.width < 0.2;
-    const dbl = Math.abs(arc.r * 2 - c.width) / c.width < 0.2;
+    // a swing drawn a size off its frame (2'-6" leaf in a 3'-2" rough gap) still marks the door
+    const single = Math.abs(arc.r - c.width) / c.width < 0.25;
+    const dbl = Math.abs(arc.r * 2 - c.width) / c.width < 0.25;
     if (single || dbl) out.push(arc);
   }
-  // a single leaf whose radius = full width beats two half-width matches
-  const full = out.filter((a) => Math.abs(a.r - c.width) / c.width < 0.2);
-  return full.length ? full.slice(0, 1) : out.slice(0, 2);
+  // a single leaf whose radius = full width beats two half-width matches; a
+  // double door needs both its leaves — one half-width swing alone is no door
+  const full = out.filter((a) => Math.abs(a.r - c.width) / c.width < 0.25);
+  if (full.length) return full.slice(0, 1);
+  return out.length >= 2 ? out.slice(0, 2) : [];
 }
 
 export const fmtIn = (ft) => {
