@@ -352,6 +352,26 @@ describe('trace — bathrooms and closets of the mill units', () => {
     expect(res.rooms.length).toBe(2);
   });
 
+  it("an inferred opening never runs through a doorway (a ray from a counter's end across the living room)", () => {
+    // a 16x14 living room; on its west side a 4'-deep laundry closet with a
+    // door; a 3' counter stub sticks off the east wall level with the closet's
+    // doorway — its end must not "open" 12' west through the closet door
+    const t = 4 * IN;
+    const lines = heavy(wallsToLines([
+      ...box(16, 14, t),
+      { x1: 0, y1: 4, x2: 4, y2: 4, t },          // closet's top wall
+      { x1: 4, y1: 4, x2: 4, y2: 4.4, t, capB: 0 }, // door head jamb
+      { x1: 4, y1: 7.4, x2: 4, y2: 8, t, capA: 0 },
+      { x1: 0, y1: 8, x2: 4, y2: 8, t },
+      { x1: 13, y1: 5, x2: 16, y2: 5, t: 5 * IN, capA: 0 },   // counter stub
+    ], [], 16, 14));
+    lines.push(...flatArc({ x: 4, y: 7.4 }, 3, -Math.PI / 2));
+    const res = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: 'LIVING', x: 10, y: 10 }, { str: 'W/D', x: 2, y: 6 }] });
+    const living = res.rooms.find((r) => r.name === 'LIVING');
+    expect(living.area).toBeGreaterThan(150);
+    expect(res.openings.some((o) => o.openingType === 'opening' && Math.abs(o.a.x - o.b.x) > 6)).toBe(false);
+  });
+
   it('a closet door drawn part open, between jamb returns too short to read as walls, closes the closet', () => {
     // a 5x3 closet off a 12' room: its front wall stops 2'-7" short of the
     // north wall's face (the 4" jamb returns are too short to pair); a 1'-8"

@@ -571,7 +571,14 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   };
   const openings = [];
   const usedArcs = new Set();   // each swing is one door
+  // openings never cross: a gap bridged across another doorway's line (a
+  // ray from a counter's end through the closet door beside it) is no gap
+  const crossesTaken = (c) => openings.some((o) => {
+    const h = segIntersect(c.a, c.b, o.a, o.b);
+    return h && h.t > 0.02 && h.t < 0.98 && h.u > 0.02 && h.u < 0.98;
+  });
   for (const c of cands) {
+    if (crossesTaken(c)) continue;
     if (c.arcs.some((a) => usedArcs.has(a))) {
       c.arcs = c.arcs.filter((a) => !usedArcs.has(a));
       if (c.arcs.length === 1 && Math.abs(c.arcs[0].r - c.width) / c.width >= 0.25) c.arcs = [];
