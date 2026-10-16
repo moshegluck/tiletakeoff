@@ -44,6 +44,9 @@ function alcoveMouths(res) {
     const ops = res.openings.filter((o) => o.rooms.includes(r.id));
     if (!ops.length || !ops.every(inferred)) continue;
     if (!ops.every((o) => named.has(o.rooms.find((id) => id !== r.id)))) continue;
+    // a nook is open along much of its side; a room behind a narrow gap (a
+    // stair hall through a slot in a brick wall) is a room
+    if (ops.reduce((a, o) => a + (o.width || dist(o.a, o.b)), 0) < 0.5 * Math.sqrt(r.area)) continue;
     for (const o of ops) out.push({ ...o.a }, { ...o.b });
   }
   return out;

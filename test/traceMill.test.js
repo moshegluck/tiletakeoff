@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { runTrace } from '../src/engine/trace/index.js';
 import { pairWalls, mergeCollinear } from '../src/engine/trace/walls.js';
-import { arcsFromPolylines, isDoorSwing } from '../src/engine/trace/arcs.js';
+import { buildGraph } from '../src/engine/trace/graph.js';
+import { arcsFromPolylines, isDoorSwing, readLeaves } from '../src/engine/trace/arcs.js';
 import { chromatic } from '../src/lib/pdfVectors.js';
 import { wallsToLines } from './fixtures/planFactory.js';
 
@@ -162,9 +163,18 @@ describe('trace — the sheet checks the trace', () => {
   });
 
   it('two room tags in one traced room say the rooms merged', () => {
-    const res = runTrace({ lines: room(), texts: [{ str: '60 SF', x: 3, y: 5 }, { str: '50 SF', x: 9, y: 5 }] });
+    const res = runTrace({ lines: room(), texts: [{ str: '60 SF', x: 3, y: 5 }, { str: '30 SF', x: 9, y: 5 }] });
     expect(res.verify.off).toBe(1);
-    expect(res.flags.find((x) => x.kind === 'area_check').msg).toMatch(/2 room tags \(60 \+ 50 = 110 SF\).*rooms merged/);
+    expect(res.flags.find((x) => x.kind === 'area_check').msg).toMatch(/2 room tags \(60 \+ 30 = 90 SF\).*rooms merged/);
+  });
+
+  it('an open space the plan prints as two areas, with nothing drawn between them, agrees when they add up', () => {
+    // a meter alcove and the electric room it opens off: 47 + 64 = 111 SF
+    const res = runTrace({ lines: room(), texts: [{ str: 'METER', x: 3, y: 4 }, { str: '47 SF', x: 3, y: 5 }, { str: 'ELECTRIC', x: 9, y: 4 }, { str: '64 SF', x: 9, y: 5 }] });
+    expect(res.verify).toMatchObject({ matched: 1, off: 0 });
+    expect(res.rooms[0].areaCheck).toBe('match');
+    expect(res.rooms[0].printedParts).toEqual([47, 64]);
+    expect(res.flags.find((x) => x.kind === 'area_zones').msg).toMatch(/2 areas here \(47 \+ 64 = 111 SF\) with nothing drawn between them/);
   });
 
   it('a window drawn as frame lines across the gap is a window (closes the room, stays in wall LF) on a sheet without layers', () => {
@@ -213,3 +223,177 @@ describe('trace — what is drawing', () => {
     expect(out.lines.every((l) => l.a.y >= 50 / 36 - 1e-9)).toBe(true);
   });
 });
+
+describe('trace — bathrooms and closets of the mill units', () => {
+  it('four short lines a few inches apart in four different pens are drawing, not a hatch (a door leaf, a wall, a washer box)', () => {
+    // a 3' wall between a bath and a laundry closet: faces 6.4" apart; the bath
+    // door's leaf 6" above it, the washer box 6" below — evenly spaced by chance
+    const sp = 6.4 * IN;
+    const lines = [hline(0, 0, 2.5, { w: 1.15 / 36 }), hline(sp, 0, 3, { w: HEAVY }), hline(2 * sp, 0, 3, { w: 2.0 / 36 }), hline(3 * sp, 0.2, 2.4, { w: LIGHT })];
+    // other walls on the sheet set the heavy pen and the usual thickness
+    for (let k = 0; k < 4; k++) lines.push(hline(20 + 5 * k, 0, 12, { w: HEAVY }), hline(20 + 5 * k + sp, 0, 12, { w: HEAVY }));
+    const p = pairWalls(lines);
+    expect(p.bodies.some((b) => Math.abs(b.a.y - 1.5 * sp) < 0.05 && Math.abs(b.t - sp) < 0.05)).toBe(true);
+    // the same four strokes in one pen are a pattern
+    const hatch = pairWalls([0, 1, 2, 3].map((k) => hline(k * sp, 0, 3, { w: HEAVY })).concat(lines.slice(4)));
+    expect(hatch.bodies.some((b) => b.a.y < 2 && b.a.y > -1)).toBe(false);
+  });
+
+  it('a corner closes past the scrap of a layered wall\'s step that touches one end', () => {
+    // 10x8 room; the NE corner: the north wall stops 3" short of the east wall's
+    // centreline, the east wall starts 2" below the north's, and a 1" step piece
+    // (left by the wall's poche) touches the north wall's end
+    const t = 6 * IN;
+    const bodies = [
+      { a: { x: 0, y: 0 }, b: { x: 10 - 0.27, y: 0 }, t },
+      { a: { x: 10, y: 0.17 }, b: { x: 10, y: 8 }, t: 4.9 * IN },
+      { a: { x: 10, y: 8 }, b: { x: 0, y: 8 }, t },
+      { a: { x: 0, y: 8 }, b: { x: 0, y: 0 }, t },
+      { a: { x: 10 - 0.27, y: 0 }, b: { x: 10 - 0.27, y: -0.06 }, t: 3.5 * IN },
+    ];
+    const res = runTrace({ bodies });
+    expect(res.rooms.length).toBe(1);
+    expect(errors(res)).toEqual([]);
+    expect(res.flags.filter((f) => f.kind === 'spur' || f.kind === 'open_end')).toEqual([]);
+  });
+
+  it("reads each swing's leaf: the end it stands open at, and the end it closes on", () => {
+    const c = { x: 0, y: 0 }, r = 2.5;
+    const swing = { c, r, sweepDeg: 90, p0: { x: r, y: 0 }, p3: { x: 0, y: -r } };
+    // the leaf drawn open along -y: it closes along +x
+    const [read] = readLeaves([swing], [], [{ a: c, b: { x: 0, y: -r } }]);
+    expect(read.closed).toEqual({ x: r, y: 0 });
+    // no leaf drawn: no closed end
+    expect(readLeaves([swing], [], [])[0].closed).toBeUndefined();
+    // a 45° arc is a door only with its leaf
+    const part = { c, r: 1.7, sweepDeg: 45, p0: { x: 0, y: 1.7 }, p3: { x: -1.2, y: 1.2 } };
+    expect(readLeaves([], [part], [])).toEqual([]);
+    const kept = readLeaves([], [part], [{ a: { x: 0.05, y: 0.05 }, b: { x: -1.15, y: 1.25 } }]);
+    expect(kept.length).toBe(1);
+    expect(kept[0].closed).toEqual({ x: 0, y: 1.7 });
+  });
+
+  it("a wall stopping on another wall right by that wall's own end (a 3\" scrap of it) joins that corner", () => {
+    // the west wall comes in three pieces, one a 3" scrap; the south wall of the
+    // room ends 1.6" off the scrap's top — on the wall, too near the scrap's end
+    // to split it, a hair past the snap distance from the corner
+    const t = 6 * IN;
+    const segs = [
+      { a: { x: 0, y: 0 }, b: { x: 0, y: 5 }, t, kind: 'wall' },
+      { a: { x: 0, y: 5 }, b: { x: 0.02, y: 5.25 }, t, kind: 'wall' },
+      { a: { x: 0.02, y: 5.25 }, b: { x: 0.05, y: 9 }, t, kind: 'wall' },
+      { a: { x: 0.095, y: 5.09 }, b: { x: 8, y: 5.09 }, t: 4 * IN, kind: 'wall' },
+    ];
+    const g = buildGraph(segs);
+    const deg = new Map();
+    for (const e of g.edges) for (const n of [e.u, e.v]) deg.set(n, (deg.get(n) || 0) + 1);
+    const corner = g.nodes.find((n) => Math.abs(n.x) < 0.1 && Math.abs(n.y - 5) < 0.1);
+    expect(deg.get(corner.id)).toBe(3);
+  });
+
+  it("a wall meeting another just past that wall's end (its corner fills out beyond the centreline) closes the corner", () => {
+    // 10x8 room: the north wall ends 1.8" above where the east wall's centreline stops
+    const t = 4 * IN;
+    const bodies = [
+      { a: { x: 0, y: 0 }, b: { x: 9.95, y: 0 }, t },
+      { a: { x: 10, y: 0.15 }, b: { x: 10, y: 8 }, t },
+      { a: { x: 10, y: 0.15 }, b: { x: 12, y: 0.15 }, t: 7.8 * IN },
+      { a: { x: 10, y: 8 }, b: { x: 0, y: 8 }, t },
+      { a: { x: 0, y: 8 }, b: { x: 0, y: 0 }, t },
+    ];
+    const res = runTrace({ bodies });
+    expect(res.rooms.length).toBe(1);
+    const atCorner = (f) => f.at && Math.hypot(f.at.x - 10, f.at.y) < 0.5;
+    expect(res.flags.filter((f) => (f.kind === 'spur' || f.kind === 'open_end') && atCorner(f))).toEqual([]);
+    expect(res.rooms[0].area).toBeGreaterThan(70);
+  });
+
+  it('a wall runs straight through an offset crossing (walls meeting it from each side 5" apart)', () => {
+    // a 20x16 block cut by a N-S wall at x 10; an E-W wall meets it from the west
+    // at y 8 and one from the east at y 8.4 — each ends at the N-S wall, whose
+    // pieces stop at the walls they turn into
+    const t = 4 * IN;
+    const bodies = [
+      ...box(20, 16, 6 * IN).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 10, y: 0 }, b: { x: 10, y: 8 }, t },
+      { a: { x: 10, y: 8.4 }, b: { x: 10, y: 16 }, t },
+      { a: { x: 0, y: 8.4 }, b: { x: 10, y: 8.4 }, t },
+      { a: { x: 10, y: 8 }, b: { x: 20, y: 8 }, t },
+    ];
+    const res = runTrace({ bodies });
+    expect(res.rooms.length).toBe(4);
+    expect(errors(res)).toEqual([]);
+  });
+
+  it("a 28\" brick wall runs through where walls meet it from each side 1'-6\" apart; a doorway's jambs don't close", () => {
+    const T = 28 * IN, t = 4 * IN;
+    const base = [
+      ...box(30, 20, 6 * IN).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 0, y: 10 }, b: { x: 10.5, y: 10 }, t: T },
+      { a: { x: 12, y: 10 }, b: { x: 30, y: 10 }, t: T },
+    ];
+    // a storage room's wall comes down onto the brick at x 12, a stair hall's up at x 10.5
+    const crossing = runTrace({ bodies: [...base, { a: { x: 12, y: 0 }, b: { x: 12, y: 10 - T / 2 }, t }, { a: { x: 10.5, y: 10 + T / 2 }, b: { x: 10.5, y: 20 }, t: 12 * IN }] });
+    expect(crossing.rooms.length).toBe(4);
+    // both walls from the same side: the gap between them stays open to bridge
+    const doorway = runTrace({ bodies: [...base, { a: { x: 12, y: 0 }, b: { x: 12, y: 10 - T / 2 }, t }, { a: { x: 10.5, y: 0 }, b: { x: 10.5, y: 10 - T / 2 }, t }] });
+    expect(doorway.walls.some((w) => w.a.y === w.b.y && Math.abs(w.a.y - 10) < 0.01 && Math.min(w.a.x, w.b.x) >= 10.4 && Math.max(w.a.x, w.b.x) <= 12.1 && Math.abs(w.a.x - w.b.x) > 1)).toBe(false);
+  });
+
+  it('a room behind a narrow unmarked gap is a room, not an alcove of the room it opens into', () => {
+    // a 15x10 stair hall reached from the storage room through a 2' slot
+    const t = 6 * IN;
+    const bodies = [
+      ...box(30, 10, t).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 15, y: 0 }, b: { x: 15, y: 4 }, t },
+      { a: { x: 15, y: 6 }, b: { x: 15, y: 10 }, t },
+    ];
+    const res = runTrace({ bodies, texts: [{ str: 'STORAGE', x: 7, y: 5 }] });
+    expect(res.rooms.length).toBe(2);
+  });
+
+  it("an inferred opening never runs through a doorway (a ray from a counter's end across the living room)", () => {
+    // a 16x14 living room; on its west side a 4'-deep laundry closet with a
+    // door; a 3' counter stub sticks off the east wall level with the closet's
+    // doorway — its end must not "open" 12' west through the closet door
+    const t = 4 * IN;
+    const lines = heavy(wallsToLines([
+      ...box(16, 14, t),
+      { x1: 0, y1: 4, x2: 4, y2: 4, t },          // closet's top wall
+      { x1: 4, y1: 4, x2: 4, y2: 4.4, t, capB: 0 }, // door head jamb
+      { x1: 4, y1: 7.4, x2: 4, y2: 8, t, capA: 0 },
+      { x1: 0, y1: 8, x2: 4, y2: 8, t },
+      { x1: 13, y1: 5, x2: 16, y2: 5, t: 5 * IN, capA: 0 },   // counter stub
+    ], [], 16, 14));
+    lines.push(...flatArc({ x: 4, y: 7.4 }, 3, -Math.PI / 2));
+    const res = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: 'LIVING', x: 10, y: 10 }, { str: 'W/D', x: 2, y: 6 }] });
+    const living = res.rooms.find((r) => r.name === 'LIVING');
+    expect(living.area).toBeGreaterThan(150);
+    expect(res.openings.some((o) => o.openingType === 'opening' && Math.abs(o.a.x - o.b.x) > 6)).toBe(false);
+  });
+
+  it('a closet door drawn part open, between jamb returns too short to read as walls, closes the closet', () => {
+    // a 5x3 closet off a 12' room: its front wall stops 2'-7" short of the
+    // north wall's face (the 4" jamb returns are too short to pair); a 1'-8"
+    // leaf hinges at the north jamb, drawn open at 45°, closing to the south one
+    const t = 4 * IN, T = 6 * IN;
+    const bodies = [
+      { a: { x: 0, y: 0 }, b: { x: 12, y: 0 }, t: T },                 // north wall
+      { a: { x: 12, y: 0 }, b: { x: 12, y: 10 }, t: T },
+      { a: { x: 12, y: 10 }, b: { x: 0, y: 10 }, t: T },
+      { a: { x: 0, y: 10 }, b: { x: 0, y: 0 }, t: T },
+      { a: { x: 9, y: 0 }, b: { x: 9, y: 3 }, t },                       // closet's east side
+      { a: { x: 9, y: 3 }, b: { x: 6.5, y: 3 }, t },                     // closet front, stops at x 6.5
+      { a: { x: 4, y: 0 }, b: { x: 4, y: 6 }, t },                       // a partition west of it
+    ];
+    const hinge = { x: 6.45, y: 0.6 };
+    const arc = { c: hinge, r: 1.67, sweepDeg: 45, p0: { x: 6.45, y: 0.6 + 1.67 }, p3: { x: 6.45 - 1.18, y: 0.6 + 1.18 }, closed: { x: 6.45, y: 0.6 + 1.67 } };
+    const res = runTrace({ bodies, arcs: [arc], texts: [{ str: 'CL', x: 7.7, y: 1.5 }] });
+    const cl = res.rooms.find((rm) => rm.name === 'CL');
+    expect(cl).toBeTruthy();
+    expect(cl.area).toBeLessThan(10);
+    // the door is the closet's, not a 2'-6" "opening" across the room to the partition
+    expect(res.openings.some((o) => o.openingType === 'door' && o.rooms.includes(cl.id))).toBe(true);
+  });
+});
+

@@ -4,7 +4,7 @@
 // its radius is the door leaf width — a free ruler on every sheet.
 // ============================================================
 
-import { sub, dot, cross, dist, norm, perp, lineIntersect } from './vec.js';
+import { sub, dot, cross, dist, norm, perp, lineIntersect, GridIndex } from './vec.js';
 
 /**
  * Fit a circle to a chain of cubic Bézier pieces (one subpath).
@@ -50,6 +50,49 @@ function bez(pc, t) {
 /** Keep arcs that look like door swings (sweep ~ 60–100°, radius 1'–4'). */
 export function isDoorSwing(arc) {
   return arc && arc.sweepDeg >= 55 && arc.sweepDeg <= 100 && arc.r >= 1.2 && arc.r <= 4.2;
+}
+
+/**
+ * Read each swing's leaf: a straight edge (or the long side of a leaf drawn
+ * as a thin rectangle) from the hinge — the arc's centre — out to one end of
+ * the arc. That end is where the door stands open; the other is where it
+ * closes, across the doorway (`closed`). A swing with no leaf drawn keeps no
+ * `closed` end.
+ *
+ * Doors drawn part open (a closet door at 45°) have a shorter swing; they are
+ * kept only with their leaf — a short arc with no leaf is anything (a curved
+ * counter, a tub's corner).
+ * @param {{c,r,sweepDeg,p0,p3}[]} arcs  door swings (ft)
+ * @param {{c,r,sweepDeg,p0,p3}[]} short  shorter arcs that may be part-open doors (ft)
+ * @param {{a:{x,y},b:{x,y}}[]} lines   the sheet's linework (ft)
+ */
+export function readLeaves(arcs, short, lines) {
+  const part = short.filter((a) => a && a.sweepDeg >= 25 && a.sweepDeg < 55 && a.r >= 1.2 && a.r <= 4.2);
+  const idx = new GridIndex(2);
+  lines.forEach((l, i) => { idx.insert(i, l.a.x, l.a.y, l.a.x, l.a.y); idx.insert(i, l.b.x, l.b.y, l.b.x, l.b.y); });
+  const leaf = (arc) => {
+    const tol = Math.max(0.25, arc.r * 0.12);
+    for (const i of idx.query(arc.c.x - tol, arc.c.y - tol, arc.c.x + tol, arc.c.y + tol)) {
+      const l = lines[i];
+      if (Math.abs(dist(l.a, l.b) - arc.r) > 2 * tol) continue;
+      for (const [h, f] of [[l.a, l.b], [l.b, l.a]]) {
+        if (dist(h, arc.c) > tol) continue;
+        if (dist(f, arc.p0) <= tol) return 'p0';
+        if (dist(f, arc.p3) <= tol) return 'p3';
+      }
+    }
+    return null;
+  };
+  const out = [];
+  for (const arc of arcs) {
+    const open = leaf(arc);
+    out.push(open ? { ...arc, closed: open === 'p0' ? arc.p3 : arc.p0 } : arc);
+  }
+  for (const arc of part) {
+    const open = leaf(arc);
+    if (open) out.push({ ...arc, closed: open === 'p0' ? arc.p3 : arc.p0 });
+  }
+  return out;
 }
 
 /**

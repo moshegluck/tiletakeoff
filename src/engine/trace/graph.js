@@ -59,11 +59,14 @@ export function joinWalls(inSegs, options = {}, log = []) {
   segs.forEach((s, i) => idx.insert(i, Math.min(s.a.x, s.b.x) - maxT, Math.min(s.a.y, s.b.y) - maxT, Math.max(s.a.x, s.b.x) + maxT, Math.max(s.a.y, s.b.y) + maxT));
   const near = (p, r) => idx.query(p.x - r, p.y - r, p.x + r, p.y + r);
 
-  // already-connected ends (touching another segment)
+  // already-connected ends (touching another segment). A scrap shorter than
+  // half the wall is thick (the step a layered wall's poche leaves in a
+  // corner) doesn't hold an end: it's pruned as a stub later, and the end
+  // would be left open — let it find its corner instead.
   for (const e of ends) {
     for (const j of near(e.p, opt.snapTol)) {
-      if (j === e.bi) continue;
-      if (touches(e.p, segs[j], opt.snapTol)) { e.joined = true; break; }
+      if (j === e.bi || dist(segs[j].a, segs[j].b) < e.t / 2) continue;
+      if (touches(e.p, segs[j], opt.snapTol)) { e.joined = true; e.with = j; break; }
     }
   }
 
@@ -96,10 +99,12 @@ export function joinWalls(inSegs, options = {}, log = []) {
     const moved = dist(c.e1.p, c.X) + dist(c.e2.p, c.X);
     c.e1.p = { ...c.X }; c.e2.p = { ...c.X };
     c.e1.joined = c.e2.joined = true;
+    c.e1.with = c.e2.bi; c.e2.with = c.e1.bi;
     if (moved > opt.snapTol) log.push({ kind: 'corner', at: { ...c.X }, note: `Corner closed (${(moved * 12).toFixed(1)}" extended)` });
   }
 
   // ---- tees: ray from a free end hits another wall's body ----
+  const extra = [];
   for (const e of ends) {
     if (e.joined) continue;
     let best = null;
@@ -118,17 +123,47 @@ export function joinWalls(inSegs, options = {}, log = []) {
       // inner wall layer — anything narrower than a door is not a doorway)
       const shortOfFace = hit.s - s.t / 2;
       if ((hit.s > s.t * opt.stubFactor + opt.snapTol && shortOfFace > Math.min(opt.draftGap, opt.minOpening)) || hit.s < -s.t - opt.snapTol) continue;
-      if (!best || Math.abs(hit.s) < Math.abs(best.s)) best = { s: hit.s, pt: hit.pt, j };
+      if (!best || Math.abs(hit.s) < Math.abs(best.s)) best = { s: hit.s, pt: hit.pt, j, along, L };
     }
     if (best) {
       const moved = Math.abs(best.s);
-      e.p = { ...best.pt }; e.joined = true;
+      e.p = { ...best.pt }; e.joined = true; e.with = best.j;
+      // met just past the other wall's end (its corner fills out beyond its
+      // centreline end): that wall runs on to the meeting point
+      const o = segs[best.j];
+      if (best.along < -opt.snapTol) extra.push({ a: { ...best.pt }, b: { ...o.a }, t: o.t, conf: 0.6, kind: 'wall', src: 'repair' });
+      else if (best.along > best.L + opt.snapTol) extra.push({ a: { ...o.b }, b: { ...best.pt }, t: o.t, conf: 0.6, kind: 'wall', src: 'repair' });
       if (moved > opt.snapTol) log.push({ kind: 'tee', at: { ...best.pt }, note: `Wall extended ${(moved * 12).toFixed(1)}" to meet crossing wall` });
     }
   }
 
+  // which side of e's wall line the wall w runs off to (its far end)
+  const side = (e, w) => {
+    const far = dist(w.a, e.p) > dist(w.b, e.p) ? w.a : w.b;
+    return Math.sign(cross(e.dir, sub(far, e.p)));
+  };
+  // ---- an offset crossing: walls meet a wall from each side a few inches
+  // apart, so its pieces each turn a corner or tee into a different one —
+  // it still runs straight through between them ----
+  for (let i = 0; i < ends.length; i++) {
+    const e1 = ends[i];
+    if (!e1.joined || e1.through) continue;
+    for (const bj of near(e1.p, maxT + opt.snapTol)) {
+      if (bj === e1.bi) continue;
+      for (const e2 of endByBody(bj)) {
+        if (!e2.joined || e2.through || e1.through) continue;
+        const g = collinearGap(e1, e2);
+        if (!g || g.gap <= opt.snapTol || g.gap > Math.max(e1.t, e2.t) + opt.snapTol) continue;
+        // past a drafting gap (a thick brick wall's), only between walls that
+        // come in from opposite sides — a doorway's jambs don't
+        if (g.gap > opt.draftGap && !(e1.with != null && e2.with != null && side(e1, segs[e1.with]) * side(e1, segs[e2.with]) < 0)) continue;
+        extra.push({ a: { ...e1.p }, b: { ...e2.p }, t: Math.min(e1.t, e2.t), conf: 0.6, kind: 'wall', src: 'repair' });
+        e1.through = e2.through = true;
+      }
+    }
+  }
+
   // ---- drafting gaps: collinear free ends facing each other, tiny gap ----
-  const extra = [];
   for (let i = 0; i < ends.length; i++) {
     const e1 = ends[i]; if (e1.joined) continue;
     for (const bj of near(e1.p, opt.draftGap + maxT)) {
@@ -536,7 +571,14 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   };
   const openings = [];
   const usedArcs = new Set();   // each swing is one door
+  // openings never cross: a gap bridged across another doorway's line (a
+  // ray from a counter's end through the closet door beside it) is no gap
+  const crossesTaken = (c) => openings.some((o) => {
+    const h = segIntersect(c.a, c.b, o.a, o.b);
+    return h && h.t > 0.02 && h.t < 0.98 && h.u > 0.02 && h.u < 0.98;
+  });
   for (const c of cands) {
+    if (crossesTaken(c)) continue;
     if (c.arcs.some((a) => usedArcs.has(a))) {
       c.arcs = c.arcs.filter((a) => !usedArcs.has(a));
       if (c.arcs.length === 1 && Math.abs(c.arcs[0].r - c.width) / c.width >= 0.25) c.arcs = [];
@@ -570,6 +612,22 @@ function refineWidth(gap, r) {
   return Math.abs(r - gap) / gap < 0.2 ? r : gap;
 }
 
+/**
+ * A door drawn part open whose jambs are short returns, too small to read as
+ * walls: the gap the trace sees runs on to the wall faces beyond, wider than
+ * the leaf. The swing still marks it when it hinges at one jamb and closes
+ * (`arc.closed`: the end away from its drawn leaf) on the doorway line,
+ * across most of it.
+ */
+function closesAcross(c, arc) {
+  if (!arc.closed) return false;
+  const [A, B] = dist(c.jambs[0], arc.c) <= dist(c.jambs[1], arc.c) ? c.jambs : [c.jambs[1], c.jambs[0]];
+  const W = dist(A, B);
+  if (W < 1e-6) return false;
+  const u = norm(sub(B, A)), v = sub(arc.closed, A), s = dot(v, u);
+  return Math.abs(cross(u, v)) <= (c.t || 0) / 2 + 0.3 && s >= 0.55 * W && s <= W + 0.3;
+}
+
 function matchArcs(c, arcs) {
   if (!arcs.length) return [];
   const out = [];
@@ -578,13 +636,13 @@ function matchArcs(c, arcs) {
     const nearJamb = c.jambs.some((j) => dist(j, arc.c) <= tol);
     if (!nearJamb) continue;
     // a swing drawn a size off its frame (2'-6" leaf in a 3'-2" rough gap) still marks the door
-    const single = Math.abs(arc.r - c.width) / c.width < 0.25;
+    const single = Math.abs(arc.r - c.width) / c.width < 0.25 || closesAcross(c, arc);
     const dbl = Math.abs(arc.r * 2 - c.width) / c.width < 0.25;
     if (single || dbl) out.push(arc);
   }
   // a single leaf whose radius = full width beats two half-width matches; a
   // double door needs both its leaves — one half-width swing alone is no door
-  const full = out.filter((a) => Math.abs(a.r - c.width) / c.width < 0.25);
+  const full = out.filter((a) => Math.abs(a.r - c.width) / c.width < 0.25 || closesAcross(c, a));
   if (full.length) return full.slice(0, 1);
   return out.length >= 2 ? out.slice(0, 2) : [];
 }
@@ -608,6 +666,10 @@ export function buildGraph(segs, options = {}, log = []) {
 
   // split parameters per segment
   const cuts = S.map(() => [0, 1]);
+  // an end that stops on another wall right by that wall's own end — too near
+  // it to split the wall there, a little past the snap distance from it — is
+  // that corner (a short scrap of a wall leaves it hanging otherwise)
+  const snapTo = new Map();
   for (let i = 0; i < S.length; i++) {
     const s = S[i];
     const cand = idx.query(Math.min(s.a.x, s.b.x) - opt.snapTol, Math.min(s.a.y, s.b.y) - opt.snapTol, Math.max(s.a.x, s.b.x) + opt.snapTol, Math.max(s.a.y, s.b.y) + opt.snapTol);
@@ -616,9 +678,12 @@ export function buildGraph(segs, options = {}, log = []) {
       if (j === i) continue;
       const o = S[j];
       // other's endpoints lying on this segment (tees)
-      for (const p of [o.a, o.b]) {
+      for (const [w, p] of [['a', o.a], ['b', o.b]]) {
         const c = closestOnSeg(p, s.a, s.b);
-        if (c.d <= opt.snapTol && c.t * L > opt.snapTol && (1 - c.t) * L > opt.snapTol) cuts[i].push(c.t);
+        if (c.d > opt.snapTol) continue;
+        if (c.t * L > opt.snapTol && (1 - c.t) * L > opt.snapTol) { cuts[i].push(c.t); continue; }
+        const E = c.t < 0.5 ? s.a : s.b, d = dist(p, E);
+        if (d > opt.snapTol && d <= 2 * opt.snapTol) snapTo.set(`${j}:${w}`, E);
       }
       // proper crossings
       if (j > i) {
@@ -637,9 +702,10 @@ export function buildGraph(segs, options = {}, log = []) {
   const pieces = [];
   S.forEach((s, i) => {
     const ts = [...new Set(cuts[i].map((t) => +t.toFixed(9)))].sort((a, b) => a - b);
+    const at = (t) => (t === 0 && snapTo.get(`${i}:a`)) || (t === 1 && snapTo.get(`${i}:b`)) || { x: s.a.x + (s.b.x - s.a.x) * t, y: s.a.y + (s.b.y - s.a.y) * t };
     for (let k = 0; k + 1 < ts.length; k++) {
-      const a = { x: s.a.x + (s.b.x - s.a.x) * ts[k], y: s.a.y + (s.b.y - s.a.y) * ts[k] };
-      const b = { x: s.a.x + (s.b.x - s.a.x) * ts[k + 1], y: s.a.y + (s.b.y - s.a.y) * ts[k + 1] };
+      const a = { ...at(ts[k]) };
+      const b = { ...at(ts[k + 1]) };
       const ia = pts.push(a) - 1, ib = pts.push(b) - 1;
       pieces.push({ ia, ib, src: s });
     }

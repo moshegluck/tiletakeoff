@@ -10,7 +10,7 @@
 // ============================================================
 
 import {
-  sub, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex,
+  sub, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex, segIntersect,
 } from './vec.js';
 import { traceFaces, stripSpurs, splitPinches, fmtIn } from './graph.js';
 // (dist, signedArea etc. come from vec.js above)
@@ -479,7 +479,7 @@ export function analyzeGraph(g, ctx = {}) {
   }
 
   // ---- the plan's own numbers: a room tag that prints its area is the answer key ----
-  const verify = checkPrintedAreas(rooms, ctx.allTexts || texts, flag);
+  const verify = checkPrintedAreas(rooms, ctx.allTexts || texts, flag, g.edges.map((e) => ({ a: nodes[e.u], b: nodes[e.v] })));
 
   // attach flags to rooms
   for (const fl of flags) {
@@ -627,7 +627,22 @@ export function printedAreas(texts) {
   return out;
 }
 
-function checkPrintedAreas(rooms, texts, flag) {
+/** Every tag in sight of another across the room: nothing traced between them. */
+function openTo(ts, edges) {
+  const parent = ts.map((_, i) => i);
+  const find = (x) => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+  for (let i = 0; i < ts.length; i++) {
+    for (let j = i + 1; j < ts.length; j++) {
+      const a = ts[i], b = ts[j];
+      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+      const clear = !edges.some((e) => Math.max(e.a.x, e.b.x) >= x0 && Math.min(e.a.x, e.b.x) <= x1 && Math.max(e.a.y, e.b.y) >= y0 && Math.min(e.a.y, e.b.y) <= y1 && segIntersect(a, b, e.a, e.b));
+      if (clear) parent[find(i)] = find(j);
+    }
+  }
+  return ts.every((_, i) => find(i) === find(0));
+}
+
+function checkPrintedAreas(rooms, texts, flag, edges = []) {
   const tags = printedAreas(texts);
   const verify = { tags: tags.length, matched: 0, off: 0, unplaced: 0 };
   if (!tags.length) return verify;
@@ -644,7 +659,17 @@ function checkPrintedAreas(rooms, texts, flag) {
     const want = ts.reduce((a, t) => a + t.sf, 0);
     const d = r.area - want;
     r.printedSf = want;
-    if (ts.length === 1 && Math.abs(d) <= Math.max(3, want * 0.06)) { r.areaCheck = 'match'; verify.matched++; continue; }
+    if (Math.abs(d) <= Math.max(3, want * 0.06) && (ts.length === 1 || openTo(ts, edges))) {
+      r.areaCheck = 'match'; verify.matched++;
+      // one open space the plan prints as zones (a meter alcove and the room
+      // it opens off, a lounge and its game area): nothing is drawn between
+      // them to trace, and their areas add up to it
+      if (ts.length > 1) {
+        r.printedParts = ts.map((t) => t.sf);
+        flag('info', 'area_zones', ts[0], `${r.name}: the plan prints ${ts.length} areas here (${ts.map((t) => t.sf).join(' + ')} = ${sfTxt(want)}) with nothing drawn between them; traced as one space of ${sfTxt(r.area)} — the sum agrees`, { roomId: r.id, printedSf: want, tracedSf: r.area });
+      }
+      continue;
+    }
     r.areaCheck = 'off'; verify.off++;
     const why = ts.length > 1
       ? `${ts.length} room tags (${ts.map((t) => t.sf).join(' + ')} = ${sfTxt(want)}) sit in one traced room — rooms merged: a wall or door between them was not found`
