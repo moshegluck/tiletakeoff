@@ -14,6 +14,8 @@ import { catalogItems, materialItem, listMine, saveMine, deleteMine } from '../l
 import { roomArea } from '../engine/geometry.js';
 import { formatArea } from '../engine/units.js';
 import PatternSwatch from './PatternSwatch.jsx';
+import Modal from './Modal.jsx';
+import { useBackLayer } from '../lib/backStack.js';
 
 const FILTERS = [
   { id: 'all', label: 'All' }, { id: 'floor', label: 'Floor' }, { id: 'wall', label: 'Wall' },
@@ -68,6 +70,9 @@ export default function Library({ onClose, target }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selKey, all]);
   const sel = draft;
+  // on a phone the tile's page sits over the list: Back returns to the list
+  const phone = typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+  useBackLayer(!!selKey && phone, () => setSelKey(null));
   const up = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
   const floorZones = useMemo(() => s.rooms.flatMap((r) => (r.zones || []).map((z) => ({ room: r, zone: z }))), [s.rooms]);
@@ -104,9 +109,7 @@ export default function Library({ onClose, target }) {
     : 'Add to project';
 
   return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className="modal lib" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Tile library">
-        <h3>Tile library</h3>
+    <Modal title="Tile library" className="lib" onClose={onClose}>
         <div className={'lib-body' + (sel ? ' has-sel' : '')}>
           {/* ---- browse ---- */}
           <section className="lib-list">
@@ -232,7 +235,6 @@ export default function Library({ onClose, target }) {
           <button className="tbtn" onClick={onClose}>Close</button>
           {sel && <button className="tbtn primary" onClick={apply}>{applyLabel}</button>}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

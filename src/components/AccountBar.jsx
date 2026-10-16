@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useStore, useProject, setCloudSaver } from '../state/store.js';
+import Modal from './Modal.jsx';
 import { cloudEnabled } from '../lib/supabase.js';
 import { movePlan } from '../lib/planStore.js';
 import { uploadKeptPlan } from '../lib/planLoad.js';
@@ -23,15 +24,22 @@ export default function AccountBar() {
     getUser().then(setUser);
     return onAuthChange(setUser);
   }, []);
+  // the phone menu shows the account too
+  useEffect(() => { useStore.getState().setAuthUser(user ? { email: user.email } : null); }, [user]);
 
   // the landing page's "Sign in" opens the modal; App re-broadcasts a Supabase
   // password-recovery link as tt:recovery so we can open the set-new-password form
   useEffect(() => {
     const openSignIn = () => { setAuthMode('in'); setShowAuth(true); };
     const openRecovery = () => { setAuthMode('recovery'); setShowAuth(true); };
+    const openProjects = () => setShowProjects(true);
     window.addEventListener('tt:signin', openSignIn);
     window.addEventListener('tt:recovery', openRecovery);
-    return () => { window.removeEventListener('tt:signin', openSignIn); window.removeEventListener('tt:recovery', openRecovery); };
+    window.addEventListener('tt:projects', openProjects);
+    return () => {
+      window.removeEventListener('tt:signin', openSignIn); window.removeEventListener('tt:recovery', openRecovery);
+      window.removeEventListener('tt:projects', openProjects);
+    };
   }, []);
 
   useEffect(() => {
@@ -55,12 +63,13 @@ export default function AccountBar() {
 
   return (
     <>
+      <span className="acct-btns">
       {user ? (
         <>
           <button className="tbtn" onClick={() => setShowProjects(true)}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H3z" /></svg>Projects
           </button>
-          <button className="tbtn" title={user.email} onClick={() => { signOut(); }}>
+          <button className="tbtn" title={`Signed in as ${user.email} — sign out`} onClick={() => { if (confirm(`Sign out of ${user.email}?`)) signOut(); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" /></svg>
           </button>
         </>
@@ -69,6 +78,7 @@ export default function AccountBar() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" /></svg>Sign in
         </button>
       )}
+      </span>
       {showAuth && <AuthModal initialMode={authMode} onClose={() => setShowAuth(false)} />}
       {showProjects && <ProjectsDrawer onClose={() => setShowProjects(false)} />}
     </>
@@ -77,7 +87,6 @@ export default function AccountBar() {
 
 const AUTH_TITLE = { in: 'Sign in', up: 'Create account', reset: 'Reset password', recovery: 'Set a new password' };
 const AUTH_CTA = { in: 'Sign in', up: 'Sign up', reset: 'Send reset link', recovery: 'Update password' };
-const link = { color: 'var(--accent)', cursor: 'pointer' };
 
 function AuthModal({ onClose, initialMode = 'in' }) {
   const [mode, setMode] = useState(initialMode);
@@ -121,46 +130,44 @@ function AuthModal({ onClose, initialMode = 'in' }) {
   }
 
   return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-        <h3>{AUTH_TITLE[mode]}</h3>
+    <Modal title={AUTH_TITLE[mode]} onClose={onClose} width={400} closeOnBackdrop={false}>
+      <form className="auth-form" onSubmit={(e) => { e.preventDefault(); if (!busy && canSubmit) go(); }}>
         <div className="body">
           {mode === 'reset' && <div className="note">Enter your account email and we’ll send a password-reset link.</div>}
           {mode === 'recovery' && <div className="note">Choose a new password for your account.</div>}
           {needsEmail && (
             <div className="field"><label>Email</label>
-              <input className="inp" type="email" autoComplete="email" autoCapitalize="none" value={email} onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
+              <input className="inp" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           )}
           {needsPw && (
             <div className="field"><label>{mode === 'recovery' ? 'New password' : 'Password'}</label>
-              <input className="inp" type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} value={pw} onChange={(e) => setPw(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && go()} /></div>
+              <input className="inp" type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} value={pw} onChange={(e) => setPw(e.target.value)} /></div>
           )}
           {err && <div className="note" style={{ color: 'var(--bad)' }}>{err}</div>}
-          {unconfirmed && <div className="note"><a style={link} onClick={resend}>Resend confirmation email</a></div>}
+          {unconfirmed && <div className="note"><button type="button" className="linkbtn" onClick={resend}>Resend confirmation email</button></div>}
           {msg && <div className="note" style={{ color: 'var(--ok)' }}>{msg}</div>}
 
           {mode === 'in' && (
             <>
-              <div className="note"><a style={link} onClick={to('reset')}>Forgot password?</a></div>
-              <div className="note">No account? <a style={link} onClick={to('up')}>Create one</a></div>
+              <div className="note"><button type="button" className="linkbtn" onClick={to('reset')}>Forgot password?</button></div>
+              <div className="note">No account? <button type="button" className="linkbtn" onClick={to('up')}>Create one</button></div>
             </>
           )}
           {mode === 'up' && (
-            <div className="note">Have an account? <a style={link} onClick={to('in')}>Sign in</a></div>
+            <div className="note">Have an account? <button type="button" className="linkbtn" onClick={to('in')}>Sign in</button></div>
           )}
           {mode === 'reset' && (
-            <div className="note"><a style={link} onClick={to('in')}>← Back to sign in</a></div>
+            <div className="note"><button type="button" className="linkbtn" onClick={to('in')}>← Back to sign in</button></div>
           )}
         </div>
         <div className="foot">
-          <button className="tbtn" onClick={onClose}>Cancel</button>
-          <button className="tbtn primary" disabled={busy || !canSubmit} onClick={go}>
+          <button type="button" className="tbtn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="tbtn primary" disabled={busy || !canSubmit}>
             {busy ? '…' : AUTH_CTA[mode]}</button>
         </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -193,9 +200,7 @@ function ProjectsDrawer({ onClose }) {
   }
 
   return (
-    <div className="modal-bg" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Cloud projects</h3>
+    <Modal title="Your projects" onClose={onClose}>
         <div className="body">
           {err && <div className="note" style={{ color: 'var(--bad)' }}>{err}</div>}
           {!rows && <div className="note">Loading…</div>}
@@ -208,7 +213,7 @@ function ProjectsDrawer({ onClose }) {
                   {Number(p.floor_sf).toFixed(0)} sf · ${Number(p.total_cost).toFixed(0)} · {new Date(p.updated_at).toLocaleDateString()}
                 </div>
               </div>
-              <button className="icon-btn" onClick={(e) => remove(p.id, e)}>
+              <button className="icon-btn danger" aria-label={`Delete ${p.name}`} onClick={(e) => remove(p.id, e)}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
               </button>
             </div>
@@ -218,7 +223,6 @@ function ProjectsDrawer({ onClose }) {
           <button className="tbtn" onClick={onClose}>Close</button>
           <button className="tbtn primary" onClick={saveCurrentAsNew}>Save current as new</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

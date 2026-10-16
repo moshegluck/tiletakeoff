@@ -11,6 +11,11 @@ if (window.location.hostname.endsWith('.')) {
   url.hostname = url.hostname.replace(/\.+$/, '');
   window.location.replace(url.href);
 } else {
+  // iPhone Safari zooms the whole page on a pinch even where the app handles
+  // its own pinch (the plan); a zoomed page leaves the app stuck magnified.
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  }
   createRoot(document.getElementById('root')).render(
     <ErrorBoundary>
       <App />
