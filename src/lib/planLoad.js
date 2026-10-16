@@ -27,7 +27,11 @@ async function uploadToCloud(cloudId, blob, meta) {
     if (useStore.getState().cloudId === cloudId) useStore.getState().setPlanFile(rec);
   } catch (e) {
     console.warn('plan file not uploaded:', e?.message);
-    if (blob.size > 50 * 1024 * 1024) window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'This plan is over 50 MB, so it is kept on this device only.' } }));
+    // never silent: the takeoff saves, but the plan would be missing on any other device
+    const msg = blob.size > 50 * 1024 * 1024
+      ? 'This plan is over 50 MB, so it is kept on this device only.'
+      : `The plan didn't save to your account (${e?.message || 'upload failed'}). It's kept on this device.`;
+    window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg } }));
   }
 }
 
