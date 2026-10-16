@@ -156,7 +156,8 @@ export default function App() {
       try {
         const { downloadQuantityList } = await import('./lib/quantityList.js');
         const q = await downloadQuantityList(useStore.getState());
-        toast(`Tile Quantity List ready · floor ${q.floorSf} SF · walls ${q.wallSf} SF${q.showerSf ? ` · shower floors ${q.showerSf} SF` : ''}${q.lf ? ` · ${q.lf} LF` : ''}`, true);
+        const na = q.naRooms.length ? ` · NA (tile not picked): ${q.naRooms.length > 4 ? `${q.naRooms.length} rooms` : q.naRooms.join(', ')}` : '';
+        toast(`Tile Quantity List ready · floor ${q.floorSf} SF · walls ${q.wallSf} SF${q.showerSf ? ` · shower floors ${q.showerSf} SF` : ''}${q.lf ? ` · ${q.lf} LF` : ''}${na}`, true);
       } catch (e) {
         toast('Could not build the quantity list: ' + (e?.message || e));
       }

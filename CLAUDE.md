@@ -76,10 +76,16 @@ TileTakeoff works the other way round:
   closet), red SF callouts, blue = walls fully tiled, magenta = partway, red bath dims / SH / TUB /
   ceiling note, window cuts, legend; summary page reads like the proposal (room header
   `NAME (9.25x5 sf5x2.75) 10' ceiling - fully tiled`, each line with its arithmetic).
-- `src/lib/quantityList.js` Export → Tile Quantity List (Excel), Artistic's ordering sheet (maroon /
-  lavender / purple bands, logo `public/artistic-logo.png`): page → room → surface, Count before
-  waste (arithmetic as a cell note), Truman waste defaults, Total = ROUNDUP(Count × (1+Waste), 0),
-  On Order blank, separate SF / LF total bands. Floor / wall totals equal the estimate's.
+- `src/lib/quantityList.js` Export → Tile Quantity List (Excel), to the current standard of Moshe's
+  `artistic-quantity-sheet` skill (its `build_quantity_list.py` is the reference): logo at B1, title
+  centred in C1:E3, job band (Project · Proposal #, Customer · site address, date), page → room
+  (proposal-style header) → surface. Nothing below the title is merged (AutoFilter on row 8).
+  Item = size + type (`24X48 FLOOR TILE`, `3X12 SUBWAY`), never "large / rectified / plank"; no pick
+  → `NA`. Current waste table (48X48 in a bath 35%, bath 25%, large format 22%, 24X24/12X24 20%,
+  mosaic / subway / shower floors / patterned 15%, borders 10%, default 10%). Count before waste
+  (arithmetic as a cell note), Total = ROUNDUP(Count × (1+Waste), 1), one SUMIF total over SF rows.
+  Floor + border rows and Wall rows equal the estimate's floor / wall SF.
+  Job info lives in `state.job` { proposal, customer, address } (Estimate panel; saved everywhere).
 - `src/lib/aiReview.js` + `api/detect-plan.js` `mode: 'review'`: "Check the trace with AI" — Claude
   looks at the drawing with the traced model drawn on it (R/O tags) and returns located findings
   (missing / false wall, missed door, window taken as door…) shown as flags. Never geometry.
@@ -88,7 +94,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 347 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 349 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
   room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
@@ -116,8 +122,8 @@ TileTakeoff works the other way round:
 - The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
-- Shower floor tile isn't a material pick yet (quantity list says SHOWER FLOOR TILE); customer and
-  proposal # aren't stored (left blank on the quantity list).
+- Shower floor tile isn't a material pick yet (quantity list says NA); accent / feature walls
+  (tub BW, 30% waste) and tiled base aren't modelled.
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road

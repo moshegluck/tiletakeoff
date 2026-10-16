@@ -38,6 +38,7 @@ function blankProject() {
     layoutsV2: true,        // rooms inherit their tile's pattern (engine/patterns.js)
     taxRate: 8.625,
     laborRatePerSf: 0,
+    job: { proposal: '', customer: '', address: '' },   // printed on the quantity list / proposal
     view: { x: 80, y: 80, zoom: 1 },
     planImage: null,       // dataURL of uploaded floor plan (optional)
     planWidth: 0,          // pixel width of loaded plan image
@@ -69,7 +70,8 @@ export function defaultTrace() {
 // already says layoutsV2, so the merged object can't.
 function fromSaved(raw) {
   // saved before pages were tracked: its takeoff sits on the page the plan was on
-  const p = { ...blankProject(), ...raw, pdfPage: raw?.pdfPage || raw?.planFile?.page || 1, pageKnown: raw?.pdfPage != null };
+  const blank = blankProject();
+  const p = { ...blank, ...raw, job: { ...blank.job, ...(raw?.job || {}) }, pdfPage: raw?.pdfPage || raw?.planFile?.page || 1, pageKnown: raw?.pdfPage != null };
   return raw?.layoutsV2 ? p : { ...p, rooms: migrateRoomLayouts(p.rooms), layoutsV2: true };
 }
 
@@ -96,7 +98,7 @@ function localSnapshot(s) {
     archScale: s.archScale, showGrid: s.showGrid, rooms: s.rooms, materials: s.materials, markups: s.markups, trace: slimTrace(s.trace),
     pageData: slimPages(s.pageData), pdfPage: s.pdfPage || 1,
     layoutsV2: true,
-    taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, view: s.view,
+    taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, job: s.job, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
     createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId, planFile: s.planFile || null,
   };
@@ -182,6 +184,7 @@ export const useStore = create((rawSet, get) => {
 
   // ---- generic ----
   setName: (name) => { set({ name }); persist(get); },
+  setJob: (patch) => { set({ job: { ...get().job, ...patch } }); persist(get); },
   setUnitSystem: (u) => { set({ unitSystem: u }); persist(get); },
   setScale: (s) => { set({ scale: s }); persist(get); },
   setArchScale: (id) => { set({ archScale: id }); persist(get); },
@@ -289,7 +292,7 @@ export const useStore = create((rawSet, get) => {
       rooms: doc.layoutsV2 ? (doc.rooms || []) : migrateRoomLayouts(doc.rooms), layoutsV2: true,
       materials: doc.materials || [], markups: doc.markups || [], trace: doc.trace || null,
       pageData: doc.pageData || {}, pdfPage: doc.pdfPage || doc.planFile?.page || 1, pageKnown: doc.pdfPage != null,
-      taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0,
+      taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0, job: { ...blankProject().job, ...(doc.job || {}) },
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
       selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select',
     });

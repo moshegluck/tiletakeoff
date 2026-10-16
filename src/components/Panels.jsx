@@ -694,6 +694,15 @@ function EstimatePanel() {
         {e.labor > 0 && <div className="est-row"><span>Labor</span><b>{money(e.labor)}</b></div>}
       </div>
 
+      <div className="est-block job-info">
+        <h4>Job · on the quantity list</h4>
+        <div className="job-grid">
+          <label className="mini">Proposal #<input className="inp" value={s.job?.proposal || ''} onChange={(ev) => s.setJob({ proposal: ev.target.value })} /></label>
+          <label className="mini">Customer<input className="inp" value={s.job?.customer || ''} onChange={(ev) => s.setJob({ customer: ev.target.value })} /></label>
+          <label className="mini wide">Site address<input className="inp" value={s.job?.address || ''} onChange={(ev) => s.setJob({ address: ev.target.value })} /></label>
+        </div>
+      </div>
+
       <div className="row" style={{ display: 'flex', gap: 8 }}>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-marked'))}>Marked PDF</button>
         <button className="ghost-add" style={{ margin: 0 }} onClick={() => window.dispatchEvent(new Event('tt:export-qty'))}>Qty List</button>
