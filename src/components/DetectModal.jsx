@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from '../state/store.js';
+import { useStore, useProject } from '../state/store.js';
 import { detectRooms } from '../lib/aiDetect.js';
 import { capturePlan } from '../lib/planCapture.js';
 import { openPlanFile } from '../lib/planLoad.js';
@@ -31,7 +31,7 @@ function scaleText(s) {
 }
 
 export default function DetectModal({ onClose }) {
-  const s = useStore();
+  const s = useProject();
   const hasPlan = !!(s.planImage && s.planWidth && s.planHeight);
   const fileRef = useRef(null);
 

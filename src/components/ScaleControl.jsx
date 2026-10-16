@@ -1,11 +1,11 @@
-import { useStore } from '../state/store.js';
+import { useProject } from '../state/store.js';
 import { ARCH_SCALES, SCALE_GROUPS, archFeetPerPaperInch } from '../engine/units.js';
 
 // Scale control: pick an architectural preset (only meaningful once a PDF is
 // loaded, so its pixels-per-paper-inch is known) or fall back to drawing the
 // ruler along a known dimension.
 export default function ScaleControl({ className = 'hud-sel', onRuler }) {
-  const s = useStore();
+  const s = useProject();
   const hasPresets = s.planDpi > 0;
   const current = s.scale
     ? (s.archScale

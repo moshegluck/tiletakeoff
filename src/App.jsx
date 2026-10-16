@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { useStore } from './state/store.js';
+import { useStore, useProject } from './state/store.js';
 import Canvas2D from './components/Canvas2D.jsx';
 import { Panels } from './components/Panels.jsx';
 import DetectModal from './components/DetectModal.jsx';
@@ -32,7 +32,7 @@ const TOOLS = [
 ];
 
 export default function App() {
-  const s = useStore();
+  const s = useProject();
   const [detect, setDetect] = useState(false);
   const [toast, setToast] = useState(null);
   // phones: the right panel is a bottom sheet; tabs open/close it
@@ -246,15 +246,10 @@ function StageWrap({ totalSf, onPdfPage, pdfBusy }) {
         </div>
       )}
       <div className="zoomwrap">
-        <button className="zbtn" onClick={() => zoom(s, 1.25)}>+</button>
-        <button className="zbtn" onClick={() => zoom(s, 0.8)}>−</button>
-        <button className="zbtn" onClick={() => window.dispatchEvent(new Event('tt:fit'))}><small>FIT</small></button>
+        <button className="zbtn" title="Zoom in (Ctrl +)" onClick={() => window.dispatchEvent(new CustomEvent('tt:zoomby', { detail: 1.4 }))}>+</button>
+        <button className="zbtn" title="Zoom out (Ctrl −)" onClick={() => window.dispatchEvent(new CustomEvent('tt:zoomby', { detail: 1 / 1.4 }))}>−</button>
+        <button className="zbtn" title="Fit (F or Ctrl 0)" onClick={() => window.dispatchEvent(new Event('tt:fit'))}><small>FIT</small></button>
       </div>
     </div>
   );
-}
-
-function zoom(s, f) {
-  const z = Math.max(0.15, Math.min(8, s.view.zoom * f));
-  s.setView({ ...s.view, zoom: z });
 }

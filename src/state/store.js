@@ -4,6 +4,7 @@
 // ============================================================
 
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { nanoid } from 'nanoid';
 import { rectPoly } from '../engine/geometry.js';
 import { WASTE_BY_PATTERN } from '../data/tileCatalog.js';
@@ -138,7 +139,9 @@ export const useStore = create((set, get) => ({
   setPlanDpi: (dpi) => set({ planDpi: dpi || 0 }),
   setTax: (t) => { set({ taxRate: t }); persist(get); },
   setLabor: (r) => { set({ laborRatePerSf: r }); persist(get); },
-  setView: (v) => { set({ view: v }); persist(get); },
+  // panning / zooming is not an edit: no save (the view rides along with the
+  // next real change), so navigation stays smooth on big projects
+  setView: (v) => set({ view: v }),
   setPlanImage: (d, w, h) => {
     // Revoke the PREVIOUS blob URL to free memory — but never when it's the same
     // URL we're re-setting (e.g. backfilling width/height), or we'd revoke the
@@ -513,6 +516,11 @@ export const useStore = create((set, get) => ({
 }));
 
 export { ROOM_COLORS, ZONE_COLORS, MAT_FLOOR, MAT_WALL };
+
+// The whole store except the 2D view. Panels and dialogs use this so that
+// panning and zooming (dozens of view updates a second) don't re-render them.
+const withoutView = (st) => { const { view: _v, ...rest } = st; return rest; };
+export const useProject = () => useStore(useShallow(withoutView));
 
 // test hook for end-to-end checks (dev server only)
 if (import.meta.env?.DEV && typeof window !== 'undefined') window.__store = useStore;

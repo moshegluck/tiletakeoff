@@ -5,6 +5,8 @@ import { snap } from '../engine/units.js';
 import { zonesOf } from '../engine/zones.js';
 import { axisLock, inPoly, makeTransforms } from './canvasUtils.js';
 import { renderScene } from './canvasRender.js';
+import { clampZoom, zoomAround, wheelZoomFactor, pinchView, lerpView, easeOut } from '../engine/viewMath.js';
+import { createPlanDetail } from '../lib/planDetail.js';
 
 // Cursor per active tool. Drawing tools get a crosshair; select/pan get a hand.
 const TOOL_CURSOR = {
@@ -62,6 +64,35 @@ export default function Canvas2D() {
     raf.current = requestAnimationFrame(() => drawRef.current && drawRef.current());
   }, []);
 
+  // sharp re-render of the on-screen part of a PDF plan (see lib/planDetail.js)
+  const detailRef = useRef(null);
+  if (!detailRef.current) detailRef.current = createPlanDetail(() => schedule());
+  useEffect(() => () => detailRef.current.clear(), []);
+
+  // ---------- view: animated zoom / fit ----------
+  const anim = useRef(0);
+  const stageSize = () => {
+    const r = wrapRef.current?.getBoundingClientRect();
+    return { w: r?.width || window.innerWidth, h: r?.height || window.innerHeight };
+  };
+  const animateTo = useCallback((target, ms = 180) => {
+    cancelAnimationFrame(anim.current);
+    const st = useStore.getState();
+    const from = { ...st.view }, stage = stageSize(), t0 = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms);
+      useStore.getState().setView(t < 1 ? lerpView(from, target, easeOut(t), stage) : target);
+      schedule();
+      if (t < 1) anim.current = requestAnimationFrame(step);
+    };
+    anim.current = requestAnimationFrame(step);
+  }, [schedule]);
+  // zoom by a factor about the centre of the canvas (buttons, keyboard)
+  const zoomBy = useCallback((f) => {
+    const v = useStore.getState().view, st = stageSize();
+    animateTo(zoomAround(v, { x: st.w / 2, y: st.h / 2 }, v.zoom * f));
+  }, [animateTo]);
+
   // Load plan underlay image.
   // When done: store in ref (draw() picks it up on next render),
   // then fit the view to the image dimensions via the store.
@@ -85,9 +116,7 @@ export default function Canvas2D() {
         const H = rect.height > 10 ? rect.height : window.innerHeight - 130;
         if (!iw || !ih) { schedule(); return; }
         const pad = 32;
-        const z = Math.max(0.02, Math.min(8,
-          Math.min((W - pad * 2) / iw, (H - pad * 2) / ih)
-        ));
+        const z = clampZoom(Math.min((W - pad * 2) / iw, (H - pad * 2) / ih));
         useStore.getState().setView({
           zoom: z,
           x: Math.round((W - iw * z) / 2),
@@ -130,9 +159,17 @@ export default function Canvas2D() {
     if (!W || !H) return;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
+    const img = planImg.current;
+    let planDetail = null;
+    if (img) {
+      const plan = { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+      const src = s.pdfDoc && s.planDpi > 0 ? { doc: s.pdfDoc, page: s.pdfPage || 1, dpi: s.planDpi, key: s.planImage } : null;
+      detailRef.current.update(src, s.view, { w: W, h: H }, DPR, plan);
+      planDetail = detailRef.current.get(s.planImage);
+    }
     renderScene(ctx, W, H, {
       s, scale, ft2px, px2ft, toScreen,
-      planImg: planImg.current,
+      planImg: img, planDetail,
       draft: draft.current,
       mkDraft: mkDraft.current,
       ruler: ruler.current,
@@ -193,12 +230,26 @@ export default function Canvas2D() {
       const r = wrapRef.current.getBoundingClientRect();
       const z = Math.max(st.view.zoom, 0.9);
       const mx = e.detail.x / st.scale, my = e.detail.y / st.scale;
-      st.setView({ zoom: z, x: r.width / 2 - mx * z, y: r.height / 2 - my * z });
-      schedule();
+      animateTo({ zoom: z, x: r.width / 2 - mx * z, y: r.height / 2 - my * z }, 260);
     };
+    const onZoomBy = (e) => zoomBy(+e.detail || 1);
     window.addEventListener('tt:zoomto', onZoom);
-    return () => window.removeEventListener('tt:zoomto', onZoom);
-  }, [schedule]);
+    window.addEventListener('tt:zoomby', onZoomBy);
+    return () => { window.removeEventListener('tt:zoomto', onZoom); window.removeEventListener('tt:zoomby', onZoomBy); };
+  }, [animateTo, zoomBy]);
+
+  // Ctrl/Cmd + = / − zoom the plan (not the browser page); Ctrl/Cmd + 0 fits
+  useEffect(() => {
+    const kd = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (/input|select|textarea/i.test(e.target?.tagName || '')) return;
+      if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomBy(1.25); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(0.8); }
+      else if (e.key === '0') { e.preventDefault(); window.dispatchEvent(new Event('tt:fit')); }
+    };
+    window.addEventListener('keydown', kd);
+    return () => window.removeEventListener('keydown', kd);
+  }, [zoomBy]);
 
   // ---------- floor design (zones) ----------
   // Design areas are traced on the plan's floor lines, not on walls, so they
@@ -408,7 +459,8 @@ export default function Canvas2D() {
         drag.current = { mode: 'move', ids, starts, zstarts, mp };
       } else {
         if (!e.shiftKey) s.clearRoomSel();
-        marquee.current = { sp0: sp, sp1: sp, add: e.shiftKey };
+        if (e.pointerType === 'touch') pan.current = { x: s.view.x, y: s.view.y, sp };
+        else marquee.current = { sp0: sp, sp1: sp, add: e.shiftKey };
       }
       schedule(); return;
     }
@@ -733,14 +785,71 @@ export default function Canvas2D() {
     return null;
   }
 
+  // Wheel / trackpad: zoom about the cursor, in proportion to how far it
+  // scrolled (a trackpad pinch arrives as a wheel event with ctrlKey).
   function onWheel(e) {
     e.preventDefault();
-    const sp = evPt(e), before = toModel(sp.x, sp.y);
-    const z = Math.max(0.15, Math.min(8, s.view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
-    const view = { ...s.view, zoom: z };
-    const after = { x: (sp.x - view.x) / z, y: (sp.y - view.y) / z };
-    view.x += (after.x - before.x) * z; view.y += (after.y - before.y) * z;
-    s.setView(view); schedule();
+    cancelAnimationFrame(anim.current);
+    const v = useStore.getState().view;
+    s.setView(zoomAround(v, evPt(e), v.zoom * wheelZoomFactor(e))); schedule();
+  }
+
+  // ---------- touch: two fingers pinch-zoom and pan ----------
+  // A first finger acts at once (tap, drag, draw). If a second finger lands,
+  // whatever the first one started is rolled back and the gesture navigates.
+  const touches = useRef(new Map());   // pointerId → screen point
+  const pinch = useRef(null);
+  const touchSnap = useRef(null);
+  function snapTouchStart() {
+    const st = useStore.getState();
+    const pts = (d) => (d ? { ref: d, n: d.points?.length ?? 0 } : null);
+    touchSnap.current = { rooms: st.rooms, markups: st.markups, trace: st.trace, draft: pts(draft.current), mk: pts(mkDraft.current), tr: trDraft.current };
+  }
+  function undoTouchStart() {
+    const snapd = touchSnap.current; touchSnap.current = null;
+    pan.current = null; marquee.current = null; ruler.current = null; drag.current = null; down.current = null;
+    if (!snapd) return;
+    const st = useStore.getState(), patch = {};
+    if (st.rooms !== snapd.rooms) patch.rooms = snapd.rooms;
+    if (st.markups !== snapd.markups) patch.markups = snapd.markups;
+    if (st.trace !== snapd.trace) patch.trace = snapd.trace;
+    if (Object.keys(patch).length) useStore.setState(patch);
+    const back = (d) => { if (!d) return null; if (d.ref.points) d.ref.points.length = d.n; return d.ref; };
+    draft.current = back(snapd.draft); mkDraft.current = back(snapd.mk); trDraft.current = snapd.tr;
+  }
+  function handleDown(e) {
+    if (e.pointerType === 'touch') {
+      touches.current.set(e.pointerId, evPt(e));
+      if (touches.current.size === 2 && !pinch.current) {
+        undoTouchStart();
+        const ids = [...touches.current.keys()];
+        cancelAnimationFrame(anim.current);
+        pinch.current = { ids, a: touches.current.get(ids[0]), b: touches.current.get(ids[1]), view0: { ...useStore.getState().view } };
+        schedule(); return;
+      }
+      if (touches.current.size > 1 || pinch.current) return;
+      snapTouchStart();
+    }
+    onDown(e);
+  }
+  function handleMove(e) {
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
+      touches.current.set(e.pointerId, evPt(e));
+      if (pinch.current) {
+        const p = pinch.current, a = touches.current.get(p.ids[0]), b = touches.current.get(p.ids[1]);
+        if (a && b) { s.setView(pinchView(p.view0, p.a, p.b, a, b)); schedule(); }
+        return;
+      }
+    }
+    onMove(e);
+  }
+  function handleUp(e) {
+    if (e.pointerType === 'touch') {
+      touches.current.delete(e.pointerId);
+      if (pinch.current) { if (!touches.current.size) pinch.current = null; return; }
+      touchSnap.current = null;
+    }
+    onUp(e);
   }
 
   // resize
@@ -832,10 +941,8 @@ export default function Canvas2D() {
       const piw = planImg.current?.naturalWidth  || planImg.current?.width  || s.planWidth;
       const pih = planImg.current?.naturalHeight || planImg.current?.height || s.planHeight;
       if (!s.rooms.length && piw && pih) {
-        const z = Math.max(0.02, Math.min(8,
-          Math.min((W - pad * 2) / piw, (H - pad * 2) / pih)
-        ));
-        s.setView({
+        const z = clampZoom(Math.min((W - pad * 2) / piw, (H - pad * 2) / pih));
+        animateTo({
           zoom: z,
           x: Math.round((W - piw * z) / 2),
           y: Math.round((H - pih * z) / 2),
@@ -852,8 +959,8 @@ export default function Canvas2D() {
           b.maxx = Math.max(b.maxx, x); b.maxy = Math.max(b.maxy, y);
         }));
         const bw = b.maxx - b.minx || 1, bh = b.maxy - b.miny || 1;
-        const z = Math.max(0.05, Math.min(8, Math.min((W - pad * 2) / bw, (H - pad * 2) / bh)));
-        s.setView({
+        const z = clampZoom(Math.min((W - pad * 2) / bw, (H - pad * 2) / bh));
+        animateTo({
           zoom: z,
           x: pad - b.minx * z + (W - pad * 2 - bw * z) / 2,
           y: pad - b.miny * z + (H - pad * 2 - bh * z) / 2,
@@ -872,13 +979,17 @@ export default function Canvas2D() {
     <div className="stage" ref={wrapRef}>
       <canvas
         ref={cvRef}
-        onPointerDown={onDown}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
+        onPointerDown={handleDown}
+        onPointerMove={handleMove}
+        onPointerUp={handleUp}
         onDoubleClick={onDbl}
         onContextMenu={(e) => e.preventDefault()}
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-        onPointerCancel={() => { pan.current = null; draft.current = null; ruler.current = null; drag.current = null; mkDraft.current = null; marquee.current = null; }}
+        onPointerCancel={(e) => {
+          touches.current.delete(e.pointerId);
+          if (!touches.current.size) pinch.current = null;
+          pan.current = null; draft.current = null; ruler.current = null; drag.current = null; mkDraft.current = null; marquee.current = null;
+        }}
       />
     </div>
   );

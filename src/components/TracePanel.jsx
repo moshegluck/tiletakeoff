@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { useStore, defaultTrace } from '../state/store.js';
+import { useStore, useProject, defaultTrace } from '../state/store.js';
 import { formatArea, formatLength, ARCH_SCALES } from '../engine/units.js';
 
 const SEV = { error: 0, warn: 1, info: 2 };
 const SEV_LABEL = { error: 'Needs input', warn: 'Check', info: 'Note' };
 
 export default function TracePanel() {
-  const s = useStore();
+  const s = useProject();
   const tr = s.trace || defaultTrace();
   const res = tr.result;
   const [err, setErr] = useState('');

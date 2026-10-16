@@ -1,5 +1,5 @@
-import React from 'react';
-import { useStore, ROOM_COLORS, ZONE_COLORS } from '../state/store.js';
+import React, { useMemo } from 'react';
+import { useStore, useProject, ROOM_COLORS, ZONE_COLORS } from '../state/store.js';
 import { rectPoly, roomArea, roomWallLf } from '../engine/geometry.js';
 import { estimateProject, estimateMaterial } from '../engine/estimate.js';
 import { formatLength, formatArea, parseLength } from '../engine/units.js';
@@ -25,7 +25,7 @@ export function Panels() {
 
 /* ---------------- Rooms ---------------- */
 function RoomsPanel() {
-  const s = useStore();
+  const s = useProject();
   return (
     <div className="panel">
       {!s.scale && (
@@ -50,7 +50,7 @@ function RoomsPanel() {
 }
 
 function RoomCard({ room: r }) {
-  const s = useStore();
+  const s = useProject();
   const open = s.selection.type === 'room' && s.selection.id === r.id;
   const area = s.scale ? roomArea(r) : 0;
   const isRect = r.points.length === 4;
@@ -141,7 +141,7 @@ function RoomCard({ room: r }) {
    medallion / rug inset is traced or boxed on the floor with the design
    tools (D / I) and carved out of the field. */
 function FloorDesign({ room: r }) {
-  const s = useStore();
+  const s = useProject();
   const zones = zonesOf(r);
   const reg = roomRegions(r);
   const floorMats = s.materials.filter((m) => m.type !== 'wall');
@@ -171,7 +171,7 @@ function FloorDesign({ room: r }) {
 }
 
 function ZoneCard({ room: r, zone: z, reg, floorMats }) {
-  const s = useStore();
+  const s = useProject();
   const sel = s.selZone === z.id;
   const band = reg.bands.find((b) => b.zone.id === z.id);
   const inl = reg.inlays.find((i) => i.zone.id === z.id);
@@ -289,7 +289,7 @@ function DimInput({ value, system, onCommit, allowZero = false }) {
 
 /* ---------------- Materials ---------------- */
 function MaterialsPanel() {
-  const s = useStore();
+  const s = useProject();
   return (
     <div className="panel">
       {s.materials.length === 0 && (
@@ -308,9 +308,9 @@ function MaterialsPanel() {
 }
 
 function MaterialCard({ m }) {
-  const s = useStore();
+  const s = useProject();
   const open = s.selection.type === 'material' && s.selection.id === m.id;
-  const est = estimateMaterial(m, s.rooms);
+  const est = useMemo(() => estimateMaterial(m, s.rooms), [m, s.rooms]);
   return (
     <div className={'card' + (open ? ' sel' : '')}>
       <div className="card-head" onClick={() => { s.select('material', m.id); if (m.type === 'floor') s.setGridMaterial(m.id); }}>
@@ -394,7 +394,7 @@ function MaterialCard({ m }) {
 
 /* ---------------- Markups (Bluebeam-style measurement log) ---------------- */
 function MarkupsPanel() {
-  const s = useStore();
+  const s = useProject();
   const sum = summarizeMarkups(s.markups);
   return (
     <div className="panel">
@@ -429,7 +429,7 @@ function MarkupsPanel() {
 }
 
 function MarkupCard({ mk }) {
-  const s = useStore();
+  const s = useProject();
   const open = s.selection.type === 'markup' && s.selection.id === mk.id;
   const measured = isMeasured(mk.type);
   const val = markupValue(mk);
@@ -477,8 +477,11 @@ function MarkupCard({ mk }) {
 
 /* ---------------- Estimate ---------------- */
 function EstimatePanel() {
-  const s = useStore();
-  const e = estimateProject(s);
+  const s = useProject();
+  // the cut optimizer can be heavy: recompute only when the inputs change
+  const e = useMemo(() => estimateProject(s),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [s.rooms, s.materials, s.taxRate, s.laborRatePerSf]);
   if (!s.materials.length || !s.scale) {
     return <div className="panel"><div className="empty"><b>Nothing to estimate yet</b>{!s.scale ? 'Set the scale, draw rooms,' : 'Add a material,'} then assign materials to rooms.</div></div>;
   }
