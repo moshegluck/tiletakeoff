@@ -34,6 +34,7 @@ export const WALL_DEFAULTS = {
   seriesTol: 0.1,           // 10% spacing match → evenly spaced hatch
   hairlineRatio: 0.4,       // lighter than this × the sheet's wall pen: not a wall face
   thickPenRatio: 0.25,      // a thick masonry wall's faces: at least this × the wall pen
+  windowBays: true,         // a thick wall runs on across its window bays (solid below the sill)
 };
 
 /** Normalize raw lines to { a, b, w, th, u, n, rho, s0, s1, len }. */
@@ -462,11 +463,42 @@ export function pairWalls(rawLines, options = {}) {
       const A = { x: (pL0.x + f0.x) / 2, y: (pL0.y + f0.y) / 2 };
       const B = { x: (pL1.x + f1.x) / 2, y: (pL1.y + f1.y) / 2 };
       const conf = Math.min(1, (c.typical ? 0.85 : 0.55) + Math.min(0.15, (b - a) / 40));
-      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), wmin: Math.min(l.w, m.w), typical: c.typical, src: 'paired' });
+      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), wmin: Math.min(l.w, m.w), typical: c.typical, src: 'paired', ...(c.thick ? { faces: [c.i, c.j] } : {}) });
       addInterval(covL, a, b);
       // store m coverage in m's own param
       const ma = sOf(m, f0), mb = sOf(m, f1);
       addInterval(m.cov, Math.min(ma, mb), Math.max(ma, mb));
+    }
+  }
+
+  // ---- window bays: a thick masonry wall is drawn cut at window height, so
+  // between its piers the plan shows the window recess, not the wall. Below
+  // the sill the wall is solid: the floor stops at its inner face. Piers
+  // that pair with one unbroken face line, a bay's width apart, are one
+  // wall running on across the bay.
+  if (opt.windowBays !== false) {
+    const thick = bodies.filter((b) => b.faces);
+    for (let x = 0; x < thick.length; x++) {
+      for (let y = 0; y < thick.length; y++) {
+        const p = thick[x], q = thick[y];
+        if (p === q) continue;
+        const shared = p.faces.find((f) => q.faces.includes(f));
+        if (shared == null || Math.abs(p.t - q.t) > 2 * IN) continue;
+        const line = lines[shared], u = line.u;
+        const along = (pt) => dot(pt, u);
+        const p1 = Math.max(along(p.a), along(p.b));
+        const q0 = Math.min(along(q.a), along(q.b));
+        if (q0 < p1) continue;                       // q must lie past p along the face
+        const gap = q0 - p1;
+        if (gap < 0.05 || gap > 12) continue;        // a window bay, not a run of wall missing
+        // nothing nearer between them (only the next pier closes a bay)
+        if (thick.some((o) => o !== p && o !== q && o.faces.includes(shared) && Math.max(along(o.a), along(o.b)) > p1 + 0.05 && Math.min(along(o.a), along(o.b)) < q0 - 0.05)) continue;
+        const [l0, l1] = [along(line.a), along(line.b)].sort((a, b) => a - b);
+        if (l0 > p1 + 0.05 || l1 < q0 - 0.05) continue; // the face runs unbroken across the bay
+        const n = perp(u), r = (dot(p.a, n) + dot(p.b, n) + dot(q.a, n) + dot(q.b, n)) / 4;
+        const at = (sv) => ({ x: u.x * sv + n.x * r, y: u.y * sv + n.y * r });
+        bodies.push({ a: at(p1), b: at(q0), t: (p.t + q.t) / 2, conf: Math.min(p.conf, q.conf), w: p.w, wmin: p.wmin, typical: false, src: 'paired', bay: true });
+      }
     }
   }
 

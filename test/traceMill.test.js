@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runTrace } from '../src/engine/trace/index.js';
 import { pairWalls, mergeCollinear } from '../src/engine/trace/walls.js';
-import { buildGraph } from '../src/engine/trace/graph.js';
+import { buildGraph, joinWalls, bridgeOpenings } from '../src/engine/trace/graph.js';
 import { arcsFromPolylines, isDoorSwing, readLeaves } from '../src/engine/trace/arcs.js';
 import { chromatic } from '../src/lib/pdfVectors.js';
 import { wallsToLines } from './fixtures/planFactory.js';
@@ -162,6 +162,20 @@ describe('trace — the sheet checks the trace', () => {
     expect(f.at).toEqual({ x: 6, y: 5 });
   });
 
+  it("a room tag is compared at the wall faces (the tile floor runs to the door's centre); beyond 3% it's flagged", () => {
+    // 12x10 room with a 3' doorway in its south wall; the floor runs to the door's centre
+    const lines = heavy(wallsToLines(box(W, H, t), [{ axis: 'h', c: H, s: 4, w: 3, t }], W, H));
+    lines.push(...flatArc({ x: 4, y: H - t / 2 }, 3, -Math.PI / 2));
+    const res = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: `${Math.round(area)} SF`, x: 6, y: 5 }] });
+    const r = res.rooms[0];
+    expect(r.area).toBeCloseTo(area + 3 * t / 2, 1);   // the takeoff: to the door's centre
+    expect(r.areaFaces).toBeCloseTo(area, 1);          // the tag: to the faces
+    expect(r.areaCheck).toBe('match');
+    // 4% off is no longer let through
+    const off = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: `${Math.round(area * 1.04)} SF`, x: 6, y: 5 }] });
+    expect(off.rooms[0].areaCheck).toBe('off');
+  });
+
   it('two room tags in one traced room say the rooms merged', () => {
     const res = runTrace({ lines: room(), texts: [{ str: '60 SF', x: 3, y: 5 }, { str: '30 SF', x: 9, y: 5 }] });
     expect(res.verify.off).toBe(1);
@@ -195,7 +209,25 @@ describe('trace — the sheet checks the trace', () => {
     const lines = [hline(0, 0, 21, { w: 1 })];
     for (let x = 0; x < 21; x += 7) lines.push(hline(T, x, x + 4, { w: 1 }));
     const p = pairWalls(lines);
-    expect(p.bodies.filter((b) => Math.abs(b.t - T) < 0.05).length).toBeGreaterThanOrEqual(3);
+    // …one wall, running on across the bays: below the sill the brick is solid
+    const thick = p.bodies.filter((b) => Math.abs(b.t - T) < 0.05);
+    const span = thick.reduce((a, b) => a + Math.abs(b.b.x - b.a.x), 0);
+    expect(span).toBeGreaterThanOrEqual(18 - 0.05);
+  });
+
+  it('the floor stops at a brick wall\'s inner face across its window bays (the bay is above the sill)', () => {
+    // a 21x14 room under a 28" brick wall; the bays recess 8" into it between 4' piers
+    const T = 28 * IN, t = 5 * IN;
+    const lines = [hline(-T, 0, 21, { w: HEAVY })];                       // outer face, unbroken
+    for (const [x0, x1] of [[0, 4], [7, 11], [14, 21]]) lines.push(hline(0, x0, x1, { w: HEAVY }));   // pier inner faces
+    for (const x of [4, 11]) lines.push(hline(-8 * IN, x, x + 3, { w: HEAVY }), vline(x, -8 * IN, 0, { w: HEAVY }), vline(x + 3, -8 * IN, 0, { w: HEAVY }));
+    lines.push(...heavy(wallsToLines([
+      { x1: 0, y1: 14, x2: 21, y2: 14, t }, { x1: 0, y1: -T / 2, x2: 0, y2: 14, t, capA: 0 }, { x1: 21, y1: -T / 2, x2: 21, y2: 14, t, capA: 0 },
+    ], [], 21, 14)));
+    const res = runTrace({ lines });
+    expect(res.rooms.length).toBe(1);
+    // to the inner face (y 0) — none of the bays' 3' x 8" recesses
+    expect(res.rooms[0].area).toBeCloseTo((21 - t) * (14 - t / 2), 0);
   });
 
   it('tries another reading when a rule could be wrong for the sheet, and keeps the one that agrees with it', () => {
@@ -370,6 +402,27 @@ describe('trace — bathrooms and closets of the mill units', () => {
     const living = res.rooms.find((r) => r.name === 'LIVING');
     expect(living.area).toBeGreaterThan(150);
     expect(res.openings.some((o) => o.openingType === 'opening' && Math.abs(o.a.x - o.b.x) > 6)).toBe(false);
+  });
+
+  it('a door the sheet draws (swing or door-layer leaves) stands even where it crosses an opening already placed; an inferred one does not', () => {
+    // two gaps whose bridging lines cross: a swing door E-W, and a gap N-S
+    const t = 4 * IN;
+    const walls = [
+      { a: { x: -6, y: 0 }, b: { x: -1.5, y: 0 }, t }, { a: { x: 1.5, y: 0 }, b: { x: 6, y: 0 }, t },
+      { a: { x: 0, y: -6 }, b: { x: 0, y: -1.25 }, t }, { a: { x: 0, y: 1.25 }, b: { x: 0, y: 6 }, t },
+    ];
+    const arc = { c: { x: -1.5, y: 0.1 }, r: 3, sweepDeg: 90, p0: { x: 1.5, y: 0.1 }, p3: { x: -1.5, y: 3.1 } };
+    const run = (hints) => {
+      const j = joinWalls(walls.map((w) => ({ ...w, kind: 'wall' })));
+      return bridgeOpenings(j.segs, j.ends, [arc], {}, [], hints);
+    };
+    // the N-S gap with bifold leaves drawn across it (door layer): kept
+    const hinted = run([{ a: { x: 0.05, y: -1.25 }, b: { x: 0.05, y: 1.25 }, kind: 'door' }]);
+    expect(hinted.some((o) => Math.abs(o.a.x - o.b.x) < 0.01 && Math.abs(o.a.x) < 0.01)).toBe(true);
+    // nothing drawn across it: it would cross the door — not a doorway
+    const bare = run([{ a: { x: 20, y: 20 }, b: { x: 21, y: 20 }, kind: 'door' }]);
+    expect(bare.some((o) => Math.abs(o.a.x - o.b.x) < 0.01 && Math.abs(o.a.x) < 0.01)).toBe(false);
+    expect(bare.some((o) => o.openingType === 'door')).toBe(true);
   });
 
   it('a closet door drawn part open, between jamb returns too short to read as walls, closes the closet', () => {

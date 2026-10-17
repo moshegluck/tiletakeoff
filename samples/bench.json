@@ -1,0 +1,19 @@
+{
+  "note": "Answer key for samples/sample-house.pdf, worked by hand from its walls (test/fixtures/planFactory.js): finished faces, floor to door centre, 8\" exterior / 4.5\" interior walls. BATH is net of its 4'-8\" pony wall's footprint.",
+  "sheets": [
+    {
+      "name": "sample house",
+      "pdf": "samples/sample-house.pdf",
+      "page": 1,
+      "rooms": [
+        { "name": "KITCHEN", "at": { "x": 16, "y": 19 }, "sf": 180.13 },
+        { "name": "LIVING", "at": { "x": 29, "y": 21 }, "sf": 183.42 },
+        { "name": "BEDROOM", "at": { "x": 42, "y": 18 }, "sf": 240.1 },
+        { "name": "BATH", "at": { "x": 13, "y": 31 }, "sf": 131.43 },
+        { "name": "HALL", "at": { "x": 24, "y": 35 }, "sf": 43.05 },
+        { "name": "MASTER BEDROOM", "at": { "x": 34, "y": 28 }, "sf": 180.61 },
+        { "name": "W.I.C.", "at": { "x": 46, "y": 32 }, "sf": 86.61 }
+      ]
+    }
+  ]
+}

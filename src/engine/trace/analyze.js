@@ -294,6 +294,15 @@ export function analyzeGraph(g, ctx = {}) {
     const holeCenterArea = holeLoops.reduce((s, l) => s + Math.abs(signedArea(l.map((h) => nodes[h.from]))), 0);
     let area = parts.reduce((s, p) => s + signedArea(p.poly), 0) + holes.reduce((s, p) => s + signedArea(p.poly), 0);
     const centerArea = f.area - (f.holes || []).reduce((s, o) => s + Math.abs(o.area), 0) - holeCenterArea;
+    // the area to the wall faces across every doorway — how a plan's room tag
+    // measures it (the tile takeoff runs the floor to the door's centre)
+    let areaFaces = area;
+    if (opt.floorAtDoor !== 'face' && ringLoops.some((r) => r.l.some((h) => isDoorway(h.e)))) {
+      const faceDist = (h) => (isDoorway(h.e) ? (h.e.t || 0) / 2 : distFor(h));
+      areaFaces = ringLoops.reduce((s, r) => s + signedArea(offsetLoop(r.l, nodes, faceDist).poly), 0)
+        + (f.holes || []).reduce((s, o) => s + signedArea(offsetLoop(o.loop, nodes, faceDist).poly), 0)
+        + holeLoops.reduce((s, l) => s + signedArea(offsetLoop(l, nodes, faceDist).poly), 0);
+    }
     const perim = parts.reduce((s, p) => s + polyPerimeter(p.poly), 0);
     const inverted = parts.reduce((s, p) => s + p.inverted, 0) + holes.reduce((s, p) => s + p.inverted, 0);
 
@@ -362,7 +371,7 @@ export function analyzeGraph(g, ctx = {}) {
       extraPolys: parts.slice(1).map((p) => p.poly),
       holes: fellBack ? (f.holes || []).map((o) => o.poly).concat(holeLoops.map((l) => l.map((h) => ({ ...nodes[h.from] })))) : holes.map((h) => h.poly),
       centerPoly: ringLoops[0].l.map((h) => nodes[h.from]),
-      area, centerArea, perimeter: perim,
+      area, areaFaces: fellBack ? area : Math.min(area, areaFaces), centerArea, perimeter: perim,
       wallLf: wallLf + spurLf, wallLfLoop: wallLf, openingLf, spurLf, spurs: spurList,
       edgeIds: [...new Set(edgeLfs.map((x) => x.e.id))],
       labels: (f.labels || []).map((t) => t.str.trim()),
@@ -611,6 +620,8 @@ export { lerp };
 // either agrees (within 6%, or 3 SF on a closet) or is flagged at the tag
 // with both numbers — never a silent wrong area.
 // ---------------------------------------------------------------------------
+/** How far a traced room may be from its printed area (beyond it: flagged), and at least 2 SF. */
+export const AREA_TOL = 0.03;
 const AREA_TAG = /^(?:area\s*[:=]?\s*)?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:sf|s\.f\.?|sq\.?\s*ft\.?|ft²|ft2)$/i;
 
 /** Printed area tags on the sheet: [{ sf, x, y }] (a tag printed twice is one tag). */
@@ -657,16 +668,18 @@ function checkPrintedAreas(rooms, texts, flag, edges = []) {
   const sfTxt = (v) => `${Math.round(v).toLocaleString('en-US')} SF`;
   for (const [r, ts] of held) {
     const want = ts.reduce((a, t) => a + t.sf, 0);
-    const d = r.area - want;
+    // the tag measures to the wall faces (a doorway's too)
+    const got = r.areaFaces ?? r.area;
+    const d = got - want;
     r.printedSf = want;
-    if (Math.abs(d) <= Math.max(3, want * 0.06) && (ts.length === 1 || openTo(ts, edges))) {
+    if (Math.abs(d) <= Math.max(2, want * AREA_TOL) && (ts.length === 1 || openTo(ts, edges))) {
       r.areaCheck = 'match'; verify.matched++;
       // one open space the plan prints as zones (a meter alcove and the room
       // it opens off, a lounge and its game area): nothing is drawn between
       // them to trace, and their areas add up to it
       if (ts.length > 1) {
         r.printedParts = ts.map((t) => t.sf);
-        flag('info', 'area_zones', ts[0], `${r.name}: the plan prints ${ts.length} areas here (${ts.map((t) => t.sf).join(' + ')} = ${sfTxt(want)}) with nothing drawn between them; traced as one space of ${sfTxt(r.area)} — the sum agrees`, { roomId: r.id, printedSf: want, tracedSf: r.area });
+        flag('info', 'area_zones', ts[0], `${r.name}: the plan prints ${ts.length} areas here (${ts.map((t) => t.sf).join(' + ')} = ${sfTxt(want)}) with nothing drawn between them; traced as one space of ${sfTxt(got)} — the sum agrees`, { roomId: r.id, printedSf: want, tracedSf: got });
       }
       continue;
     }
@@ -674,9 +687,9 @@ function checkPrintedAreas(rooms, texts, flag, edges = []) {
     const why = ts.length > 1
       ? `${ts.length} room tags (${ts.map((t) => t.sf).join(' + ')} = ${sfTxt(want)}) sit in one traced room — rooms merged: a wall or door between them was not found`
       : d > 0
-        ? `the plan prints ${sfTxt(want)}; the trace has ${sfTxt(r.area)} (+${sfTxt(d)}) — it runs into a neighbouring space (a missing wall, or a gap bridged in the wrong place)`
-        : `the plan prints ${sfTxt(want)}; the trace has ${sfTxt(r.area)} (−${sfTxt(-d)}) — a wall drawn inside it, or the room split`;
-    flag('warn', 'area_check', ts[0], `${r.name}: ${why}`, { roomId: r.id, printedSf: want, tracedSf: r.area });
+        ? `the plan prints ${sfTxt(want)}; the trace has ${sfTxt(got)} (+${sfTxt(d)}) — it runs into a neighbouring space (a missing wall, or a gap bridged in the wrong place)`
+        : `the plan prints ${sfTxt(want)}; the trace has ${sfTxt(got)} (−${sfTxt(-d)}) — a wall drawn inside it, or the room split`;
+    flag('warn', 'area_check', ts[0], `${r.name}: ${why}`, { roomId: r.id, printedSf: want, tracedSf: got });
   }
   return verify;
 }

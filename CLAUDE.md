@@ -43,7 +43,9 @@ TileTakeoff works the other way round:
     window bays add up), both in a wall pen, nothing inside. Bodies nested in each other over most of
     their length (a wall drawn as faces + gypsum + fill) are one wall (`mergeLayers`). A short hatch
     run (4–5 lines) must be drawn in one pen (a door leaf, two wall faces and a washer box 6" apart
-    are not a pattern).
+    are not a pattern). Window bays: thick piers that pair with one unbroken face line, ≤ 12' apart,
+    are one wall across the bay (the plan cuts at window height; below the sill it's solid, so the
+    floor stops at the inner face).
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
     gap inside the wall's thickness → a window (closes the room, stays in wall LF).
   - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures),
@@ -52,7 +54,8 @@ TileTakeoff works the other way round:
     tee met just past the other wall's end extends that wall; collinear pieces that each turn into a
     different crossing wall (an offset cross) run through — up to a thick wall's thickness when the
     crossing walls come from opposite sides; an end on a wall right by that wall's end snaps to it.
-    Openings never cross each other (doors with evidence go first). A swing matches a door when it
+    An inferred opening (no swing, no door drawing) never crosses one already placed; a door the
+    sheet draws stands (Patriot's bifold closet front). A swing matches a door when it
     hinges at one jamb and its `closed` end lands across most of the gap (short jamb returns).
   - `analyze.js` rooms (offset to finished faces; floor to door centre by default), wall LF
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
@@ -69,9 +72,15 @@ TileTakeoff works the other way round:
     keeps the one that agrees best with the sheet's own evidence (`readingScore`: printed areas,
     named rooms, merged / unplaced names, open ends).
   - Plan check (`analyze.js` `printedAreas` / `checkPrintedAreas`): room tags that print an area
-    ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (6% / 3 SF)
-    or an `area_check` flag at the tag with both numbers (several tags in one room = rooms merged).
+    ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (within
+    `AREA_TOL` 3% / 2 SF, compared at the wall faces: `room.areaFaces`, since a tag stops at the wall
+    line across a doorway while the tile floor runs to the door's centre) or an `area_check` flag at
+    the tag with both numbers (several tags in one room = rooms merged).
     `res.verify` = { tags, matched, off, unplaced }.
+- `scripts/bench.mjs manifest.json [--json out] [--baseline base]` — the accuracy benchmark: per sheet,
+  answers (printed tags and/or hand-audited rooms) right within 1%, within 3%, merged, missing, and
+  SILENT (wrong beyond 3% with no flag — must stay 0). `samples/bench.json` = the sample sheet's
+  answer key worked by hand. Client PDFs stay outside the repo; their manifest points at them.
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
@@ -133,9 +142,10 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 383 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 386 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
-- Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF, audited
+- Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
+  keeps this audited trace as its answer key: 25/25), audited
   room by room against the printed dims (gym 11'-0" x 10'-11", guest bedroom 14'-7" x 10'-11"
   match). 3 open-end flags (unexcavated footing lines + one foundation corner). Was 18 rooms / 393 SF.
 - Wall LF rules: windows stay in wall LF (layer A-Glaz etc.); doors / openings come off; a stud
@@ -145,7 +155,7 @@ TileTakeoff works the other way round:
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
   no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
-  plan check 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
+  bench (1% / 3%, at faces): 26 / 37 of 55 printed rooms, 0 silent. Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
   living room, COWORKS 584/580, MEETING 725/720, STORAGE 986/982, TURBINE, DOG WASH, JAN. STORAGE,
   FITNESS, PODCAST, WOMENS, STAIR B; METER + ELECTRIC as zones 186 + 281 = 469), 11 flagged off,
   errors 19 (was ~250). White fill-only edges (wipeouts / text masks, 3,900 on this sheet) are not
