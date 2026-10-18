@@ -73,3 +73,51 @@ export function dimensionScale(texts, lines, pxPerInch) {
   }
   return { fpi: best.fpi, votes: best.votes, of: votes.length, agree: best.votes / votes.length };
 }
+
+/** Door tags ("3'0" X 6'8"", "2'-8" x 6'-8"") with the leaf width they state (ft). */
+export function doorTags(texts) {
+  const out = [];
+  for (const t of texts) {
+    const s = String(t.str || '').replace(/[″”“]/g, '"').replace(/[′’‘]/g, "'").trim();
+    const m = /^(\d)\s*'\s*-?\s*(\d{1,2})\s*"?\s*[xX×]\s*([5-9])\s*'\s*-?\s*(\d{1,2})?\s*"?$/.exec(s);
+    if (!m || +m[2] >= 12) continue;
+    const w = +m[1] + +m[2] / 12;
+    if (w >= 1.5 && w <= 4) out.push({ x: t.x, y: t.y, w, str: t.str });
+  }
+  return out;
+}
+
+/**
+ * The scale a sheet's doors say it's drawn at: each door tag stands in the
+ * swing of the door it names (its leaf width), and the swing's radius on
+ * paper IS that leaf. Every tag in a swing votes width / radius; the votes
+ * that agree (within 4% of their median) are the sheet's feet per inch.
+ * @param {{x,y,w}[]} tags   px (rendered image)
+ * @param {{c,r,p0,p3}[]} arcs  door swings, px
+ * @param {number} pxPerInch
+ * @returns {{ fpi: number, votes: number, of: number } | null}
+ */
+export function doorTagScale(tags, arcs, pxPerInch) {
+  const cr = (p, q) => p.x * q.y - p.y * q.x;
+  const votes = [];
+  for (const t of tags) {
+    let best = null, bd = Infinity;
+    for (const a of arcs) {
+      const vt = { x: t.x - a.c.x, y: t.y - a.c.y };
+      const d = Math.hypot(vt.x, vt.y) / a.r;
+      if (d > 1.6) continue;
+      // inside the swing's sector, within its radius, is where a door's tag sits
+      const v0 = { x: a.p0.x - a.c.x, y: a.p0.y - a.c.y }, v3 = { x: a.p3.x - a.c.x, y: a.p3.y - a.c.y };
+      const s = Math.sign(cr(v0, v3));
+      const inSector = Math.sign(cr(v0, vt)) === s && Math.sign(cr(vt, v3)) === s && d <= 1.1;
+      const score = d + (inSector ? 0 : 1);
+      if (score < bd) { bd = score; best = a; }
+    }
+    if (best && bd <= 1.6) votes.push(t.w / (best.r / pxPerInch));
+  }
+  if (!votes.length) return null;
+  const med = (xs) => { const s = [...xs].sort((p, q) => p - q); return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2; };
+  const m = med(votes);
+  const agree = votes.filter((v) => Math.abs(v / m - 1) <= 0.04);
+  return { fpi: med(agree), votes: agree.length, of: votes.length };
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readScale, scaleNotes, planTitles, planScale } from '../src/engine/trace/sheetScale.js';
 import { runTrace } from '../src/engine/trace/index.js';
-import { dimFeet, dimensionScale } from '../src/engine/trace/dimScale.js';
+import { dimFeet, dimensionScale, doorTags } from '../src/engine/trace/dimScale.js';
 import { detectSheetScale } from '../src/lib/planEvidence.js';
 
 // Reading a sheet before tracing it: which scale the floor plan is drawn at,
@@ -122,5 +122,40 @@ describe('the scale the sheet is really drawn at (its dimension strings)', () =>
     // a note the dimensions agree with stands, confirmed
     const ok = chain([1000, 1288, 1720, 2008, 2440, 2728, 3160], 4);
     expect(detectSheetScale({ texts: [...note, ...ok.texts], lines: ok.lines }, 144)).toMatchObject({ id: '1/4', how: 'title', dims: { votes: 6 } });
+  });
+});
+
+describe("the scale the sheet's doors say (door tags in their swings)", () => {
+  // a door swing as one Bézier quarter circle (render px): hinge c, radius r, closed toward +x
+  const K = 0.5523;
+  const swing = (c, r) => ({ pieces: [{ p0: { x: c.x + r, y: c.y }, p1: { x: c.x + r, y: c.y + K * r }, p2: { x: c.x + K * r, y: c.y + r }, p3: { x: c.x, y: c.y + r } }] });
+  const sheet = (fpi, widths) => {
+    const curves = [], texts = [{ str: 'SECOND FLOOR PLAN', x: 500, y: 3225, h: 36 }, { str: 'SCALE: 1/4" =1\'-0"', x: 800, y: 3261, h: 22 }];
+    widths.forEach((w, i) => {
+      const c = { x: 600 + 300 * i, y: 1000 }, r = (w / fpi) * 144;
+      curves.push(swing(c, r));
+      const ft = Math.floor(w), inch = Math.round((w - ft) * 12);
+      texts.push({ str: `${ft}'${inch}" X 6'8"`, x: c.x + 0.45 * r, y: c.y + 0.45 * r, h: 10 });   // the tag inside its swing
+    });
+    return { texts, lines: [], curves };
+  };
+
+  it('reads door tags and the leaf width they state', () => {
+    expect(doorTags([{ str: '3\'0" X 6\'8"', x: 0, y: 0 }, { str: '2\'-8" x 6\'-8"', x: 0, y: 0 }, { str: '12\'-6"', x: 0, y: 0 }]).map((t) => +t.w.toFixed(3)))
+      .toEqual([3, 2.667]);
+  });
+
+  it("measure a sheet plotted at no standard scale whose dimensions can't be read (Saddle River A-103)", () => {
+    // the note says 1/4"; the plot is 96% of 3/16" (5.53 ft per inch), its dimensions strokes, no text
+    const ev = sheet(5.533, [3, 3, 3, 2 + 8 / 12, 3, 2 + 2 / 12, 3]);
+    const sc = detectSheetScale(ev, 144);
+    expect(sc).toMatchObject({ id: null, how: 'doors', note: '1/4" = 1\'-0"' });
+    expect(sc.scale * 144).toBeCloseTo(5.533, 1);
+    // doors drawn at the noted scale confirm it
+    const ok = detectSheetScale(sheet(4, [3, 3, 2.5, 3, 2 + 8 / 12]), 144);
+    expect(ok).toMatchObject({ id: '1/4', how: 'title' });
+    expect(ok.doors.votes).toBe(5);
+    // too few tags: the note stands
+    expect(detectSheetScale(sheet(5.533, [3, 3, 3]), 144)).toMatchObject({ id: '1/4', how: 'title' });
   });
 });
