@@ -96,6 +96,15 @@ TileTakeoff works the other way round:
   answers (printed tags and/or hand-audited rooms) right within 1%, within 3%, merged, missing, and
   SILENT (wrong beyond 3% with no flag — must stay 0). `samples/bench.json` = the sample sheet's
   answer key worked by hand. Client PDFs stay outside the repo; their manifest points at them.
+  **Marked plans** (`"marked": true`): an estimator's Bluebeam takeoff on the architect's PDF is the
+  answer key — `scripts/markedKeys.mjs` reads each measured polygon (/Subj = the takeoff item, "Half
+  Tiled Bathroom", "Vanity Floor", "Shower Floor", "Floor Deduction"…; /Contents "A = 41 sf"; /IC the
+  finish colour; /Measure the calibration), polylines (fully tiled wall LF) and counts.
+  `benchScore.mjs` `scoreMarked` joins marked areas and traced rooms that overlap (> half of either)
+  into regions; a region is right when traced floor = marked floor within max(1 SF, 1%).
+  `--key-scale` uses the estimator's calibration (tells a wrong scale from wrong geometry).
+  The trace never reads annotations as drawing (`pdfVectors.js`: annotationMode DISABLE); AutoCAD's
+  invisible "AutoCAD SHX Text" annotations are read as the sheet's words (room names, dims).
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
@@ -157,7 +166,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 402 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 405 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -184,6 +193,12 @@ TileTakeoff works the other way round:
   a room is notched into its outline (`notchSpur`): its footprint is off the floor.
   Diagnostics used: render the sheet + trace overlay for a crop and read it (see `scripts/trace-pdf.mjs
   --svg`); every fix above came from one wrong room on this sheet.
+- Moshe's marked jobs (Oct 2026; PDFs outside the repo): 454 Saddle River Rd (synagogue, AutoCAD,
+  3 floor plans), Herzka residence (Bluebeam over AutoCAD, 3 plans, pages rotated 270°), Promenade at
+  Middletown (memory care finish plan, 1/8"). Baseline: 24 / 190 marked regions right (12.6%), 54
+  within 3%, 34 silent with the estimator's scale; 7 / 144 with the scale the trace reads (it takes a
+  detail's scale on 5 of 7 plans). Failure classes: wrong / missing scale; structural callouts read
+  as room names; big rooms traced as fragments; open rooms merged; small baths / WCs 5–15% off.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
