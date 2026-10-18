@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { runTrace } from '../src/engine/trace/index.js';
-import { pairWalls, mergeCollinear } from '../src/engine/trace/walls.js';
+import { pairWalls, mergeCollinear, dropCasework } from '../src/engine/trace/walls.js';
 import { buildGraph, joinWalls, bridgeOpenings } from '../src/engine/trace/graph.js';
 import { arcsFromPolylines, isDoorSwing, readLeaves } from '../src/engine/trace/arcs.js';
 import { chromatic } from '../src/lib/pdfVectors.js';
@@ -446,6 +446,66 @@ describe('trace — bathrooms and closets of the mill units', () => {
     expect(cl).toBeTruthy();
     expect(cl.area).toBeLessThan(10);
     // the door is the closet's, not a 2'-6" "opening" across the room to the partition
+    expect(res.openings.some((o) => o.openingType === 'door' && o.rooms.includes(cl.id))).toBe(true);
+  });
+});
+
+describe('trace — measured to the 1% (the accuracy benchmark\'s cases)', () => {
+  const GYP = 0.72 / 36;   // a gypsum layer's pen
+
+  it('a room stops at the heavy face line, not the gypsum line drawn 0.55" inside it', () => {
+    // an 8x8 room, 5" walls: each room face drawn heavy with a light gypsum line
+    // 0.55" into the wall — close enough that the two read as one line
+    const W = 8, t = 5 * IN, g = 0.55 * IN;
+    const lines = heavy(wallsToLines(box(W, W, t), [], W, W));
+    const f = t / 2;
+    lines.push(hline(f - g, f, W - f, { w: GYP }), hline(W - f + g, f, W - f, { w: GYP }), vline(f - g, f, W - f, { w: GYP }), vline(W - f + g, f, W - f, { w: GYP }));
+    const want = (W - t) * (W - t);
+    const res = runTrace({ lines });
+    expect(res.rooms[0].area).toBeCloseTo(want, 1);
+    const off = runTrace({ lines, options: { faceSnap: false } });
+    expect(off.rooms[0].area - want).toBeGreaterThan(0.3);
+  });
+
+  it('a strip faced by a hairline lying along a wall is casework (a toilet tank), not wall', () => {
+    const wall = { a: { x: 0, y: 0 }, b: { x: 12, y: 0 }, t: 5 * IN };
+    const tank = { a: { x: 4, y: (5 * IN) / 2 + 0.65 }, b: { x: 5, y: (5 * IN) / 2 + 0.65 }, t: 1.3, lightFace: true };
+    expect(dropCasework([wall, tank])).toEqual([wall]);
+    // a hairline-faced wall standing on its own (an exterior wall drawn light inside) stays
+    const alone = { ...tank, a: { x: 4, y: 6 }, b: { x: 9, y: 6 } };
+    expect(dropCasework([wall, alone])).toEqual([wall, alone]);
+  });
+
+  it("a brick wall pairs even where its inner face is shared with a new wall built against it", () => {
+    const T = 28 * IN, t = 5 * IN;
+    const lines = [
+      hline(-T, 0, 30, { w: 1.15 / 36 }), hline(0, 0, 30, { w: 1.15 / 36 }),   // brick faces (existing, gray)
+      hline(t, 0, 30, { w: HEAVY }),                                         // the new wall's room face
+      ...[3, 13, 23].flatMap((x) => [hline(-T + 3 * IN, x, x + 4, { w: GYP }), hline(-T + 6 * IN, x, x + 4, { w: GYP })]),  // window frames
+    ];
+    // other walls on the sheet set the heavy pen
+    for (let k = 0; k < 4; k++) lines.push(hline(20 + 5 * k, 0, 12, { w: HEAVY }), hline(20 + 5 * k + t, 0, 12, { w: HEAVY }));
+    const brick = (p) => p.bodies.some((b) => b.t >= T - 0.05 && Math.abs(b.a.y - b.b.y) < 0.01 && b.a.y < 0);
+    expect(brick(pairWalls(lines))).toBe(true);
+    expect(brick(pairWalls(lines, { shareThickFaces: false }))).toBe(false);
+  });
+
+  it("a closet's door bridges from its corner even when a 3\" scrap of the wall beyond sits at that corner", () => {
+    // a 10x10 block: the office above, a closet (SW) and a bath (SE) below a
+    // wall at y 7.5 — drawn as a 3" scrap then the rest. The closet's door runs
+    // from the west wall to that corner; its leaf is drawn open into the office
+    const t = 5 * IN;
+    const bodies = [
+      ...box(10, 10, t).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 2.5, y: 7.5 }, b: { x: 2.5, y: 10 }, t },            // the closet's east wall
+      { a: { x: 2.5, y: 7.5 }, b: { x: 2.75, y: 7.5 }, t: 3.5 * IN },  // the scrap
+      { a: { x: 2.75, y: 7.5 }, b: { x: 10, y: 7.5 }, t },          // the wall on to the east
+    ];
+    const hinge = { x: 0.3, y: 7.55 };
+    const arc = { c: hinge, r: 2.1, sweepDeg: 90, p0: { x: 2.4, y: 7.55 }, p3: { x: 0.3, y: 5.45 }, closed: { x: 2.4, y: 7.55 } };
+    const res = runTrace({ bodies, arcs: [arc], texts: [{ str: 'OFFICE', x: 5, y: 4 }, { str: 'CL', x: 1.2, y: 8.8 }, { str: 'BATH', x: 6, y: 8.8 }] });
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['BATH', 'CL', 'OFFICE']);
+    const cl = res.rooms.find((r) => r.name === 'CL');
     expect(res.openings.some((o) => o.openingType === 'door' && o.rooms.includes(cl.id))).toBe(true);
   });
 });

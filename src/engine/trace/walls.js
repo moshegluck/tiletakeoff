@@ -13,7 +13,7 @@
 // ============================================================
 
 import {
-  sub, dot, len, norm, perp, lineAngle, angleDiff, dist, GridIndex,
+  sub, dot, cross, len, norm, perp, lineAngle, angleDiff, dist, GridIndex,
 } from './vec.js';
 
 const IN = 1 / 12;
@@ -35,6 +35,8 @@ export const WALL_DEFAULTS = {
   hairlineRatio: 0.4,       // lighter than this × the sheet's wall pen: not a wall face
   thickPenRatio: 0.25,      // a thick masonry wall's faces: at least this × the wall pen
   windowBays: true,         // a thick wall runs on across its window bays (solid below the sill)
+  casework: true,           // a hairline-faced strip against a wall is casework, not wall
+  shareThickFaces: true,    // a brick wall may share its face with a wall built against it
 };
 
 /** Normalize raw lines to { a, b, w, th, u, n, rho, s0, s1, len }. */
@@ -206,7 +208,7 @@ export function pairWalls(rawLines, options = {}) {
   const opt = { ...WALL_DEFAULTS, ...options };
   const lines = mergeCollinear(rawLines, opt).map((l, i) => {
     const d = sub(l.b, l.a), L = len(d), u = norm(d);
-    return { ...l, id: i, len: L, u, th: lineAngle(l.a, l.b), cov: [] };
+    return { ...l, id: i, len: L, u, th: lineAngle(l.a, l.b), cov: [], tcov: [] };
   });
 
   const idx = new GridIndex(Math.max(2, opt.maxT * 4));
@@ -425,7 +427,7 @@ export function pairWalls(rawLines, options = {}) {
   cands.sort((p, q) => p.prio - q.prio || (Math.abs(q.overlap - p.overlap) > 0.04 ? q.overlap - p.overlap : 0) || p.d - q.d);
 
   // ---- greedy assignment with per-line interval coverage ----
-  const bodies = [];
+  let bodies = [];
   for (const c of cands) {
     if (hatch.has(c.i) || hatch.has(c.j)) continue;
     if (!c.typical && c.d < opt.minTAtypical) continue;
@@ -434,10 +436,16 @@ export function pairWalls(rawLines, options = {}) {
     const u = l.u;
     // coverage of l is stored in l's own param (dot with l.u); m's in m's.
     const sOf = (line, p) => dot(p, line.u);
-    const covL = l.cov;
+    // a thick masonry wall may share its face with a wall built against it
+    // (the new partition along an old brick wall: one line, both walls'
+    // face); mergeLayers makes them one wall. Thick walls don't overlap each
+    // other. Only on a sheet drawn with pen weights, where a counter's or a
+    // bench's line (a hairline) can't be a masonry face.
+    const share = c.thick && heavyW > 0 && opt.shareThickFaces !== false && !light(l, opt.hairlineRatio) && !light(m, opt.hairlineRatio);
+    const covL = share ? l.tcov : l.cov;
     // m's coverage is stored along m.u; rebuild the points and project onto u.
     const mPerp = dot(m.a, perp(m.u));
-    const covMProj = m.cov.map(([a, b]) => {
+    const covMProj = (share ? m.tcov : m.cov).map(([a, b]) => {
       const pa = { x: m.u.x * a + perp(m.u).x * mPerp, y: m.u.y * a + perp(m.u).y * mPerp };
       const pb = { x: m.u.x * b + perp(m.u).x * mPerp, y: m.u.y * b + perp(m.u).y * mPerp };
       const x0 = dot(pa, u), x1 = dot(pb, u);
@@ -463,11 +471,15 @@ export function pairWalls(rawLines, options = {}) {
       const A = { x: (pL0.x + f0.x) / 2, y: (pL0.y + f0.y) / 2 };
       const B = { x: (pL1.x + f1.x) / 2, y: (pL1.y + f1.y) / 2 };
       const conf = Math.min(1, (c.typical ? 0.85 : 0.55) + Math.min(0.15, (b - a) / 40));
-      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), wmin: Math.min(l.w, m.w), typical: c.typical, src: 'paired', ...(c.thick ? { faces: [c.i, c.j] } : {}) });
-      addInterval(covL, a, b);
+      // faced on one side by a hairline that isn't on a wall layer: maybe casework against a wall
+      const lightFace = heavyW > 0 && [l, m].some((x) => !x.wl && (x.w || 0) < heavyW * opt.hairlineRatio);
+      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), wmin: Math.min(l.w, m.w), typical: c.typical, src: 'paired', ...(c.thick ? { faces: [c.i, c.j] } : {}), ...(lightFace ? { lightFace: true } : {}) });
+      addInterval(l.cov, a, b);
+      if (c.thick) addInterval(l.tcov, a, b);
       // store m coverage in m's own param
       const ma = sOf(m, f0), mb = sOf(m, f1);
       addInterval(m.cov, Math.min(ma, mb), Math.max(ma, mb));
+      if (c.thick) addInterval(m.tcov, Math.min(ma, mb), Math.max(ma, mb));
     }
   }
 
@@ -502,6 +514,8 @@ export function pairWalls(rawLines, options = {}) {
     }
   }
 
+  if (opt.casework !== false) bodies = dropCasework(bodies, opt);
+
   // ---- faces left over: lines on the sheet's wall layers that no wall took
   // (a furring layer's inner face beside a foundation wall: the shared middle
   // line went to one wall). analyze.js moves a room's edge in to such a face.
@@ -528,6 +542,35 @@ export function pairWalls(rawLines, options = {}) {
       dashedLines: lines.filter((l) => l.dashed).length, annotationLines: lines.filter((l) => l.ann).length,
     },
   };
+}
+
+/**
+ * Casework against a wall: a strip faced by a hairline (`lightFace`) lying
+ * face to face along a wall body (a toilet tank, a vanity, a counter run
+ * drawn against the wall's heavy face) is not more wall — merged in, it
+ * would carve a notch out of the room.
+ */
+export function dropCasework(bodies, { maxT = WALL_DEFAULTS.maxT } = {}) {
+  const solid = bodies.filter((b) => !b.lightFace);
+  const sIdx = new GridIndex(4);
+  solid.forEach((b, i) => sIdx.insert(i, Math.min(b.a.x, b.b.x), Math.min(b.a.y, b.b.y), Math.max(b.a.x, b.b.x), Math.max(b.a.y, b.b.y)));
+  const against = (p) => {
+    const L = dist(p.a, p.b);
+    if (L < 1e-6) return false;
+    const u = norm(sub(p.b, p.a)), n = perp(u), rp = dot(p.a, n);
+    const r = p.t / 2 + maxT;
+    for (const j of sIdx.query(Math.min(p.a.x, p.b.x) - r, Math.min(p.a.y, p.b.y) - r, Math.max(p.a.x, p.b.x) + r, Math.max(p.a.y, p.b.y) + r)) {
+      const q = solid[j];
+      if (dist(q.a, q.b) < 1e-6 || Math.abs(cross(u, norm(sub(q.b, q.a)))) > 0.03) continue;
+      const rq = (dot(q.a, n) + dot(q.b, n)) / 2;
+      if (Math.abs(Math.abs(rq - rp) - (p.t + q.t) / 2) > 1.5 * IN) continue;   // face to face
+      const s0 = Math.max(Math.min(dot(p.a, u), dot(p.b, u)), Math.min(dot(q.a, u), dot(q.b, u)));
+      const s1 = Math.min(Math.max(dot(p.a, u), dot(p.b, u)), Math.max(dot(q.a, u), dot(q.b, u)));
+      if (s1 - s0 >= 0.8 * L) return true;
+    }
+    return false;
+  };
+  return bodies.filter((b) => !(b.lightFace && against(b)));
 }
 
 /** Merge collinear bodies of similar thickness that overlap or nearly touch. */

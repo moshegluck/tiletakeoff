@@ -45,7 +45,9 @@ TileTakeoff works the other way round:
     run (4–5 lines) must be drawn in one pen (a door leaf, two wall faces and a washer box 6" apart
     are not a pattern). Window bays: thick piers that pair with one unbroken face line, ≤ 12' apart,
     are one wall across the bay (the plan cuts at window height; below the sill it's solid, so the
-    floor stops at the inner face).
+    floor stops at the inner face). On a sheet with pen weights a brick wall may share its face line
+    with a wall built against it (both faces in a wall pen); they merge into one. `dropCasework`: a strip
+    faced by a hairline lying face to face along a wall (toilet tank, vanity, counter) is not wall.
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
     gap inside the wall's thickness → a window (closes the room, stays in wall LF).
   - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures),
@@ -54,12 +56,14 @@ TileTakeoff works the other way round:
     tee met just past the other wall's end extends that wall; collinear pieces that each turn into a
     different crossing wall (an offset cross) run through — up to a thick wall's thickness when the
     crossing walls come from opposite sides; an end on a wall right by that wall's end snaps to it.
+    A corner whose own wall carries on behind a scrap is still a plain L (a closet door bridges from it).
     An inferred opening (no swing, no door drawing) never crosses one already placed; a door the
     sheet draws stands (Patriot's bifold closet front). A swing matches a door when it
     hinges at one jamb and its `closed` end lands across most of the gap (short jamb returns).
   - `analyze.js` rooms (offset to finished faces; floor to door centre by default), wall LF
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
-    holes, labels → names/types, door-in-context checks, scale check from door swings,
+    holes, labels → names/types, door-in-context checks, scale check from door swings, room edges snap
+    to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face),
     sheet-border / title-block removal (by page extent), all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
   - `arcs.js` door-swing recognition from Bézier curves, and from swings a CAD export flattened into
@@ -142,7 +146,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 386 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 390 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -155,7 +159,7 @@ TileTakeoff works the other way round:
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
   no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
-  bench (1% / 3%, at faces): 26 / 37 of 55 printed rooms, 0 silent. Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
+  bench (1% / 3%, at faces): 39 / 43 of 55 printed rooms, 0 silent (was 17 / 36 with 1 silent). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
   living room, COWORKS 584/580, MEETING 725/720, STORAGE 986/982, TURBINE, DOG WASH, JAN. STORAGE,
   FITNESS, PODCAST, WOMENS, STAIR B; METER + ELECTRIC as zones 186 + 281 = 469), 11 flagged off,
   errors 19 (was ~250). White fill-only edges (wipeouts / text masks, 3,900 on this sheet) are not
