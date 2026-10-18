@@ -35,7 +35,8 @@ TileTakeoff works the other way round:
 ## Where things are
 - `src/engine/trace/` — the engine (pure JS, unit-tested)
   - `walls.js` pairs parallel face lines into wall bodies; merges doubled traces; rejects
-    evenly spaced hatch / tile patterns (4+ equal spacings). Pen-aware: on a sheet drawn with pen
+    evenly spaced hatch / tile patterns (4+ equal spacings; a long face crossing the strokes only where
+    it turns a corner — a wall's face through the poché of the wall it meets — is no stroke). Pen-aware: on a sheet drawn with pen
     weights two hairlines (< 0.4 × the wall pen) never pair; a light line in an annotation colour
     (`chromatic`, read in `pdfVectors.js`) is never a face; a merged run carries the pen most of it is
     drawn with, but a pair is judged by the pen along the stretch it uses (`penOn`): a face running
@@ -114,13 +115,19 @@ TileTakeoff works the other way round:
   Tiled Bathroom", "Vanity Floor", "Shower Floor", "Floor Deduction"…; /Contents "A = 41 sf"; /IC the
   finish colour; /Measure the calibration), polylines (fully tiled wall LF) and counts.
   `benchScore.mjs` `scoreMarked` joins marked areas and traced rooms that overlap (> half of either)
-  into regions; a region is right when traced floor = marked floor within max(1 SF, 1%).
+  into regions; a region is right when traced floor = marked floor within max(1 SF, 1%). Marked areas
+  drawn over each other (a shower floor / mikvah pool over the room's floor) count once.
   `--key-scale` uses the estimator's calibration (tells a wrong scale from wrong geometry).
   The trace never reads annotations as drawing (`pdfVectors.js`: annotationMode DISABLE); AutoCAD's
-  invisible "AutoCAD SHX Text" annotations are read as the sheet's words (room names, dims).
+  invisible "AutoCAD SHX Text" annotations are read as the sheet's words (room names, dims), their
+  control codes decoded (`cadText`: %%u underline drops out, %%d °); the strokes inside an SHX text's
+  box (letters, the %%u underline) are `glyph` lines — never wall faces, leaves or swings (`markGlyphs`).
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
+    Names in the drafter's language count (Saddle River's dims are on "Размеры"; French A-N-ENV-MUR =
+    walls, -FEN = windows, -MOB = furniture) and AIA shorthand (A-FIX., A-SHBD, Q-CASE, A-COLS,
+    A-FLOR, floor PAT outlines, NOT IN SCOPE → ignore).
 - `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list)
 - `src/lib/rasterWalls.js` scanned plans: blob filter, auto-deskew, H/V stroke detection
 - `src/lib/planEvidence.js`, `traceClient.js`, `traceWorker.js` read plan → feet → solve in a Worker
@@ -179,7 +186,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 412 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 417 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -217,6 +224,9 @@ TileTakeoff works the other way round:
   is plotted at 5.53 ft/in (its 28'-11" dimension measures 752.6 px between ticks = Moshe's own
   calibration); its dimension text is drawn as strokes with no text layer, so only reading the
   dimension strings (OCR) can catch it — dimScale.js does it wherever dimensions are text.
+  Then (layer names in Russian / French / AIA shorthand, SHX letters + underlines out of the walls,
+  faces through poché, overlapping marked areas once): 55 / 190 right (28.9%), 96 within 3%, 30 silent;
+  Saddle p1 3 → 21, Herzka p1 1 → 4 (10 / 14 within 3%). Saddle A-103 still at the wrong scale (all 27).
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
@@ -227,10 +237,8 @@ TileTakeoff works the other way round:
 ## Known gaps / next
 - Scans: only horizontal/vertical walls; diagonal walls on scans get flagged.
 - AI room naming (`Name rooms with AI`) runs on the same model chain as AI Detect; untested live.
-- Supabase: deployed env vars point at a deleted project (edsywvqtlnoyqtsamryn). The build
-  (`vite.config.js`) and `src/lib/supabase.js` swap in the live `tiletakeoff` project
-  (qgvloanrqzuciuhpepjy); the API routes tokens by issuer. Clean fix = update
-  VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
+- Supabase: Vercel's VITE_SUPABASE_URL now names the live project (qgvloanrqzuciuhpepjy; fixed
+  2026-10-18, the build no longer warns). The build / client / API fallbacks stay as a guard.
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
 - Mill 2 still open: LOUNGE (1623) + LOUNGE/GAMING (1457) + MECH + ELEVATOR are one face (the two
   lounges share a ~12' gap with nothing drawn; MECH / ELEVATOR leak through gaps in the brick); the

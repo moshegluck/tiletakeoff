@@ -63,4 +63,17 @@ describe('marked plans (an estimator\'s takeoff on the architect\'s drawing)', (
     expect(s.right).toBe(1);
     expect(s.silent).toBe(2);   // C is 11% off and carries no flag
   });
+
+  it("a shower floor drawn over the room's floor counts once (Saddle River's mikvah pools)", () => {
+    const sq = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+    const res = { rooms: [{ id: 'A', name: 'MIKVAH', poly: sq(0, 0, 16, 24), area: 384, status: 'ok' }] };
+    const items = [
+      { subject: 'Mikvah | Dressing Room', sf: 384, poly: sq(0, 0, 16, 24) },
+      { subject: 'Shower Floor', sf: 120, poly: sq(0, 0, 10, 12) },   // the pool, inside the room's polygon
+    ];
+    const s = scoreMarked(res, items);
+    expect(s.regions).toBe(1);
+    expect(s.right).toBe(2);
+    expect(s.keySf).toBeCloseTo(384, 0);
+  });
 });

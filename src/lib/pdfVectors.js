@@ -40,6 +40,50 @@ export async function readLayers(doc) {
 }
 
 /**
+ * SHX text is plotted as strokes: the letters, and the underline a room name
+ * often carries (%%u). A line lying inside an SHX text's box is one of them
+ * (glyph: true) — never a wall face, a door leaf or a swing.
+ * @param {{a,b,glyph?:boolean}[]} lines
+ * @param {{x,y,w?,h?,rot?}[]} boxes  SHX texts (centre, w along, h across)
+ */
+export function markGlyphs(lines, boxes) {
+  const C = 64, grid = new Map();
+  const rects = boxes.map((t) => {
+    const w = t.w || 0, h = t.h || 0, m = 0.15 * Math.min(w || h, h || w);
+    const hx = (t.rot === 90 ? h : w) / 2 + m, hy = (t.rot === 90 ? w : h) / 2 + m;
+    return [t.x - hx, t.y - hy, t.x + hx, t.y + hy];
+  });
+  rects.forEach((r, i) => {
+    for (let gx = Math.floor(r[0] / C); gx <= Math.floor(r[2] / C); gx++) {
+      for (let gy = Math.floor(r[1] / C); gy <= Math.floor(r[3] / C); gy++) {
+        const key = gx * 100003 + gy;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(i);
+      }
+    }
+  });
+  const inside = (r, p) => p.x >= r[0] && p.x <= r[2] && p.y >= r[1] && p.y <= r[3];
+  for (const l of lines) {
+    const cell = grid.get(Math.floor(l.a.x / C) * 100003 + Math.floor(l.a.y / C));
+    if (cell && cell.some((i) => inside(rects[i], l.a) && inside(rects[i], l.b))) l.glyph = true;
+  }
+}
+
+/**
+ * AutoCAD's text control codes as the words read: %%u / %%o (underline,
+ * overline on / off) drop out, %%d °, %%p ±, %%c Ø, %%% %, %%nnn a character.
+ * "%%uGUEST %%uBATH #3" is GUEST BATH #3.
+ */
+export function cadText(str) {
+  return String(str || '')
+    .replace(/%%(\d{3})/g, (_, n) => String.fromCharCode(+n))
+    .replace(/%%[uUoO]/g, '')
+    .replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[cC]/g, 'Ø').replace(/%%%/g, '%')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * @param {object} page   pdf.js PDFPageProxy
  * @param {number} renderScale  the scale the page image was rendered at
  * @param {object} OPS    pdfjs OPS table
@@ -201,7 +245,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
   try {
     for (const a of await page.getAnnotations()) {
       if (a.titleObj?.str !== 'AutoCAD SHX Text' || !a.rect) continue;
-      const str = (a.contentsObj?.str || '').trim();
+      const str = cadText(a.contentsObj?.str);
       if (!str) continue;
       const p0 = apply(vt, a.rect[0], a.rect[1]), p1 = apply(vt, a.rect[2], a.rect[3]);
       const w = Math.abs(p1.x - p0.x), h = Math.abs(p1.y - p0.y);
@@ -209,6 +253,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       shx++;
     }
   } catch { /* no annotations */ }
+  if (shx) markGlyphs(lines, texts.filter((t) => t.shx));
   let textSource = 'content';
   if (!texts.length && opTexts.length) { texts = opTexts; textSource = 'operators'; }
   else if (layers && opTexts.length) {

@@ -45,6 +45,20 @@ export function score(res, answers) {
   return out;
 }
 
+/** The area (sampled) that marked polygons cover more than once. */
+function overlapOf(ks, grid) {
+  if (ks.length < 2) return 0;
+  const xs = ks.flatMap((it) => it.poly.map((p) => p.x)), ys = ks.flatMap((it) => it.poly.map((p) => p.y));
+  let extra = 0;
+  for (let x = Math.min(...xs) + grid / 2; x < Math.max(...xs); x += grid) {
+    for (let y = Math.min(...ys) + grid / 2; y < Math.max(...ys); y += grid) {
+      const n = ks.reduce((c, it) => c + (inPoly({ x, y }, it.poly) ? 1 : 0), 0);
+      if (n > 1) extra += (n - 1) * grid * grid;
+    }
+  }
+  return extra;
+}
+
 /**
  * Score a trace against an estimator's marked areas (polygons in feet, the
  * trace's frame). An estimator draws one polygon over several rooms of one
@@ -52,7 +66,8 @@ export function score(res, answers) {
  * floor), so the unit scored is a region: marked areas and traced rooms that
  * overlap (over half of either, sampled on a 3" grid) joined into one. A
  * region is right when its traced floor equals its marked floor within
- * max(1 SF, 1%). A marked area no traced room covers is missing.
+ * max(1 SF, 1%). Marked areas drawn over each other count once. A marked
+ * area no traced room covers is missing.
  */
 export function scoreMarked(res, items, grid = 0.25) {
   const out = { answers: 0, right: 0, close: 0, merged: 0, missing: 0, split: 0, silent: 0, wrong: [], keySf: 0, gotSf: 0, regions: 0 };
@@ -94,7 +109,9 @@ export function scoreMarked(res, items, grid = 0.25) {
   for (const { keys: ks, rooms: rs } of groups.values()) {
     if (!ks.length) continue;
     out.regions++;
-    const n = ks.length, want = ks.reduce((a, it) => a + it.sf, 0);
+    // marked areas drawn over each other (a shower floor over the room's
+    // floor) cover the floor once: their sum less the sampled overlap
+    const n = ks.length, want = ks.reduce((a, it) => a + it.sf, 0) - overlapOf(ks, grid);
     out.answers += n; out.keySf += want;
     const label = ks.map((it) => `${it.subject || 'area'} ${it.sf}`).join(' + ').slice(0, 90);
     if (!rs.length) { out.missing += n; out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: 'no traced room', flagged: false }); continue; }
