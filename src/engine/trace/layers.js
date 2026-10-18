@@ -14,7 +14,8 @@
  * @typedef {'wall'|'door'|'window'|'opening'|'roomLabel'|'ignore'|'other'} LayerKind
  */
 
-const norm = (name) => ` ${String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+// letters in any script: a drafter in Moscow or Montreal names layers in their language
+const norm = (name) => ` ${String(name || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
 
 // checked in this order: a demolition wall is not a wall; "WALL LEGEND" text is not a wall
 /** @type {[LayerKind, RegExp][]} */
@@ -29,8 +30,13 @@ const RULES = [
   ['opening', /\b(doors?|drs?)\b.*(\w*windows?|glaz\w*)|(\w*windows?|glaz\w*)\b.*\bdoors?\b|\bopenings?\b/],
   ['door', /\b(\w*doors?|dr|drs)\b/],
   ['window', /\b(glaz\w*|\w*windows?|wind|wndw|win|sash\w*|storefront|curtain ?wall)\b/],
-  ['ignore', /\b(dim\w*|text|txt|anno\w*|notes?|keynotes?|titles?|tblk|t ?block|frame|border|sheet|revis\w*|leaders?|multileaders?|labels?|tags?|symbols?|symb|section|sect|elev\w*|details?|grid\w*|hatch\w*|patt\w*|poch\w*|viewports?|vports?|defpoints|furn\w*|fixt\w*|equip\w*|casework|built ?ins?|millwork|cabinet\w*|appl\w*|plumb\w*|plmb|elec\w*|wiring|lighting|light\w*|mech\w*|hvac|struc\w*|stairs?|strs|deck\w*|rail\w*|site|topo\w*|landsc\w*|areas?)\b/],
+  // the same words in the drafter's language (Russian, French, German, Spanish, Italian, Polish)
+  ['ignore', / (размер\p{L}*|текст\p{L}*|мебел\p{L}*|штрих\p{L}*|cot(e|es|ation|ations|a|as)|quote|bema(ß|ss)ung\p{L}*|wymiar\p{L}*|textes?|mobilier|mob|m(ö|oe)bel|muebles?|mobili|hachures?|schraffur\p{L}*) /u],
+  ['door', / (двер\p{L}*|portes?|portas?|puertas?|t(ü|ue)r(en)?) /u],
+  ['window', / (окн\p{L}*|окон\p{L}*|fen|fen(ê|e)tres?|fenster|ventanas?|finestr\p{L}*|janelas?) /u],
+  ['ignore', /\b(dim\w*|text|txt|anno\w*|notes?|keynotes?|titles?|tblk|t ?block|frame|border|shbd|sheet|logo|revis\w*|leaders?|multileaders?|labels?|tags?|symbols?|symb|section|sect|elev\w*|details?|grid\w*|hatch\w*|pat|patt\w*|poch\w*|viewports?|vports?|defpoints|furn\w*|fix|fixt\w*|equip\w*|case|casework|built ?ins?|millwork|cabinet\w*|appl\w*|plumb\w*|plmb|elec\w*|wiring|lighting|light\w*|mech\w*|hvac|struc\w*|cols|columns?|stairs?|strs|flor|hral|deck\w*|rail\w*|site|topo\w*|landsc\w*|areas?|scope)\b/],
   ['wall', /\b(\w*walls?|wall\w*|partitions?|prtn|ptn|foundation ?walls?|fdn ?walls?)\b/],
+  ['wall', / (стен\p{L}*|murs?|muros?|w(a|ä)nde?|waende|ścian\p{L}*) /u],
 ];
 
 /**

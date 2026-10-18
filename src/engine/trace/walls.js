@@ -402,8 +402,26 @@ export function pairWalls(rawLines, options = {}) {
     const ls = ids.map((i) => lines[i].len).sort((a, b) => a - b);
     return ls[Math.floor((ls.length - 1) / 4)];
   };
+  // (or a face that crosses the pattern only where it turns a corner: a
+  // wall's face running on through the poché strokes of the wall it meets —
+  // the strokes cover under half of it)
+  const strokeCover = (i, ids) => {
+    const l = lines[i], u = l.u, a0 = dot(l.a, u), a1 = dot(l.b, u), lo = Math.min(a0, a1), hi = Math.max(a0, a1);
+    const ivs = [], short = 2 * medianLen(ids);
+    for (const k of ids) {
+      if (k === i || lines[k].len >= short) continue;
+      const q = lines[k], b0 = dot(q.a, u), b1 = dot(q.b, u);
+      const s0 = Math.max(lo, Math.min(b0, b1)), s1 = Math.min(hi, Math.max(b0, b1));
+      if (s1 > s0) ivs.push([s0, s1]);
+    }
+    ivs.sort((p, q) => p[0] - q[0]);
+    let cov = 0, end = -Infinity;
+    for (const [s0, s1] of ivs) { if (s1 <= end) continue; cov += s1 - Math.max(s0, end); end = s1; }
+    return cov / Math.max(hi - lo, 1e-9);
+  };
   const outlier = (i, ids, d) => lines[i].len >= Math.max(10 * d, 2 * medianLen(ids))
-    || lines[i].len >= Math.max(3 * strokeLen(ids), 4 * d);
+    || lines[i].len >= Math.max(3 * strokeLen(ids), 4 * d)
+    || (lines[i].len >= 2 * medianLen(ids) && strokeCover(i, ids) < 0.5);
   for (const l of lines) {
     if (hatch.has(l.id)) continue;
     const ps = partners[l.id];

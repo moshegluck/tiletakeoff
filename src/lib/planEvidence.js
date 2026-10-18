@@ -92,11 +92,12 @@ export function evidenceToFeet(ev, scale, region = null) {
   const layered = hasWallLayers(ev.lines);
   // wl: drawn on a wall layer (a sheet that names them) — the architect's own walls
   // (a white fill's edge with no stroke is a wipeout / text mask, not drawing)
-  const lines = wallCandidates(ev.lines.filter((l) => inRegion(l.a, region) && inRegion(l.b, region) && !(l.filled && l.col === '#ffffff')))
+  // (an SHX letter or underline is text, not drawing)
+  const lines = wallCandidates(ev.lines.filter((l) => !l.glyph && inRegion(l.a, region) && inRegion(l.b, region) && !(l.filled && l.col === '#ffffff')))
     .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall', ann: chromatic(l.col) }));
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
   const swings = [], short = [];
-  const sheetLines = ev.lines.filter((l) => inRegion(l.a, region)).map((l) => ({ a: P(l.a), b: P(l.b) }));
+  const sheetLines = ev.lines.filter((l) => !l.glyph && inRegion(l.a, region)).map((l) => ({ a: P(l.a), b: P(l.b) }));
   for (const c of ev.curves || []) {
     if (!inRegion(c.pieces[0].p0, region)) continue;
     const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
