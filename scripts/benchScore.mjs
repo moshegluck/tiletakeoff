@@ -10,7 +10,8 @@ export const inPoly = (p, poly) => {
   }
   return c;
 };
-export const inRoom = (p, r) => inPoly(p, r.poly) && !(r.holes || []).some((h) => inPoly(p, h));
+// (a room's name tag may stand on its stair: a stair run taken off the floor is still the room's)
+export const inRoom = (p, r) => inPoly(p, r.poly) && !(r.holes || []).some((h) => !(r.stairHoles || []).includes(h) && inPoly(p, h));
 
 /** Score one traced sheet against its answers. */
 export function score(res, answers) {

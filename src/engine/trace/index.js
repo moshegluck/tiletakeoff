@@ -9,6 +9,7 @@
 // All geometry in and out is in FEET.
 // ============================================================
 
+import { takeStairsOffFloors } from './stairs.js';
 import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
@@ -175,6 +176,14 @@ function traceReading(input = {}) {
       ({ g, res } = again);
       log.length = 0; log.push(...log2);
       log.push({ kind: 'opening', at: mouths[0], note: `${mouths.length / 2} alcove${mouths.length > 2 ? 's' : ''} kept open to the room around ${mouths.length > 2 ? 'them' : 'it'}` });
+    }
+  }
+
+  // stair runs: their treads are no floor (the landings are)
+  if (input.stairs?.length) {
+    for (const f of takeStairsOffFloors(res.rooms, input.stairs)) {
+      res.flags.push(f);
+      res.rooms.find((r) => r.id === f.roomId)?.flags.push(f.id);
     }
   }
 

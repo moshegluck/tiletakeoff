@@ -10,6 +10,7 @@ import { arcFromBezier, arcsFromPolylines, arcsFromDashes, isDoorSwing, readLeav
 import { parseScaleNote } from '../engine/trace/analyze.js';
 import { planScale } from '../engine/trace/sheetScale.js';
 import { dimensionScale, doorTags, doorTagScale } from '../engine/trace/dimScale.js';
+import { findStairs } from '../engine/trace/stairs.js';
 import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 import { chromatic } from './pdfVectors.js';
@@ -145,7 +146,9 @@ export function evidenceToFeet(ev, scale, region = null) {
   const inR = ev.texts.filter((t) => inRegion(t, region));
   const texts = inR.map((t) => ({ str: t.str, ...P(t) }));
   const labels = labelCandidates(inR).map((t) => ({ str: t.str, ...P(t) }));
-  return { lines, bodies, arcs, texts, labels, hints, layered };
+  // stair runs, from every line on the sheet (a stair layer gives no walls)
+  const stairs = findStairs(drawn.map((l) => ({ a: P(l.a), b: P(l.b) })), texts);
+  return { lines, bodies, arcs, texts, labels, hints, layered, stairs };
 }
 
 /**

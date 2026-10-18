@@ -85,6 +85,11 @@ TileTakeoff works the other way round:
     swings only with their leaf. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
     lighter than the sheet's wall pen) are never wall faces; `runTrace` also cuts every body along a door's closed leaf (hinge → `closed`):
     a threshold or leaf drawn across a doorway is no wall.
+  - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
+    the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
+    `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
+    `stairHoles`; `areaFaces` keeps it, as a room tag does), info flag `stair` at the run. Moshe's marked
+    takeoffs mark "Stair Landing" areas, never the treads.
   - `sheetScale.js` which scale the floor plan is drawn at: every scale note read text by text (a
     view's number bubble is no part of it; "SCALE:" + its value as two texts; AutoCAD SHX's flattened
     stacked fractions, `SCALE:  "=1'-0"14"=1'-0"` = 1/4"), and the note printed with the plan's title
@@ -195,7 +200,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 423 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 427 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -239,6 +244,8 @@ TileTakeoff works the other way round:
   Saddle A-103 at its true scale: 0 → 15 / 27 right; all jobs 70 / 190 right (36.8%), 117 within 3%,
   14 silent. Piers between windows + glass walls + "OPEN TO ASSEMBLY" as no floor: 71 / 190, 119
   within 3%, 11 silent (Promenade's INDOOR ACTIVITY 1,002 / 1,015; Saddle's LECTURE ROOM 01 1,029 / 1,031).
+  Layered wall faces at doors + stair runs off the floor: 73 / 190 right (38.4%), 123 within 3%, 14 silent.
+  Patriot's audited key: NEW PLAY AREA 432.5 → 414.0 (the existing stair's bottom 7 treads come off it).
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
