@@ -58,8 +58,11 @@ TileTakeoff works the other way round:
     crossing walls come from opposite sides; an end on a wall right by that wall's end snaps to it.
     A corner whose own wall carries on behind a scrap is still a plain L (a closet door bridges from it).
     An inferred opening (no swing, no door drawing) never crosses one already placed; a door the
-    sheet draws stands (Patriot's bifold closet front). A swing matches a door when it
-    hinges at one jamb and its `closed` end lands across most of the gap (short jamb returns).
+    sheet draws stands (Patriot's bifold closet front). A swing matches a door when it hinges at one
+    jamb and, when its leaf says where it closes (`closed`), closes on that doorway's line; it also
+    matches when its `closed` end lands across most of the gap (short jamb returns). A ray may land on
+    a wall end it misses by ≤ max(0.3', t) only with a swing and only when clearly nearer than any
+    wall it meets; that end becomes the door's jamb.
   - `analyze.js` rooms (offset to finished faces; floor to door centre by default), wall LF
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
     holes, labels → names/types, door-in-context checks, scale check from door swings, room edges snap
@@ -68,7 +71,8 @@ TileTakeoff works the other way round:
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
   - `arcs.js` door-swing recognition from Bézier curves, and from swings a CAD export flattened into
     chains of straight pieces (`arcsFromPolylines`); `readLeaves` reads each swing's drawn leaf
-    (open end → `closed` = the other end) and keeps part-open (25–55°) swings only with their leaf.
+    (the edge closest to the radius: open end → `closed` = the other end) and keeps part-open (25–55°)
+    swings only with their leaf.
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
     used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
@@ -146,7 +150,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 390 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 393 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -159,7 +163,7 @@ TileTakeoff works the other way round:
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
   no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
-  bench (1% / 3%, at faces): 39 / 43 of 55 printed rooms, 0 silent (was 17 / 36 with 1 silent). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
+  bench (1% / 3%, at faces): 41 / 45 of 55 printed rooms, 0 silent (was 17 / 36 with 1 silent). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
   living room, COWORKS 584/580, MEETING 725/720, STORAGE 986/982, TURBINE, DOG WASH, JAN. STORAGE,
   FITNESS, PODCAST, WOMENS, STAIR B; METER + ELECTRIC as zones 186 + 281 = 469), 11 flagged off,
   errors 19 (was ~250). White fill-only edges (wipeouts / text masks, 3,900 on this sheet) are not

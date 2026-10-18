@@ -471,25 +471,42 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   //     from the wall that turns)
   for (const e of hints.length || arcs.length ? free.concat(corners) : free) {
     const fromCorner = isCorner.has(e);
-    let best = null;
+    let best = null, grazedBest = null;
     const far = { x: e.p.x + e.dir.x * (opt.maxOpening + 2), y: e.p.y + e.dir.y * (opt.maxOpening + 2) };
     for (const j of segsNear(e.p, far)) {
       const s = segs[j];
       if (j === e.bi) continue;
       if (angleDiff(lineAngle(segs[e.bi].a, segs[e.bi].b), lineAngle(s.a, s.b)) < 30 * DEG) continue;
       const hit = lineIntersect(e.p, e.dir, s.a, sub(s.b, s.a));
-      if (!hit || hit.u < -0.001 || hit.u > 1.001) continue;
+      if (!hit) continue;
+      // just past the wall's end (its corner fills out beyond its centreline
+      // end: a door's far jamb whose return is too short to read as a wall) —
+      // taken only with a door swing to say so
+      const sl = Math.max(0.3, s.t) / Math.max(dist(s.a, s.b), 1e-6);
+      if (hit.u < -sl || hit.u > 1 + sl) continue;
+      const grazed = hit.u < -0.001 || hit.u > 1.001;
+      if (grazed && !arcs.length) continue;
+      if (grazed) hit.pt = hit.u < 0 ? { ...s.a } : { ...s.b };
       if (fromCorner && hit.s < e.t) continue;                    // the wall it turns into
       const width = hit.s - s.t / 2 - (fromCorner ? e.t / 2 : 0);
       if (width < opt.minOpening || width > (fromCorner ? Math.min(opt.maxOpening, 10) : opt.maxOpening)) continue;
-      if (!best || hit.s < best.s) best = { s: hit.s, pt: hit.pt, j, width, t: s.t };
+      if (grazed) { if (!grazedBest || hit.s < grazedBest.s) grazedBest = { s: hit.s, pt: hit.pt, j, width, t: s.t, grazed }; continue; }
+      if (!best || hit.s < best.s) best = { s: hit.s, pt: hit.pt, j, width, t: s.t, grazed };
     }
-    if (!best) continue;
-    if (blocked(e.p, best.pt, [e.bi, best.j]) || passesJamb(e.p, best.pt, [e])) continue;
-    const jamb2 = sub(best.pt, mul(e.dir, best.t / 2));
-    const c = { type: 'ray', e1: e, a: e.p, b: best.pt, width: best.width, t: e.t, jambs: [fromCorner ? add(e.p, mul(e.dir, e.t / 2)) : e.p, jamb2], hitBody: best.j };
-    if (fromCorner && (!evidenced(c) || alongside(e.p, best.pt, [e.bi, best.j]))) continue;
-    cands.push(c);
+    // a wall end the ray just grazes counts only when it's clearly nearer
+    // than any wall it meets — and only with a swing; else the wall it meets
+    const tries = grazedBest && (!best || grazedBest.s < best.s - 0.5) ? [grazedBest, best] : [best];
+    for (const hit of tries) {
+      if (!hit) continue;
+      if (blocked(e.p, hit.pt, [e.bi, hit.j]) || passesJamb(e.p, hit.pt, [e])) continue;
+      const jamb2 = sub(hit.pt, mul(e.dir, hit.t / 2));
+      const c = { type: 'ray', e1: e, a: e.p, b: hit.pt, width: hit.width, t: e.t, jambs: [fromCorner ? add(e.p, mul(e.dir, e.t / 2)) : e.p, jamb2], hitBody: hit.j };
+      if ((fromCorner || hit.grazed) && (!evidenced(c) || alongside(e.p, hit.pt, [e.bi, hit.j]))) continue;
+      // landing on the other wall's free end: that end is this door's jamb too
+      if (hit.grazed) { const e2 = free.find((f) => f.bi === hit.j && dist(f.p, hit.pt) < 0.05); if (e2) c.e2 = e2; }
+      cands.push(c);
+      break;
+    }
   }
 
   // (c) across, with door / window drawing or a door swing as evidence: two
@@ -635,13 +652,23 @@ function closesAcross(c, arc) {
   return Math.abs(cross(u, v)) <= (c.t || 0) / 2 + 0.3 && s >= 0.55 * W && s <= W + 0.3;
 }
 
+/** A swing whose drawn leaf says where it closes closes on this doorway's line. */
+function closesOnLine(c, arc) {
+  if (!arc.closed) return true;
+  const [A, B] = c.jambs;
+  const W = dist(A, B);
+  if (W < 1e-6) return true;
+  const u = norm(sub(B, A)), v = sub(arc.closed, A), s = dot(v, u);
+  return Math.abs(cross(u, v)) <= (c.t || 0) / 2 + 0.3 && s >= -0.3 && s <= W + 0.3;
+}
+
 function matchArcs(c, arcs) {
   if (!arcs.length) return [];
   const out = [];
   for (const arc of arcs) {
     const tol = Math.max(0.6, c.t + 0.35);
     const nearJamb = c.jambs.some((j) => dist(j, arc.c) <= tol);
-    if (!nearJamb) continue;
+    if (!nearJamb || !closesOnLine(c, arc)) continue;
     // a swing drawn a size off its frame (2'-6" leaf in a 3'-2" rough gap) still marks the door
     const single = Math.abs(arc.r - c.width) / c.width < 0.25 || closesAcross(c, arc);
     const dbl = Math.abs(arc.r * 2 - c.width) / c.width < 0.25;

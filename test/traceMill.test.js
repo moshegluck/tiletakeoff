@@ -510,3 +510,53 @@ describe('trace — measured to the 1% (the accuracy benchmark\'s cases)', () =>
   });
 });
 
+describe('trace — doors read from their swings and leaves', () => {
+  it("a swing's leaf is the edge as long as its radius (not a washer box's side starting at the hinge)", () => {
+    const c = { x: 0, y: 0 }, r = 2.5;
+    const swing = { c, r, sweepDeg: 90, p0: { x: 0, y: -r }, p3: { x: r, y: 0 } };
+    const box = { a: { x: -0.05, y: -0.2 }, b: { x: -0.05, y: -2.28 } };   // 2.08' side, hinge to near p0
+    const leaf = { a: { x: 0, y: 0 }, b: { x: r, y: 0 } };                 // 2.5' leaf, open toward p3
+    expect(readLeaves([swing], [], [box, leaf])[0].closed).toEqual({ x: 0, y: -r });
+  });
+
+  it('a swing that closes north does not mark a doorway running east from its hinge', () => {
+    // a wall stub's end with a swing hinged at it, leaf drawn open to the west,
+    // closing north; a wall 2' east and a wall 2'-2" north
+    const t = 4 * IN;
+    const walls = [
+      { a: { x: 0, y: 0 }, b: { x: 0, y: 6 }, t },
+      { a: { x: 2.3, y: -6 }, b: { x: 2.3, y: 6 }, t },
+      { a: { x: -6, y: -2.4 }, b: { x: 1.8, y: -2.4 }, t },
+    ];
+    const arc = { c: { x: -0.1, y: 0 }, r: 2.17, sweepDeg: 90, p0: { x: -0.1, y: -2.17 }, p3: { x: -2.27, y: 0 }, closed: { x: -0.1, y: -2.17 } };
+    const j = joinWalls(walls.map((w) => ({ ...w, kind: 'wall' })));
+    const ops = bridgeOpenings(j.segs, j.ends, [arc], {}, [], []);
+    const door = ops.find((o) => o.openingType === 'door');
+    expect(door).toBeTruthy();
+    expect(Math.abs(door.a.x - door.b.x)).toBeLessThan(0.05);   // runs north, not east
+  });
+
+  it("a double door lands on a wall end its ray just misses (a jamb return too short to read), and that end is its jamb", () => {
+    // a 12x12 room; a closet in its NE corner whose front is a 4'-4" double
+    // door. The closet's top wall ends 2" east of the door line; the bottom
+    // jamb is a wall stub. Without the door, the top wall's end would "open"
+    // 10' west across the room.
+    const t = 4 * IN;
+    const bodies = [
+      ...box(12, 12, t).map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t })),
+      { a: { x: 7.17, y: 4 }, b: { x: 12, y: 4 }, t },        // closet top wall: ends at x 7.17
+      { a: { x: 7, y: 8.45 }, b: { x: 7, y: 12 }, t },        // bottom jamb stub
+    ];
+    // the top leaf hinges on the jamb return, 0.7' from the wall's end
+    const leafs = [
+      { c: { x: 6.9, y: 4.66 }, r: 2.17, sweepDeg: 90, p0: { x: 6.9, y: 6.83 }, p3: { x: 4.73, y: 4.66 }, closed: { x: 6.9, y: 6.83 } },
+      { c: { x: 6.9, y: 8.45 }, r: 2.17, sweepDeg: 90, p0: { x: 6.9, y: 6.28 }, p3: { x: 4.73, y: 8.45 }, closed: { x: 6.9, y: 6.28 } },
+    ];
+    const res = runTrace({ bodies, arcs: leafs, texts: [{ str: 'BEDROOM', x: 3, y: 6 }, { str: 'CL', x: 9.5, y: 8 }] });
+    const cl = res.rooms.find((r) => r.name === 'CL');
+    expect(res.openings.some((o) => (o.openingType === 'double_door' || o.openingType === 'door') && o.rooms.includes(cl?.id))).toBe(true);
+    expect(res.openings.some((o) => o.openingType === 'opening' && Math.abs(o.a.x - o.b.x) > 5)).toBe(false);
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['BEDROOM', 'CL']);
+  });
+});
+

@@ -70,18 +70,22 @@ export function readLeaves(arcs, short, lines) {
   const part = short.filter((a) => a && a.sweepDeg >= 25 && a.sweepDeg < 55 && a.r >= 1.2 && a.r <= 4.2);
   const idx = new GridIndex(2);
   lines.forEach((l, i) => { idx.insert(i, l.a.x, l.a.y, l.a.x, l.a.y); idx.insert(i, l.b.x, l.b.y, l.b.x, l.b.y); });
+  // the leaf is the edge as long as the swing's radius (a washer box's side
+  // that happens to start at the hinge is shorter or longer)
   const leaf = (arc) => {
     const tol = Math.max(0.25, arc.r * 0.12);
+    let best = null, bestD = Infinity;
     for (const i of idx.query(arc.c.x - tol, arc.c.y - tol, arc.c.x + tol, arc.c.y + tol)) {
       const l = lines[i];
-      if (Math.abs(dist(l.a, l.b) - arc.r) > 2 * tol) continue;
+      const d = Math.abs(dist(l.a, l.b) - arc.r);
+      if (d > 2 * tol || d >= bestD) continue;
       for (const [h, f] of [[l.a, l.b], [l.b, l.a]]) {
         if (dist(h, arc.c) > tol) continue;
-        if (dist(f, arc.p0) <= tol) return 'p0';
-        if (dist(f, arc.p3) <= tol) return 'p3';
+        const end = dist(f, arc.p0) <= tol ? 'p0' : dist(f, arc.p3) <= tol ? 'p3' : null;
+        if (end) { best = end; bestD = d; break; }
       }
     }
-    return null;
+    return best;
   };
   const out = [];
   for (const arc of arcs) {
