@@ -199,10 +199,14 @@ TileTakeoff works the other way round:
   (missing / false wall, missed door, window taken as door…) shown as flags. Never geometry.
 - `src/lib/supabasePublic.js` the live Supabase project; the API verifies each session with the
   project that issued its token, so a stale env var can't lock users out.
+- `src/lib/appUpdate.js` a tab loaded before a deploy asks for code files the deploy removed (hashed
+  names → 404; iPhone Safari: "Importing a module script failed"): the app reloads once onto the new
+  version (`vite:preloadError`, unhandled rejections, the plan-open path and any toast carrying such an
+  error), at most once a minute, then says so.
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 428 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 430 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
