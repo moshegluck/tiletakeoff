@@ -76,7 +76,9 @@ TileTakeoff works the other way round:
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
     holes, labels → names/types, door-in-context checks, scale check from door swings, room edges snap
     to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face),
-    sheet-border / title-block removal (by page extent), all flags
+    sheet-border / title-block removal (by page extent), the sheet's other views set aside (linework apart
+    from the building with a view's own title or scale note under it — `sheetScale.otherViews`; or far
+    from it with no room name in it: Herzka's sill details), view titles never name rooms, all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
   - `arcs.js` door-swing recognition from Bézier curves, from swings a CAD export flattened into
     chains of straight pieces (`arcsFromPolylines`), and from swings plotted dashed (`arcsFromDashes`:
@@ -111,7 +113,7 @@ TileTakeoff works the other way round:
     used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
     when a rule could be wrong for this drawing (`READINGS`: every pen can be a wall; no masonry) and
     keeps the one that agrees best with the sheet's own evidence (`readingScore`: printed areas,
-    named rooms, merged / unplaced names, open ends).
+    named rooms, merged / unplaced names, open ends at 0.3 each).
   - Plan check (`analyze.js` `printedAreas` / `checkPrintedAreas`): room tags that print an area
     ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (within
     `AREA_TOL` 3% / 2 SF, compared at the wall faces: `room.areaFaces`, since a tag stops at the wall
@@ -200,7 +202,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 427 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 428 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited

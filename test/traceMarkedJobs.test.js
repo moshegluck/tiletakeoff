@@ -157,4 +157,21 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     const light = pairWalls([...ys.map((y) => hline(y, 0, 3.7, HEAVY * 0.3)), hline(5, 0, 20), hline(5.5, 0, 20)], {});
     expect(light.bodies.every((b) => Math.min(b.a.y, b.b.y) >= 4.9)).toBe(true);
   });
+
+  it("the sheet's details beside the plan are other views, not rooms (Herzka's sill details)", () => {
+    // the house (40' x 30') and, 30' to its west, a sill detail drawn at 1½":
+    // a box with its own title and scale note under it
+    const t = 0.5;
+    const box = (x0, y0, x1, y1) => [[x0, y0, x1, y0], [x0, y1, x1, y1], [x0, y0, x0, y1], [x1, y0, x1, y1]].map(([a, b, c, d]) => ({ a: { x: a, y: b }, b: { x: c, y: d }, t }));
+    const bodies = [...box(60, 10, 100, 40), ...box(10, 20, 22, 28)];
+    const texts = [
+      { str: 'LIVING ROOM', x: 80, y: 25, h: 0.5 },
+      { str: 'FIRST FLOOR PLAN', x: 70, y: 44, h: 0.6 }, { str: 'SCALE: 1/4" = 1\'-0"', x: 76, y: 45, h: 0.4 },
+      { str: 'TYPICAL SILL DETAIL', x: 14, y: 29.5, h: 0.5 }, { str: 'SCALE: 1 1/2" = 1\'-0"', x: 14, y: 30.3, h: 0.4 },
+    ];
+    const res = runTrace({ bodies, texts, labels: texts });
+    expect(res.rooms.map((r) => r.name)).toEqual(['LIVING ROOM']);
+    expect(res.flags.filter((f) => f.severity === 'error')).toEqual([]);
+    expect(res.flags.some((f) => f.kind === 'frame')).toBe(true);
+  });
 });

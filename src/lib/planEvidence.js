@@ -144,7 +144,7 @@ export function evidenceToFeet(ev, scale, region = null) {
     for (const pc of c.pieces) hints.push({ a: P(pc.p0), b: P(pc.p3), kind });
   }
   const inR = ev.texts.filter((t) => inRegion(t, region));
-  const texts = inR.map((t) => ({ str: t.str, ...P(t) }));
+  const texts = inR.map((t) => ({ str: t.str, ...P(t), ...(t.h ? { h: t.h * k } : {}) }));
   const labels = labelCandidates(inR).map((t) => ({ str: t.str, ...P(t) }));
   // stair runs, from every line on the sheet (a stair layer gives no walls)
   const stairs = findStairs(drawn.map((l) => ({ a: P(l.a), b: P(l.b) })), texts);

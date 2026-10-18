@@ -117,3 +117,27 @@ export function planScale(texts) {
   const [id] = [...count].sort((a, b) => b[1] - a[1])[0];
   return { id, how: 'common', notes: notes.length };
 }
+
+const VIEW_TITLE = /\b(DETAILS?|SECTIONS?|ELEVATIONS?|WALL\s+TYPES?|LEGEND|SCHEDULE|ENLARGED|AXONOMETRIC|ISOMETRIC)\b/i;
+
+/**
+ * Where the sheet's other views are: every scale note but the floor plan's
+ * own, and every view title that names a detail, section, elevation,
+ * schedule or legend. (The plan's note is the one `planScale` picks.)
+ * @returns {{ x: number, y: number, str: string }[]}
+ */
+export function otherViews(texts) {
+  const notes = scaleNotes(texts);
+  const plan = planScale(texts);
+  let planNote = null;
+  if (plan?.how === 'title') {
+    const ti = planTitles(texts).find((t) => norm(t.str) === plan.title);
+    if (ti) planNote = notes.reduce((b, n) => (!b || Math.hypot(n.x - ti.x, n.y - ti.y) < Math.hypot(b.x - ti.x, b.y - ti.y) ? n : b), null);
+  }
+  const out = notes.filter((n) => n !== planNote && !(plan?.how === 'common' && n.id === plan.id)).map((n) => ({ x: n.x, y: n.y, str: n.str }));
+  for (const t of texts) {
+    const s = norm(t.str);
+    if (s.length <= 45 && VIEW_TITLE.test(s) && !/\b(SEE|REFER|PER)\b/i.test(s)) out.push({ x: t.x, y: t.y, str: s });
+  }
+  return out;
+}
