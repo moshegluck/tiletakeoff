@@ -84,7 +84,12 @@ TileTakeoff works the other way round:
     view's number bubble is no part of it; "SCALE:" + its value as two texts; AutoCAD SHX's flattened
     stacked fractions, `SCALE:  "=1'-0"14"=1'-0"` = 1/4"), and the note printed with the plan's title
     ("BASEMENT PLAN", not "SEE … PLAN" / details / sections) wins over the sheet's commonest note (its
-    details'). `planEvidence.detectSheetScale` uses it (`how: 'title' | 'common'`).
+    details'). `dimScale.js` then measures the sheet against its own dimension strings: each one's value
+    / its span between the extension lines crossing its dimension line on either side of the text
+    (texts carry `rot`: 0 across, 90 up the sheet); with ≥ 5 votes and ≥ 40% agreeing, the dimensions
+    confirm the note (`dims`) or overrule it (`how: 'dimensions'`, `note` = what it said; a plot at no
+    standard scale gets id null, label `1" = 5.53' (measured)`). Herzka: 1/4" confirmed by 61–81
+    dimensions a floor. `planEvidence.detectSheetScale` does both.
     Room names (`analyze.js` `isLabel`): framing / beam callouts (LVL, HEADER, W18x71, 2x10 @ 16" O.C.),
     construction notes (… ABOVE, TO BE, SEE), door tags (3'0" X 6'8"), stair notes (UP 22R), window /
     equipment codes and CAD attribute dumps never name a room.
@@ -174,7 +179,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 409 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 412 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -211,7 +216,7 @@ TileTakeoff works the other way round:
   the trace scores 25 / 190 with its own scale. The tenth, Saddle A-103 (second floor), says 1/4" but
   is plotted at 5.53 ft/in (its 28'-11" dimension measures 752.6 px between ticks = Moshe's own
   calibration); its dimension text is drawn as strokes with no text layer, so only reading the
-  dimension strings (OCR) can catch it. Scale verification from dimension strings / door tags is next.
+  dimension strings (OCR) can catch it — dimScale.js does it wherever dimensions are text.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.

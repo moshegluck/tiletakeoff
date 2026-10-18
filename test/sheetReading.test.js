@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readScale, scaleNotes, planTitles, planScale } from '../src/engine/trace/sheetScale.js';
 import { runTrace } from '../src/engine/trace/index.js';
+import { dimFeet, dimensionScale } from '../src/engine/trace/dimScale.js';
+import { detectSheetScale } from '../src/lib/planEvidence.js';
 
 // Reading a sheet before tracing it: which scale the floor plan is drawn at,
 // and which words name rooms. Cases from Moshe's marked jobs (Saddle River,
@@ -68,5 +70,57 @@ describe('which words name rooms', () => {
     expect(res.rooms.length).toBe(1);
     expect(res.rooms[0].name).toBe('BEDROOM 2');
     expect(res.rooms[0].type).toBe('bedroom');
+  });
+});
+
+describe('the scale the sheet is really drawn at (its dimension strings)', () => {
+  // a dimension chain along y = 500 px: extension lines at the given x's,
+  // each span's length printed above its middle (render px, 144 px / inch)
+  const chain = (xs, fpi, { y = 500, rot = 0 } = {}) => {
+    const lines = [{ a: { x: xs[0] - 8, y }, b: { x: xs[xs.length - 1] + 8, y } }];
+    const texts = [];
+    for (const x of xs) lines.push({ a: { x, y: y - 12 }, b: { x, y: y + 40 } });
+    for (let k = 0; k + 1 < xs.length; k++) {
+      const ft = ((xs[k + 1] - xs[k]) / 144) * fpi;
+      const f = Math.floor(ft), inch = Math.round((ft - f) * 12);
+      texts.push({ str: `${f}'-${inch}"`, x: (xs[k] + xs[k + 1]) / 2, y: y - 9, h: 14, rot });
+    }
+    return { lines, texts };
+  };
+  const flip = ({ lines, texts }) => ({   // the same chain turned up the sheet
+    lines: lines.map((l) => ({ a: { x: l.a.y, y: l.a.x }, b: { x: l.b.y, y: l.b.x } })),
+    texts: texts.map((t) => ({ ...t, x: t.y, y: t.x, rot: 90 })),
+  });
+
+  it('reads dimension strings, SHX stacked fractions too', () => {
+    expect(dimFeet('12\'-6"')).toBe(12.5);
+    expect(dimFeet('28\'-11"')).toBeCloseTo(28.9167, 4);
+    expect(dimFeet('8\'-8 "12"')).toBeCloseTo(8 + 8.5 / 12, 6);
+    expect(dimFeet('4\'-6 1/2"')).toBeCloseTo(4 + 6.5 / 12, 6);
+    expect(dimFeet('3\'0" X 6\'8"')).toBe(null);
+  });
+
+  it('measures each dimension between the extension lines on either side of its text', () => {
+    // 3/16" = 1'-0" (5.333 ft per inch): 216 px is 8'-0", 324 px is 12'-0"
+    const h = chain([1000, 1216, 1540, 1756, 2080, 2296, 2620], 16 / 3);
+    const v = flip(chain([600, 924, 1140, 1464, 1680], 16 / 3));
+    const d = dimensionScale([...h.texts, ...v.texts], [...h.lines, ...v.lines], 144);
+    expect(d.votes).toBe(10);
+    expect(d.fpi).toBeCloseTo(16 / 3, 1);
+  });
+
+  it("the dimensions win over a note that's wrong for the sheet, and a sheet plotted at no standard scale is measured", () => {
+    const note = [{ str: 'SECOND FLOOR PLAN', x: 500, y: 3225, h: 36 }, { str: 'SCALE: 1/4" =1\'-0"', x: 800, y: 3261, h: 22 }];
+    const dims = chain([1000, 1216, 1540, 1756, 2080, 2296, 2620], 16 / 3);
+    const sc = detectSheetScale({ texts: [...note, ...dims.texts], lines: dims.lines }, 144);
+    expect(sc).toMatchObject({ id: '3/16', how: 'dimensions', note: '1/4" = 1\'-0"' });
+    // plotted at 96% of 3/16": 5.53 ft per inch (Saddle River's second floor)
+    const odd = chain([1000, 1216, 1540, 1756, 2080, 2296, 2620], 5.533);
+    const sc2 = detectSheetScale({ texts: [...note, ...odd.texts], lines: odd.lines }, 144);
+    expect(sc2.id).toBe(null);
+    expect(sc2.scale * 144).toBeCloseTo(5.533, 1);
+    // a note the dimensions agree with stands, confirmed
+    const ok = chain([1000, 1288, 1720, 2008, 2440, 2728, 3160], 4);
+    expect(detectSheetScale({ texts: [...note, ...ok.texts], lines: ok.lines }, 144)).toMatchObject({ id: '1/4', how: 'title', dims: { votes: 6 } });
   });
 });
