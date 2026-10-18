@@ -668,6 +668,20 @@ describe('trace — one room, to its drawn faces (tub stubs, leaves, layers, pen
     expect(wall.reduce((s, b) => s + Math.abs(b.b.y - b.a.y), 0)).toBeGreaterThan(13.5);
   });
 
+  it('a wall runs through walls meeting it from each side 7" apart (3" face to face)', () => {
+    // a 12x10 block cut by a wall at y 5; a wall comes down onto it at x 5.6
+    // and another leaves it downward at x 6.2. Its pieces each turned a corner
+    // into a different one and the 7" between them stayed open
+    const tc = 4.1 * IN;
+    const bodies = [
+      ...asBodies(box(12, 10, tc)),
+      { a: { x: 0, y: 5 }, b: { x: 5.45, y: 5 }, t: tc }, { a: { x: 6.35, y: 5 }, b: { x: 12, y: 5 }, t: tc },
+      { a: { x: 5.6, y: 0 }, b: { x: 5.6, y: 4.83 }, t: tc }, { a: { x: 6.2, y: 5.17 }, b: { x: 6.2, y: 10 }, t: tc },
+    ];
+    const res = runTrace({ bodies, texts: [{ str: 'CL', x: 3, y: 2 }, { str: 'HALL', x: 9, y: 2 }, { str: 'BEDROOM', x: 3, y: 8 }, { str: 'LIVING', x: 9, y: 8 }] });
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['BEDROOM', 'CL', 'HALL', 'LIVING']);
+  });
+
   it("what's drawn across a double door's opening (its threshold) is no wall: the pair is a double door", () => {
     // TURBINE above, STORAGE below; a 5'-8" opening with two leaves standing
     // open and the threshold drawn across it as a strip

@@ -59,8 +59,8 @@ TileTakeoff works the other way round:
     bridges doors/openings (swing arcs as evidence), builds the planar graph, traces faces.
     Joins: an end touching only a scrap shorter than half its thickness still finds its corner; a
     tee met just past the other wall's end extends that wall; collinear pieces that each turn into a
-    different crossing wall (an offset cross) run through — up to a thick wall's thickness when the
-    crossing walls come from opposite sides; an end on a wall right by that wall's end snaps to it.
+    different crossing wall (an offset cross) run through — up to a thick wall's thickness between the
+    crossing walls' faces when they come from opposite sides; an end on a wall right by that wall's end snaps to it.
     A corner whose own wall carries on behind a scrap is still a plain L (a closet door bridges from it).
     An inferred opening (no swing, no door drawing) never crosses one already placed; a door the
     sheet draws stands (Patriot's bifold closet front). A swing matches a door when it hinges at one
@@ -157,7 +157,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 401 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 402 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -170,8 +170,8 @@ TileTakeoff works the other way round:
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
   no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
-  bench (1% / 3%, at faces): 48 / 48 of 55 printed rooms, 0 silent, errors 9 (was 17 / 36 with 1
-  silent, then 41 / 45). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
+  bench (1% / 3%, at faces): 50 / 50 of 55 printed rooms, 0 silent, errors 9 (was 17 / 36 with 1
+  silent, then 41 / 45, 48 / 48). All three sheets: 82 / 87 (94.3%). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
   living room, COWORKS 584/580, MEETING 725/720, STORAGE 986/982, TURBINE, DOG WASH, JAN. STORAGE,
   FITNESS, PODCAST, WOMENS, STAIR B; METER + ELECTRIC as zones 186 + 281 = 469), 11 flagged off,
   errors 19 (was ~250). White fill-only edges (wipeouts / text masks, 3,900 on this sheet) are not
@@ -201,8 +201,9 @@ TileTakeoff works the other way round:
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
 - Mill 2 still open: LOUNGE (1623) + LOUNGE/GAMING (1457) + MECH + ELEVATOR are one face (the two
   lounges share a ~12' gap with nothing drawn; MECH / ELEVATOR leak through gaps in the brick); the
-  310 SF annex north of the brick has no room; CORRIDOR 576/713; BEDROOM 155/127 + 138/132 (a pair
-  off). Next: a plan-check repair pass (try closing a gap / dropping an
+  310 SF annex north of the brick has no room; CORRIDOR 576/713 (the architect's corridor runs on
+  past its end door into the 22' hall between COWORKS and the offices, which the trace gives to the
+  lounge). Next: a plan-check repair pass (try closing a gap / dropping an
   inferred opening where tags disagree, keep it only if more printed areas agree), an envelope rule,
   and an AI reading pass (building type, legend, outside / in scope) — the AI may name and classify,
   never supply geometry. No Anthropic key in this container: AI modes are mock-tested.

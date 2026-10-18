@@ -153,7 +153,9 @@ export function joinWalls(inSegs, options = {}, log = []) {
       for (const e2 of endByBody(bj)) {
         if (!e2.joined || e2.through || e1.through) continue;
         const g = collinearGap(e1, e2);
-        if (!g || g.gap <= opt.snapTol || g.gap > Math.max(e1.t, e2.t) + opt.snapTol) continue;
+        // (the gap between the crossing walls' faces, not their centrelines)
+        const tw = ((e1.with != null ? segs[e1.with].t : 0) + (e2.with != null ? segs[e2.with].t : 0)) / 2;
+        if (!g || g.gap <= opt.snapTol || g.gap - tw > Math.max(e1.t, e2.t) + opt.snapTol) continue;
         // past a drafting gap (a thick brick wall's), only between walls that
         // come in from opposite sides — a doorway's jambs don't
         if (g.gap > opt.draftGap && !(e1.with != null && e2.with != null && side(e1, segs[e1.with]) * side(e1, segs[e2.with]) < 0)) continue;
