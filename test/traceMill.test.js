@@ -267,8 +267,9 @@ describe('trace — bathrooms and closets of the mill units', () => {
     for (let k = 0; k < 4; k++) lines.push(hline(20 + 5 * k, 0, 12, { w: HEAVY }), hline(20 + 5 * k + sp, 0, 12, { w: HEAVY }));
     const p = pairWalls(lines);
     expect(p.bodies.some((b) => Math.abs(b.a.y - 1.5 * sp) < 0.05 && Math.abs(b.t - sp) < 0.05)).toBe(true);
-    // the same four strokes in one pen are a pattern
-    const hatch = pairWalls([0, 1, 2, 3].map((k) => hline(k * sp, 0, 3, { w: HEAVY })).concat(lines.slice(4)));
+    // the same four strokes in one light pen are a pattern (in the wall pen they're
+    // a layered wall's faces: see traceMarkedJobs, Saddle River's dining room)
+    const hatch = pairWalls([0, 1, 2, 3].map((k) => hline(k * sp, 0, 3, { w: 1.15 / 36 })).concat(lines.slice(4)));
     expect(hatch.bodies.some((b) => b.a.y < 2 && b.a.y > -1)).toBe(false);
   });
 

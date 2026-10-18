@@ -49,7 +49,8 @@ TileTakeoff works the other way round:
     part of a longer wall lying within its band is dropped (the wall stays as drawn, not widened; a
     pilaster standing out of it stays). A short hatch
     run (4–5 lines) must be drawn in one pen (a door leaf, two wall faces and a washer box 6" apart
-    are not a pattern). Window bays: thick piers that pair with one unbroken face line, ≤ 12' apart,
+    are not a pattern) and lighter than the wall pen (a layered wall's four faces stopping at a door —
+    block with a stud wall each side — are no pattern). Window bays: thick piers that pair with one unbroken face line, ≤ 12' apart,
     are one wall across the bay (the plan cuts at window height; below the sill it's solid, so the
     floor stops at the inner face). On a sheet with pen weights a brick wall may share its face line
     with a wall built against it (both faces in a wall pen); they merge into one. `dropCasework`: a strip
@@ -194,7 +195,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 422 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 423 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited

@@ -394,7 +394,10 @@ export function pairWalls(rawLines, options = {}) {
     for (const i of ids) { const key = lines[i].w > 0 ? Math.round(Math.log(lines[i].w) / Math.log(1.1)) : 'none'; n.set(key, (n.get(key) || 0) + 1); }
     return Math.max(...n.values()) >= Math.ceil(0.75 * ids.length);
   };
-  const isPattern = (ids, d) => ids.length >= 6 || (ids.length >= 4 && medianLen(ids) < 10 * d && onePen(ids));
+  // (four or five short lines in the sheet's wall pen are a layered wall's faces
+  // where it stops at a door — block with a stud wall either side — not hatch)
+  const wallPen = (ids) => heavyW > 0 && ids.filter((i) => lines[i].w >= 0.8 * heavyW).length >= Math.ceil(0.75 * ids.length);
+  const isPattern = (ids, d) => ids.length >= 6 || (ids.length >= 4 && medianLen(ids) < 10 * d && onePen(ids) && !wallPen(ids));
   // a wall face that happens to line up with a pattern's strokes (a long
   // exterior face beside a row of short window-frame or tread lines) is
   // not one of them
