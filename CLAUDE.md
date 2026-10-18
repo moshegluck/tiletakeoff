@@ -38,10 +38,15 @@ TileTakeoff works the other way round:
     evenly spaced hatch / tile patterns (4+ equal spacings). Pen-aware: on a sheet drawn with pen
     weights two hairlines (< 0.4 × the wall pen) never pair; a light line in an annotation colour
     (`chromatic`, read in `pdfVectors.js`) is never a face; a merged run carries the pen most of it is
-    drawn with; dashed runs (4+ even pieces) are `dashed` — never a wall, except as the hidden outer
+    drawn with, but a pair is judged by the pen along the stretch it uses (`penOn`): a face running
+    on past its heavy pen as a hairline (into a vanity) is a hairline there; a lighter stretch between
+    heavier ones is still the wall; dashed runs (4+ even pieces) are `dashed` — never a wall, except as the hidden outer
     face of a thick wall. Thick masonry 16"–36" when the faces run on 8'+ (or its piers between
-    window bays add up), both in a wall pen, nothing inside. Bodies nested in each other over most of
-    their length (a wall drawn as faces + gypsum + fill) are one wall (`mergeLayers`). A short hatch
+    window bays add up), both in a wall pen, nothing inside. Bodies overlapping in thickness (nested,
+    or sharing most of the thinner one — layer lines paired across each other) over most of both
+    lengths are one wall at any length (`mergeLayers`; a door's 6" jamb drawn on two layers); a copy of
+    part of a longer wall lying within its band is dropped (the wall stays as drawn, not widened; a
+    pilaster standing out of it stays). A short hatch
     run (4–5 lines) must be drawn in one pen (a door leaf, two wall faces and a washer box 6" apart
     are not a pattern). Window bays: thick piers that pair with one unbroken face line, ≤ 12' apart,
     are one wall across the bay (the plan cuts at window height; below the sill it's solid, so the
@@ -72,7 +77,9 @@ TileTakeoff works the other way round:
   - `arcs.js` door-swing recognition from Bézier curves, and from swings a CAD export flattened into
     chains of straight pieces (`arcsFromPolylines`); `readLeaves` reads each swing's drawn leaf
     (the edge closest to the radius: open end → `closed` = the other end) and keeps part-open (25–55°)
-    swings only with their leaf.
+    swings only with their leaf. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
+    lighter than the sheet's wall pen) are never wall faces; `runTrace` also cuts every body along a door's closed leaf (hinge → `closed`):
+    a threshold or leaf drawn across a doorway is no wall.
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
     used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
@@ -150,7 +157,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 393 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 401 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -163,17 +170,22 @@ TileTakeoff works the other way round:
   CLI: `npm run trace:pdf -- plan.pdf --page 3 --svg outdir` (overlay SVG for checking).
 - Mill 2 (NJ251 Open Square Way, Holyoke — 41-page set; A101 basement = page 16, 1/8", 34k lines,
   no layers, swings as straight pieces, 28" brick with window bays, hidden outer faces, blue dims):
-  bench (1% / 3%, at faces): 41 / 45 of 55 printed rooms, 0 silent (was 17 / 36 with 1 silent). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
+  bench (1% / 3%, at faces): 48 / 48 of 55 printed rooms, 0 silent, errors 9 (was 17 / 36 with 1
+  silent, then 41 / 45). Plan check (old 6% rule) 39 of 55 printed rooms agree (was 4, then 23: bedrooms, bathrooms, offices, every UNIT
   living room, COWORKS 584/580, MEETING 725/720, STORAGE 986/982, TURBINE, DOG WASH, JAN. STORAGE,
   FITNESS, PODCAST, WOMENS, STAIR B; METER + ELECTRIC as zones 186 + 281 = 469), 11 flagged off,
   errors 19 (was ~250). White fill-only edges (wipeouts / text masks, 3,900 on this sheet) are not
   drawing. Patriot and the sample sheet trace as before. `test/traceMill.test.js` = its cases.
   Plan check: several tags in one traced space that add up to it, in sight of each other (no traced
   edge between them), are zones of one open space (`printedParts`, info flag `area_zones`).
-  The second-pass alcove rule needs a mouth ≥ ½·√area (a stair hall behind a slot is a room).
+  The second-pass alcove rule needs a mouth ≥ ½·√area (a stair hall behind a slot is a room); it
+  also joins a named room whose only way in is a smaller unnamed space with one door, open to it with
+  nothing drawn across (a bath's vanity area split off by the tub-end stub). A partition dead-ending in
+  a room is notched into its outline (`notchSpur`): its footprint is off the floor.
   Diagnostics used: render the sheet + trace overlay for a crop and read it (see `scripts/trace-pdf.mjs
   --svg`); every fix above came from one wrong room on this sheet.
-- Sample sheet: 7 rooms, 1,047.3 SF vector vs 1,046.5 SF from the crooked scan; scale read
+- Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
+  1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
 - 10k-line sheet traces in ~0.5 s (spatial indexes everywhere).
 - Phone: right panel is a bottom drawer (tabs open it; loading a PDF opens Trace).
@@ -188,9 +200,9 @@ TileTakeoff works the other way round:
   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Vercel.
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
 - Mill 2 still open: LOUNGE (1623) + LOUNGE/GAMING (1457) + MECH + ELEVATOR are one face (the two
-  lounges share a ~12' gap with nothing drawn; MECH / ELEVATOR leak through gaps in the brick); offices
-  trace 61 vs 55–56 printed (their closet counted in); two bathrooms −15 SF; MENS 134/189; CORRIDOR
-  598/713; a bedroom pair off. Next: a plan-check repair pass (try closing a gap / dropping an
+  lounges share a ~12' gap with nothing drawn; MECH / ELEVATOR leak through gaps in the brick); the
+  310 SF annex north of the brick has no room; CORRIDOR 576/713; BEDROOM 155/127 + 138/132 (a pair
+  off). Next: a plan-check repair pass (try closing a gap / dropping an
   inferred opening where tags disagree, keep it only if more printed areas agree), an envelope rule,
   and an AI reading pass (building type, legend, outside / in scope) — the AI may name and classify,
   never supply geometry. No Anthropic key in this container: AI modes are mock-tested.

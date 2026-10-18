@@ -12,8 +12,9 @@
 import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
-import { dist } from './vec.js';
+import { dist, norm, sub, add, mul } from './vec.js';
 import { describeSheet } from './survey.js';
+import { leafLines } from './arcs.js';
 
 export { parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf };
 export { arcFromBezier } from './arcs.js';
@@ -47,6 +48,22 @@ function alcoveMouths(res) {
     // a nook is open along much of its side; a room behind a narrow gap (a
     // stair hall through a slot in a brick wall) is a room
     if (ops.reduce((a, o) => a + (o.width || dist(o.a, o.b)), 0) < 0.5 * Math.sqrt(r.area)) continue;
+    for (const o of ops) out.push({ ...o.a }, { ...o.b });
+  }
+  // …and a named room whose only way in is a smaller unnamed space, open to
+  // it with nothing drawn across, that has one door of its own (a bathroom's
+  // vanity area, split off by the stub at the end of the tub) is one room
+  // with it. A hall has more doors than one; a closet is smaller than the hall.
+  for (const r of res.rooms) {
+    if (!named.has(r.id)) continue;
+    const ops = res.openings.filter((o) => o.rooms.includes(r.id));
+    if (!ops.length || !ops.every(inferred)) continue;
+    const via = new Set(ops.map((o) => o.rooms.find((id) => id !== r.id)));
+    if (via.size !== 1) continue;
+    const s = res.rooms.find((x) => x.id === [...via][0]);
+    if (!s || named.has(s.id) || s.area > r.area) continue;
+    if (res.openings.filter((o) => o.rooms.includes(s.id) && !o.rooms.includes(r.id)).length !== 1) continue;
+    if (ops.reduce((a, o) => a + (o.width || dist(o.a, o.b)), 0) < 0.5 * Math.sqrt(s.area)) continue;
     for (const o of ops) out.push({ ...o.a }, { ...o.b });
   }
   return out;
@@ -100,11 +117,22 @@ function traceReading(input = {}) {
   const arcs = input.arcs || [];
 
   // 1. linework → wall bodies
-  const paired = input.lines?.length ? pairWalls(input.lines, opt) : { bodies: [], faces: [], lines: [], stats: {} };
+  // (a door's leaf, drawn standing open, is never a wall's face)
+  const leaves = input.lines?.length ? leafLines(arcs, input.lines) : new Set();
+  const wallLines = leaves.size ? input.lines.filter((_, i) => !leaves.has(i)) : input.lines;
+  const paired = wallLines?.length ? pairWalls(wallLines, opt) : { bodies: [], faces: [], lines: [], stats: {} };
   let bodies = mergeBodies([
     ...paired.bodies,
     ...(input.bodies || []).map((b) => ({ conf: 0.75, src: 'given', ...b })),
   ]);
+
+  // a door's closed leaf is its doorway: what's drawn across it (a threshold,
+  // a leaf drawn shut, a pair's meeting stiles) is no wall
+  const doorways = arcs.filter((a) => a?.closed && a.c && dist(a.c, a.closed) > 1).map((a) => {
+    const u = norm(sub(a.closed, a.c)), m = 2 / 12;
+    return { a: add(a.c, mul(u, m)), b: sub(a.closed, mul(u, m)) };
+  });
+  if (doorways.length) bodies = eraseFromBodies(bodies, doorways);
 
   // user erasures win over evidence: cut exactly the erased stretch out of
   // whatever wall bodies it lies along (never the whole run)

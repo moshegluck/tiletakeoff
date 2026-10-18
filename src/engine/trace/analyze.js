@@ -10,7 +10,7 @@
 // ============================================================
 
 import {
-  sub, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex, segIntersect,
+  sub, add, mul, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex, segIntersect, lineIntersect,
 } from './vec.js';
 import { traceFaces, stripSpurs, splitPinches, fmtIn } from './graph.js';
 // (dist, signedArea etc. come from vec.js above)
@@ -96,6 +96,55 @@ export function offsetLoop(loop, nodes, distOf) {
   }
   if (poly.length > 1 && dist(poly[0], poly[poly.length - 1]) < 1e-6) poly.pop();
   return { poly, segLen, edges: L.map((x) => x.h.e), inverted };
+}
+
+/**
+ * A partition that dead-ends inside a room stands on the room's floor: notch
+ * its footprint (from the face it leaves to its end, as wide as it is thick)
+ * into the room's outline. A straight one only, whose two sides leave the
+ * same edge of the outline and stay inside the room; otherwise null (the
+ * outline stays as it was).
+ * @param {{x,y}[]} poly  room outline
+ * @param {{x,y}} A  where the partition meets its host wall (centreline)
+ * @param {{x,y}} F  its free end
+ * @param {number} t  its thickness
+ */
+export function notchSpur(poly, A, F, t) {
+  const L = dist(A, F), k = poly.length;
+  if (L < 1e-6 || !(t > 0) || k < 3) return null;
+  const u = norm(sub(F, A)), n = perp(u), h = t / 2;
+  // where a side of the partition leaves the outline: the nearest edge its
+  // line crosses between the host wall's centreline and the free end
+  const leave = (o) => {
+    let best = null;
+    for (let i = 0; i < k; i++) {
+      const p = poly[i], q = poly[(i + 1) % k];
+      const hit = lineIntersect(o, u, p, sub(q, p));
+      if (!hit || hit.u < 0 || hit.u > 1 || hit.s < -h || hit.s > L - 1e-3) continue;
+      if (!best || hit.s < best.s) best = { ...hit, i };
+    }
+    return best;
+  };
+  const sides = [1, -1].map((sg) => {
+    const hit = leave(add(A, mul(n, sg * h)));
+    return hit && { hit, cap: add(F, mul(n, sg * h)) };
+  });
+  if (!sides[0] || !sides[1]) return null;
+  // in the outline's order (the notch may straddle where the outline starts)
+  const pos = (sd) => sd.hit.i + sd.hit.u;
+  let [s1, s2] = pos(sides[0]) <= pos(sides[1]) ? sides : [sides[1], sides[0]];
+  if (pos(s2) - pos(s1) > k / 2) [s1, s2] = [s2, s1];
+  // outline corners between the two sides lie under the partition (the host
+  // wall's face split where the partition tees into it)
+  for (let j = (s1.hit.i + 1) % k; j !== (s2.hit.i + 1) % k; j = (j + 1) % k) {
+    if (Math.abs(dot(sub(poly[j], A), n)) > h + 1e-3) return null;
+  }
+  const keep = [];
+  for (let j = (s2.hit.i + 1) % k; ; j = (j + 1) % k) { keep.push(poly[j]); if (j === s1.hit.i || keep.length > k) break; }
+  for (const [a, b] of [[s1.hit.pt, s1.cap], [s1.cap, s2.cap], [s2.cap, s2.hit.pt]]) {
+    for (let m = 0; m + 1 < keep.length; m++) if (segIntersect(a, b, keep[m], keep[m + 1])) return null;
+  }
+  return [...keep, s1.hit.pt, s1.cap, s2.cap, s2.hit.pt];
 }
 
 /**
@@ -359,7 +408,7 @@ export function analyzeGraph(g, ctx = {}) {
       });
     }
     // spurs: a partition that dead-ends inside the room has two faces + an end cap
-    const spurList = [];
+    const spurList = [], notches = [];
     let spurLf = 0;
     const spurEdges = [...f.spurs, ...extraSpurs.filter((e) => !f.spurs.includes(e))].filter((e) => e.kind !== 'opening');
     if (spurEdges.length) {
@@ -390,14 +439,27 @@ export function analyzeGraph(g, ctx = {}) {
         const lf = Math.max(0, 2 * total - hostSum - attaches.length * tc + frees.length * tc);
         spurLf += lf;
         const freeEnd = frees[0];
+        const straight = chain.every((x) => Math.abs(cross(norm(sub(nodes[x.v], nodes[x.u])), norm(sub(nodes[chain[0].v], nodes[chain[0].u])))) < 0.02);
+        if (straight && attaches.length === 1 && frees.length === 1 && ringLoops[0].l.some((h) => h.from === attach)) notches.push({ A: nodes[attach], F: nodes[freeEnd], t: tc, L: total });
         spurList.push({ lf, length: total, t: chain[0].t, a: attach != null ? { ...nodes[attach] } : { ...nodes[chain[0].u] }, b: freeEnd != null ? { ...nodes[freeEnd] } : { ...nodes[chain[0].v] }, edges: chain.map((x) => x.id) });
+      }
+    }
+
+    // the partitions that dead-end in the room take their footprint off its floor
+    let outline = parts[0].poly;
+    if (!fellBack) {
+      for (const sp of notches) {
+        const np = notchSpur(outline, sp.A, sp.F, sp.t);
+        const cut = np ? Math.abs(signedArea(outline)) - Math.abs(signedArea(np)) : 0;
+        if (!np || cut <= 0 || cut > 1.5 * sp.L * sp.t) continue;
+        outline = np; area -= cut; areaFaces -= cut;
       }
     }
 
     const id = `r${++rIdx}`;
     const room = {
       id, faceId: f.id,
-      poly: fellBack ? ringLoops[0].l.map((h) => ({ ...nodes[h.from] })) : parts[0].poly,
+      poly: fellBack ? ringLoops[0].l.map((h) => ({ ...nodes[h.from] })) : outline,
       extraPolys: parts.slice(1).map((p) => p.poly),
       holes: fellBack ? (f.holes || []).map((o) => o.poly).concat(holeLoops.map((l) => l.map((h) => ({ ...nodes[h.from] })))) : holes.map((h) => h.poly),
       centerPoly: ringLoops[0].l.map((h) => nodes[h.from]),
@@ -405,7 +467,7 @@ export function analyzeGraph(g, ctx = {}) {
       wallLf: wallLf + spurLf, wallLfLoop: wallLf, openingLf, spurLf, spurs: spurList,
       edgeIds: [...new Set(edgeLfs.map((x) => x.e.id))],
       labels: (f.labels || []).map((t) => t.str.trim()),
-      center: interiorPoint(parts[0].poly.length >= 3 ? parts[0].poly : f.poly),
+      center: interiorPoint(outline.length >= 3 ? outline : f.poly),
       openings: [],
       flags: [],
     };

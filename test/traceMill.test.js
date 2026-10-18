@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { runTrace } from '../src/engine/trace/index.js';
-import { pairWalls, mergeCollinear, dropCasework } from '../src/engine/trace/walls.js';
+import { pairWalls, mergeCollinear, dropCasework, mergeLayers } from '../src/engine/trace/walls.js';
 import { buildGraph, joinWalls, bridgeOpenings } from '../src/engine/trace/graph.js';
-import { arcsFromPolylines, isDoorSwing, readLeaves } from '../src/engine/trace/arcs.js';
+import { arcsFromPolylines, isDoorSwing, readLeaves, leafLines } from '../src/engine/trace/arcs.js';
+import { notchSpur } from '../src/engine/trace/analyze.js';
 import { chromatic } from '../src/lib/pdfVectors.js';
 import { wallsToLines } from './fixtures/planFactory.js';
 
@@ -560,3 +561,127 @@ describe('trace — doors read from their swings and leaves', () => {
   });
 });
 
+
+describe('trace — one room, to its drawn faces (tub stubs, leaves, layers, pens)', () => {
+  const t = 5 * IN;
+  const asBodies = (walls) => walls.map((w) => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 }, t: w.t }));
+  const polyArea = (P) => Math.abs(P.reduce((s, p, i) => s + p.x * P[(i + 1) % P.length].y - P[(i + 1) % P.length].x * p.y, 0)) / 2;
+
+  it("a bathroom split by the stub at the end of its tub is one room with its vanity area", () => {
+    // ENTRY (west) and a 10x6.5 bathroom; a door between them, and a 2.6'
+    // stub off the bathroom's south wall at the tub's end. The stub's ray
+    // north splits off an unnamed vanity area holding the bathroom's door.
+    const bodies = [
+      ...asBodies(box(15, 6.5, t)),
+      { a: { x: 5, y: 0 }, b: { x: 5, y: 1 }, t }, { a: { x: 5, y: 3.5 }, b: { x: 5, y: 6.5 }, t },
+      { a: { x: 9, y: 3.9 }, b: { x: 9, y: 6.5 }, t: 4.4 * IN },
+    ];
+    const arc = { c: { x: 5, y: 1 }, r: 2.5, sweepDeg: 90, p0: { x: 5, y: 3.5 }, p3: { x: 7.5, y: 1 }, closed: { x: 5, y: 3.5 } };
+    const res = runTrace({ bodies, arcs: [arc], texts: [{ str: 'ENTRY', x: 2.5, y: 3 }, { str: 'BATHROOM', x: 12.5, y: 2 }] });
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['BATHROOM', 'ENTRY']);
+  });
+
+  it("a partition that dead-ends in a room takes its footprint off the floor (the outline is notched round it)", () => {
+    // a 10x8 bath; a 4' pony wall, 4.5" thick, off the south wall
+    const ts = 4.5 * IN;
+    const bodies = [...asBodies(box(10, 8, t)), { a: { x: 4, y: 4 }, b: { x: 4, y: 8 }, t: ts }];
+    const res = runTrace({ bodies, texts: [{ str: 'BATH', x: 7, y: 4 }] });
+    expect(res.rooms.length).toBe(1);
+    const r = res.rooms[0];
+    const want = (10 - t) * (8 - t) - (4 - t / 2) * ts;
+    expect(r.area).toBeCloseTo(want, 2);
+    expect(polyArea(r.poly)).toBeCloseTo(want, 2);   // the app takes the floor from the outline
+    // a stub whose sides leave different walls (or nothing) keeps the outline as it was
+    expect(notchSpur([{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 }], { x: 9, y: 9 }, { x: 9, y: 12 }, ts)).toBe(null);
+  });
+
+  it("a door's leaf drawn standing open along a wall is not that wall's face", () => {
+    // 4¼" and 14" walls are the sheet's common thicknesses; a 12x8 room's
+    // north wall is 5.3". A door leaf (a 1¾" rectangle) stands open along it,
+    // its far side 14" from the wall's outer face: paired with that face (a
+    // common thickness, so first) it made a 14" wall eating a strip of the room
+    const W = 12, H = 8, tw = 4.25 * IN, tn = 5.3 * IN, hy = -tn / 2 + 14 * IN;
+    const walls = box(W, H, tw);
+    walls[0].t = tn;
+    const lines = heavy(wallsToLines(walls, [{ axis: 'v', c: 0, s: hy, w: 2.5, t: tw }], W, H));
+    const LEAF = 1.3 / 36;
+    lines.push(hline(hy, tw / 2, tw / 2 + 2.5, { w: LEAF }), hline(hy - 1.75 * IN, tw / 2, tw / 2 + 2.5, { w: LEAF }));
+    for (let k = 0; k < 6; k++) lines.push(hline(20 + 4 * k, 0, 14, { w: HEAVY }), hline(20 + 4 * k + tw, 0, 14, { w: HEAVY }));
+    for (let k = 0; k < 4; k++) lines.push(hline(50 + 4 * k, 0, 14, { w: HEAVY }), hline(50 + 4 * k + 14 * IN, 0, 14, { w: HEAVY }));
+    const arc = { c: { x: tw / 2, y: hy }, r: 2.5, sweepDeg: 90, p0: { x: tw / 2, y: hy + 2.5 }, p3: { x: tw / 2 + 2.5, y: hy }, closed: { x: tw / 2, y: hy + 2.5 } };
+    expect([...leafLines([arc], lines)].length).toBe(2);
+    // a sheet in one pen can't tell a leaf from a short return wall it opens against: kept
+    expect([...leafLines([arc], lines.map((l) => ({ ...l, w: HEAVY })))].length).toBe(0);
+    const res = runTrace({ lines, arcs: [arc] });
+    const room = res.rooms.find((r) => r.area > 50);
+    expect(room.areaFaces).toBeCloseTo((W - tw) * (H - tn / 2 - tw / 2), 0);
+  });
+
+  it("a door's 6\" jamb drawn on two layers is one jamb", () => {
+    // the partition's piece above a door, drawn twice (3.5" and 4.8", same
+    // centre): left as two, each copy's end "touched" the other, so neither
+    // was free and the door never found its jamb
+    const a = { a: { x: 6, y: 0.1 }, b: { x: 6, y: 0.67 }, t: 3.5 * IN }, b = { a: { x: 6, y: 0.2 }, b: { x: 6, y: 0.67 }, t: 4.8 * IN };
+    const atDoor = mergeLayers([a, b]).filter((o) => Math.max(o.a.y, o.b.y) > 0.66);
+    expect(atDoor.length).toBe(1);
+    expect(atDoor[0].t * 12).toBeCloseTo(4.8, 1);
+  });
+
+  it('a copy of part of a wall lying in it is that wall, as drawn (not two walls, not widened)', () => {
+    const long = { a: { x: 0, y: 0 }, b: { x: 0, y: 28 }, t: 6.6 * IN };
+    const copy = { a: { x: 1 * IN, y: 0 }, b: { x: 1 * IN, y: 11 }, t: 6.5 * IN };
+    expect(mergeLayers([long, copy])).toEqual([long]);
+    expect(mergeLayers([copy, long])).toEqual([long]);
+    // a pilaster (a short, thicker body standing out of one side) stays
+    const pilaster = { a: { x: 4 * IN, y: 5 }, b: { x: 4 * IN, y: 7 }, t: 14.6 * IN };
+    expect(mergeLayers([long, pilaster]).length).toBe(2);
+  });
+
+  it('two bands sharing most of a wall\'s thickness (layer lines paired across each other) are one wall', () => {
+    // faces at 0 and 5.6"; gypsum lines between them: one pair took the
+    // outer face and the far gypsum line, the other the near one and the far face
+    const p = { a: { x: 0, y: 2.1 * IN }, b: { x: 3, y: 2.1 * IN }, t: 4.2 * IN };
+    const q = { a: { x: 0, y: 3.6 * IN }, b: { x: 3, y: 3.6 * IN }, t: 4.0 * IN };
+    const out = mergeLayers([p, q]);
+    expect(out.length).toBe(1);
+    expect(out[0].t * 12).toBeCloseTo(5.6, 1);
+  });
+
+  it("a wall face running on as a vanity's hairline doesn't pair with the vanity along that stretch", () => {
+    // the closet wall's face is drawn heavy to x 4, then the same line runs on
+    // in a hairline to the vanity; the vanity's top is a hairline 13½" off it
+    const lines = [
+      hline(0, 0, 4, { w: HEAVY }), hline(0, 4.05, 5.85, { w: LIGHT }), hline(5 * IN, 0, 4, { w: HEAVY }),
+      hline(13.5 * IN, 4.05, 6.5, { w: LIGHT }),
+    ];
+    for (let k = 0; k < 4; k++) lines.push(hline(20 + 4 * k, 0, 12, { w: HEAVY }), hline(20 + 4 * k + t, 0, 12, { w: HEAVY }));
+    const bodies = pairWalls(lines).bodies.filter((b) => b.a.y < 5);
+    expect(bodies.some((b) => b.t > 10 * IN)).toBe(false);
+    expect(bodies.some((b) => Math.abs(b.t - 5 * IN) < 0.01 && Math.abs(b.b.x - b.a.x) > 3.9)).toBe(true);
+    // a stretch drawn lighter between heavier ones is still the wall
+    const mid = [
+      vline(0, 0, 5, { w: 1.15 / 36 }), vline(0, 5.05, 12, { w: 0.72 / 36 }), vline(0, 12.05, 14, { w: 1.15 / 36 }),
+      vline(6.8 * IN, 0, 5, { w: 1.15 / 36 }), vline(6.8 * IN, 5.05, 12, { w: 0.72 / 36 }), vline(6.8 * IN, 12.05, 14, { w: 1.15 / 36 }),
+    ];
+    for (let k = 0; k < 4; k++) mid.push(hline(20 + 4 * k, 0, 12, { w: HEAVY }), hline(20 + 4 * k + t, 0, 12, { w: HEAVY }));
+    const wall = pairWalls(mid).bodies.filter((b) => Math.abs(b.a.x - b.b.x) < 0.01 && b.a.x < 1);
+    expect(wall.reduce((s, b) => s + Math.abs(b.b.y - b.a.y), 0)).toBeGreaterThan(13.5);
+  });
+
+  it("what's drawn across a double door's opening (its threshold) is no wall: the pair is a double door", () => {
+    // TURBINE above, STORAGE below; a 5'-8" opening with two leaves standing
+    // open and the threshold drawn across it as a strip
+    const bodies = [
+      ...asBodies(box(20, 16, t)),
+      { a: { x: 0, y: 8 }, b: { x: 7, y: 8 }, t }, { a: { x: 12.7, y: 8 }, b: { x: 20, y: 8 }, t },
+      { a: { x: 7.1, y: 8 }, b: { x: 12.6, y: 8 }, t: 4.5 * IN },
+    ];
+    const arcs = [
+      { c: { x: 7.1, y: 7.85 }, r: 2.83, sweepDeg: 90, p0: { x: 9.93, y: 7.85 }, p3: { x: 7.1, y: 5.02 }, closed: { x: 9.93, y: 7.85 } },
+      { c: { x: 12.6, y: 7.85 }, r: 2.83, sweepDeg: 90, p0: { x: 9.77, y: 7.85 }, p3: { x: 12.6, y: 5.02 }, closed: { x: 9.77, y: 7.85 } },
+    ];
+    const res = runTrace({ bodies, arcs, texts: [{ str: 'TURBINE ROOM', x: 10, y: 3 }, { str: 'STORAGE', x: 10, y: 12 }] });
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['STORAGE', 'TURBINE ROOM']);
+    expect(res.openings.filter((o) => o.openingType === 'double_door').length).toBe(1);
+  });
+});
