@@ -89,7 +89,7 @@ function dashRuns(runs, at) {
         dup: seq.reduce((acc, r) => acc + r.dup, 0), dashed: true,
       });
     } else {
-      for (const r of seq) out.push({ a: r.a, b: r.b, w: r.w, wl: r.wl, ann: r.ann, dup: r.dup });
+      for (const r of seq) out.push({ a: r.a, b: r.b, w: r.w, wl: r.wl, ann: r.ann, dup: r.dup, ...(r.pens ? { pens: r.pens } : {}) });
     }
     i = j + 1;
   }
@@ -148,9 +148,14 @@ export function mergeCollinear(raw, options = {}) {
       };
       let a = band[0].s0, b = band[0].s1, wl = band[0].wl, cnt = 1;
       addPen(band[0]);
+      // which pen draws which stretch: a run that changes pen along its
+      // length (a wall face running on as a vanity's hairline) is judged by
+      // the stretch a pair uses (see penOn)
+      let pieces = [band[0]];
       const runs = [];
       const at = (sv) => ({ x: u.x * sv + n.x * rho, y: u.y * sv + n.y * rho });
-      const emit = () => runs.push({ a: at(a), b: at(b), s0: a, s1: b, w: runW(), wl, ann: annL > allL / 2, dup: cnt });
+      const emit = () => runs.push({ a: at(a), b: at(b), s0: a, s1: b, w: runW(), wl, ann: annL > allL / 2, dup: cnt,
+        ...(pen.size > 1 ? { pens: pieces.map((pc) => ({ a: at(pc.s0), b: at(pc.s1), w: pc.w })) } : {}) });
       let first = band[0];
       const emitRun = () => {
         if (cnt === 1) runs.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, s0: a, s1: b, w: first.w, wl, ann: first.ann, dup: 1 });
@@ -158,8 +163,8 @@ export function mergeCollinear(raw, options = {}) {
       };
       for (let i = 1; i < band.length; i++) {
         const l = band[i];
-        if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); wl = wl || l.wl; cnt++; addPen(l); }
-        else { emitRun(); a = l.s0; b = l.s1; wl = l.wl; cnt = 1; first = l; pen.clear(); annL = allL = 0; addPen(l); }
+        if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); wl = wl || l.wl; cnt++; addPen(l); pieces.push(l); }
+        else { emitRun(); a = l.s0; b = l.s1; wl = l.wl; cnt = 1; first = l; pen.clear(); annL = allL = 0; addPen(l); pieces = [l]; }
       }
       emitRun();
       merged.push(...dashRuns(runs, at));
@@ -198,6 +203,35 @@ function addInterval(cov, a, b) {
     else out.push([iv[0], iv[1]]);
   }
   cov.length = 0; cov.push(...out);
+}
+
+/**
+ * The pen a line is drawn with along [o0, o1] (projected on u). A merged run
+ * that changes pen along its length carries its pieces (`pens`). Within the
+ * span its own pen covers, it is that line (a stretch of wall drawn on a
+ * lighter layer between heavier ones is still the wall); a stretch that runs
+ * on past the end of it — a wall face running on as a vanity's edge — is
+ * judged by the pen that draws that stretch (the heaviest drawing at least
+ * half as much as the most-used one, as for a whole run in mergeCollinear).
+ */
+function penOn(l, o0, o1, u) {
+  if (!l.pens) return l.w;
+  const span = (pc) => [Math.min(dot(pc.a, u), dot(pc.b, u)), Math.max(dot(pc.a, u), dot(pc.b, u))];
+  let h0 = Infinity, h1 = -Infinity;
+  for (const pc of l.pens) if (pc.w >= l.w) { const [s0, s1] = span(pc); h0 = Math.min(h0, s0); h1 = Math.max(h1, s1); }
+  const past = [[o0, Math.min(o1, h0)], [Math.max(o0, h1), o1]].filter(([a, b]) => b - a > 0);
+  if (past.reduce((acc, [a, b]) => acc + b - a, 0) < 0.5 * (o1 - o0)) return l.w;
+  const mass = new Map();
+  for (const pc of l.pens) {
+    const [s0, s1] = span(pc);
+    for (const [a, b] of past) {
+      const ov = Math.min(b, s1) - Math.max(a, s0);
+      if (ov > 0) mass.set(pc.w, (mass.get(pc.w) || 0) + ov);
+    }
+  }
+  if (!mass.size) return l.w;
+  const most = Math.max(...mass.values());
+  return Math.max(...[...mass].filter(([, L]) => L >= most * 0.5).map(([pw]) => pw));
 }
 
 /**
@@ -242,7 +276,7 @@ export function pairWalls(rawLines, options = {}) {
       if (thick && o1 - o0 < Math.max(opt.minBodyLen, 1.5)) continue;
       // a dashed line is only ever the hidden face of a thick wall
       if ((l.dashed || m.dashed) && (!thick || (l.dashed && m.dashed))) continue;
-      const c = { i: l.id, j, d, o0, o1, overlap: o1 - o0, thick };
+      const c = { i: l.id, j, d, o0, o1, overlap: o1 - o0, thick, wi: penOn(l, o0, o1, u), wj: penOn(m, o0, o1, u) };
       cands.push(c);
       if (thick) continue;
       partners[l.id].push({ j, d, side: Math.sign(side), o0, o1 });
@@ -306,7 +340,7 @@ export function pairWalls(rawLines, options = {}) {
     let total = 0;
     for (const c of cands) {
       if (c.thick) continue;
-      const w = Math.max(lines[c.i].w || 0, lines[c.j].w || 0);
+      const w = Math.max(c.wi || 0, c.wj || 0);
       if (!(w > 0)) continue;
       const key = Math.round(Math.log(w) / Math.log(1.08));
       const m = Math.min(c.overlap, 10);
@@ -320,12 +354,12 @@ export function pairWalls(rawLines, options = {}) {
   // is never a wall face. A thick masonry pair needs both faces in a wall
   // pen — an existing wall is often plotted lighter than new work, but a
   // hairline dimension string three feet off a wall is not its other face.
-  const light = (l, ratio) => heavyW > 0 && (l.w || 0) < heavyW * ratio;
+  const light = (w, ratio) => heavyW > 0 && (w || 0) < heavyW * ratio;
   const hairline = (c) => {
     const l = lines[c.i], m = lines[c.j];
-    if ((l.ann && light(l, opt.hairlineRatio)) || (m.ann && light(m, opt.hairlineRatio))) return true;
-    if (c.thick) return l.ann || m.ann || light(l, opt.thickPenRatio) || light(m, opt.thickPenRatio);
-    return heavyW > 0 && Math.max(l.w || 0, m.w || 0) < heavyW * opt.hairlineRatio;
+    if ((l.ann && light(c.wi, opt.hairlineRatio)) || (m.ann && light(c.wj, opt.hairlineRatio))) return true;
+    if (c.thick) return l.ann || m.ann || light(c.wi, opt.thickPenRatio) || light(c.wj, opt.thickPenRatio);
+    return heavyW > 0 && Math.max(c.wi || 0, c.wj || 0) < heavyW * opt.hairlineRatio;
   };
 
   // ---- hatch / evenly spaced series rejection ----
@@ -441,7 +475,7 @@ export function pairWalls(rawLines, options = {}) {
     // face); mergeLayers makes them one wall. Thick walls don't overlap each
     // other. Only on a sheet drawn with pen weights, where a counter's or a
     // bench's line (a hairline) can't be a masonry face.
-    const share = c.thick && heavyW > 0 && opt.shareThickFaces !== false && !light(l, opt.hairlineRatio) && !light(m, opt.hairlineRatio);
+    const share = c.thick && heavyW > 0 && opt.shareThickFaces !== false && !light(c.wi, opt.hairlineRatio) && !light(c.wj, opt.hairlineRatio);
     const covL = share ? l.tcov : l.cov;
     // m's coverage is stored along m.u; rebuild the points and project onto u.
     const mPerp = dot(m.a, perp(m.u));
@@ -472,8 +506,8 @@ export function pairWalls(rawLines, options = {}) {
       const B = { x: (pL1.x + f1.x) / 2, y: (pL1.y + f1.y) / 2 };
       const conf = Math.min(1, (c.typical ? 0.85 : 0.55) + Math.min(0.15, (b - a) / 40));
       // faced on one side by a hairline that isn't on a wall layer: maybe casework against a wall
-      const lightFace = heavyW > 0 && [l, m].some((x) => !x.wl && (x.w || 0) < heavyW * opt.hairlineRatio);
-      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(l.w, m.w), wmin: Math.min(l.w, m.w), typical: c.typical, src: 'paired', ...(c.thick ? { faces: [c.i, c.j] } : {}), ...(lightFace ? { lightFace: true } : {}) });
+      const lightFace = heavyW > 0 && [[l, c.wi], [m, c.wj]].some(([x, w]) => !x.wl && (w || 0) < heavyW * opt.hairlineRatio);
+      bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(c.wi, c.wj), wmin: Math.min(c.wi, c.wj), typical: c.typical, src: 'paired', ...(c.thick ? { faces: [c.i, c.j] } : {}), ...(lightFace ? { lightFace: true } : {}) });
       addInterval(l.cov, a, b);
       if (c.thick) addInterval(l.tcov, a, b);
       // store m coverage in m's own param
@@ -647,12 +681,29 @@ export function mergeLayers(bodies, { angTol = 1.5 * Math.PI / 180, touchTol = 1
         const ps = [dot(p.a, u), dot(p.b, u)].sort((a, b) => a - b);
         const qs = [dot(q.a, u), dot(q.b, u)].sort((a, b) => a - b);
         const lo = Math.max(ps[0], qs[0]), hi = Math.min(ps[1], qs[1]);
-        if (hi - lo < minOverlap) continue;
+        // (one inside the other, it's the same wall at any length: a door's
+        // 6" jamb drawn on two layers)
+        if (hi - lo < (gap < -touchTol ? Math.min(minOverlap, 0.1) : minOverlap)) continue;
         if (gap < -touchTol) {
           // overlapping: only the same wall twice — one band inside the
-          // other, running together for most of both lengths
+          // other, or the two sharing most of the thinner one's thickness (a
+          // face paired with the far gypsum line, the near gypsum line with
+          // the other face) — running together for most of both lengths
           const nested = Math.abs(rq - rp) + Math.min(p.t, q.t) / 2 <= Math.max(p.t, q.t) / 2 + touchTol;
-          if (!nested || hi - lo < 0.5 * (ps[1] - ps[0]) || hi - lo < 0.5 * (qs[1] - qs[0])) continue;
+          const shared = Math.min(rp + p.t / 2, rq + q.t / 2) - Math.max(rp - p.t / 2, rq - q.t / 2) >= 0.5 * Math.min(p.t, q.t);
+          if (!(nested || shared)) continue;
+          if (hi - lo < 0.5 * (ps[1] - ps[0]) || hi - lo < 0.5 * (qs[1] - qs[0])) {
+            // a copy of part of a longer wall, lying in it, is that wall —
+            // as it's drawn, not widened to the copy (two walls can't overlap)
+            const pShort = ps[1] - ps[0] < qs[1] - qs[0];
+            const [sb, lb, rs, rl] = pShort ? [p, q, rp, rq] : [q, p, rq, rp];
+            if (hi - lo < 0.8 * Math.min(ps[1] - ps[0], qs[1] - qs[0])) continue;
+            // (a short thicker body standing out of the wall is a pilaster, not a copy)
+            if (Math.abs(rs - rl) + sb.t / 2 > lb.t / 2 + touchTol) continue;
+            dead.add(pShort ? i : j); merged++;
+            if (pShort) break;
+            continue;
+          }
         }
         // the combined body spans both outer faces
         const f0 = Math.min(rp - p.t / 2, rq - q.t / 2), f1 = Math.max(rp + p.t / 2, rq + q.t / 2);

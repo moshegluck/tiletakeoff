@@ -100,6 +100,43 @@ export function readLeaves(arcs, short, lines) {
 }
 
 /**
+ * The lines that draw a door's leaf standing open: from the hinge (the
+ * swing's centre) out to the end of the swing where the door stands open, as
+ * long as the swing's radius — both long sides of a leaf drawn as a thin
+ * rectangle. A leaf is never a wall's face: opened flat along a wall, it
+ * pairs with the wall into one thick wall that eats a strip of the room.
+ * Only swings whose leaf `readLeaves` found (`closed` set) have one, and only
+ * a leaf drawn lighter than the sheet's wall pen is told apart from a short
+ * return wall it opens against (a sheet in one pen keeps its lines).
+ * @param {{c,r,p0,p3,closed?}[]} arcs  door swings (ft)
+ * @param {{a:{x,y},b:{x,y},w?:number}[]} lines   linework (ft)
+ * @returns {Set<number>} indexes into lines
+ */
+export function leafLines(arcs, lines) {
+  const out = new Set();
+  const doors = arcs.filter((a) => a?.closed && a.c && a.p0 && a.p3 && a.r > 0);
+  if (!doors.length || !lines.length) return out;
+  // the sheet's wall pen: the heaviest drawing a fair share of its linework
+  const mass = new Map();
+  let total = 0;
+  for (const l of lines) { const L = dist(l.a, l.b); total += L; if (l.w > 0) mass.set(l.w, (mass.get(l.w) || 0) + L); }
+  const wallPen = Math.max(0, ...[...mass].filter(([, L]) => L >= 0.05 * total).map(([w]) => w));
+  if (!(wallPen > 0)) return out;
+  const idx = new GridIndex(2);
+  lines.forEach((l, i) => { idx.insert(i, l.a.x, l.a.y, l.a.x, l.a.y); idx.insert(i, l.b.x, l.b.y, l.b.x, l.b.y); });
+  for (const arc of doors) {
+    const tol = Math.max(0.25, arc.r * 0.12);
+    const open = dist(arc.closed, arc.p0) < dist(arc.closed, arc.p3) ? arc.p3 : arc.p0;
+    for (const i of idx.query(arc.c.x - tol, arc.c.y - tol, arc.c.x + tol, arc.c.y + tol)) {
+      const l = lines[i];
+      if (out.has(i) || !((l.w || 0) < 0.8 * wallPen) || Math.abs(dist(l.a, l.b) - arc.r) > 2 * tol) continue;
+      if ((dist(l.a, arc.c) <= tol && dist(l.b, open) <= tol) || (dist(l.b, arc.c) <= tol && dist(l.a, open) <= tol)) out.add(i);
+    }
+  }
+  return out;
+}
+
+/**
  * Door swings drawn as polylines. Many CAD exports flatten a swing into a
  * chain of short straight pieces (8 or 16 to a quarter circle) — no curve on
  * the sheet at all. Chain the short segments that meet end to end and turn
