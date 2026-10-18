@@ -145,4 +145,16 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(roomTypeOf('OPEN TO BELOW')).toBe('nofloor');
     expect(res.rooms.find((r) => r.name === 'OPEN TO ASSEMBLY')?.type ?? 'nofloor').toBe('nofloor');
   });
+
+  it("a layered wall's faces where it stops at a door are no hatch (Saddle River's dining room)", () => {
+    // block with a stud wall either side: four face lines 6" apart in the
+    // wall pen, 3.7' long between the door and the corner — four short evenly
+    // spaced lines, which read as a hatch pattern and left the room open
+    const ys = [0, 0.5, 1, 1.5];
+    const res = pairWalls(ys.map((y) => hline(y, 0, 3.7)), {});
+    expect(res.bodies.length).toBeGreaterThan(0);
+    // the same four strokes drawn light are a pattern (a tile field, treads)
+    const light = pairWalls([...ys.map((y) => hline(y, 0, 3.7, HEAVY * 0.3)), hline(5, 0, 20), hline(5.5, 0, 20)], {});
+    expect(light.bodies.every((b) => Math.min(b.a.y, b.b.y) >= 4.9)).toBe(true);
+  });
 });
