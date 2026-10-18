@@ -9,6 +9,7 @@
 import { arcFromBezier, arcsFromPolylines, isDoorSwing, readLeaves } from '../engine/trace/arcs.js';
 import { parseScaleNote } from '../engine/trace/analyze.js';
 import { planScale } from '../engine/trace/sheetScale.js';
+import { dimensionScale } from '../engine/trace/dimScale.js';
 import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 import { chromatic } from './pdfVectors.js';
@@ -128,16 +129,28 @@ export function evidenceToFeet(ev, scale, region = null) {
 /**
  * Read the floor plan's drawing scale off the sheet: the note printed with
  * the plan's title (a sheet's details and sections carry their own), else
- * the note most of the sheet agrees on. Returns { id, label, scale, how,
- * title? } or null.
+ * the note most of the sheet agrees on — then measured against the sheet's
+ * own dimension strings. When enough of them agree on a different scale
+ * (a note copied from another sheet, a plot fitted to the paper), they win.
+ * Returns { id, label, scale, how: 'title'|'common'|'dimensions', title?,
+ * note?, dims? } or null. A measured scale that's no standard one has id null.
  */
 export function detectSheetScale(ev, planDpi) {
   if (!planDpi) return null;
   const pick = planScale(ev.texts);
   const id = pick?.id || parseScaleNote(ev.texts);
-  if (!id) return null;
-  const a = ARCH_SCALES.find((x) => x.id === id);
-  const fpi = archFeetPerPaperInch(a);
-  if (!a || !fpi) return null;
-  return { id, label: a.label, scale: fpi / planDpi, how: pick?.how || 'common', ...(pick?.title ? { title: pick.title } : {}) };
+  const a = id ? ARCH_SCALES.find((x) => x.id === id) : null;
+  const fpi = a ? archFeetPerPaperInch(a) : null;
+  const noted = a && fpi ? { id, label: a.label, scale: fpi / planDpi, how: pick?.how || 'common', ...(pick?.title ? { title: pick.title } : {}) } : null;
+  const dims = dimensionScale(ev.texts, ev.lines || [], planDpi);
+  if (!dims || dims.votes < 5 || dims.agree < 0.4) return noted;
+  const measured = { votes: dims.votes, of: dims.of, fpi: +dims.fpi.toFixed(3) };
+  if (noted && Math.abs(dims.fpi / fpi - 1) <= 0.02) return { ...noted, dims: measured };
+  const std = ARCH_SCALES.find((x) => { const f = archFeetPerPaperInch(x); return f && Math.abs(f / dims.fpi - 1) <= 0.01; });
+  return {
+    id: std ? std.id : null,
+    label: std ? std.label : `1" = ${dims.fpi.toFixed(2)}' (measured)`,
+    scale: (std ? archFeetPerPaperInch(std) : dims.fpi) / planDpi,
+    how: 'dimensions', dims: measured, ...(noted ? { note: noted.label } : {}),
+  };
 }

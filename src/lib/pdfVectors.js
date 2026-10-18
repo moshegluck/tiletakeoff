@@ -182,13 +182,17 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       const tmx = mult(vt, it.transform);
       const h = Math.hypot(tmx[2], tmx[3]);
       const wUser = it.width || 0;
-      // centre of the text run: start + width/2 along the baseline, up half the height
+      // centre of the text run: start + width/2 along the baseline, up a
+      // third of the height (whichever way the text runs)
       const dirx = it.transform[0], diry = it.transform[1];
       const dl = Math.hypot(dirx, diry) || 1;
-      const cxUser = it.transform[4] + (dirx / dl) * wUser / 2;
-      const cyUser = it.transform[5] + (diry / dl) * wUser / 2;
+      const hUser = Math.hypot(it.transform[2], it.transform[3]);
+      const cxUser = it.transform[4] + (dirx / dl) * wUser / 2 - (diry / dl) * hUser * 0.35;
+      const cyUser = it.transform[5] + (diry / dl) * wUser / 2 + (dirx / dl) * hUser * 0.35;
       const c = apply(vt, cxUser, cyUser);
-      texts.push({ str, x: c.x, y: c.y - h * 0.35, h });
+      // the way it reads on the page, as an axis (0 = across, 90 = up the sheet)
+      const rot = ((Math.round((Math.atan2(vt[1] * dirx + vt[3] * diry, vt[0] * dirx + vt[2] * diry) * 180) / Math.PI) % 180) + 180) % 180;
+      texts.push({ str, x: c.x, y: c.y, h, w: wUser * Math.hypot(vt[0], vt[1]), rot });
     }
   } catch (e) { textError = e?.message || String(e); }
   // AutoCAD plots its SHX-font text as strokes and lays the words over them as
@@ -201,7 +205,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       if (!str) continue;
       const p0 = apply(vt, a.rect[0], a.rect[1]), p1 = apply(vt, a.rect[2], a.rect[3]);
       const w = Math.abs(p1.x - p0.x), h = Math.abs(p1.y - p0.y);
-      texts.push({ str, x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, h: Math.min(w, h) || h, shx: true });
+      texts.push({ str, x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, h: Math.min(w, h) || h, w: Math.max(w, h), rot: w >= h ? 0 : 90, shx: true });
       shx++;
     }
   } catch { /* no annotations */ }
