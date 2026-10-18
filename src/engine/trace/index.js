@@ -90,7 +90,7 @@ export function readingScore(res) {
   const v = res.verify || {};
   const kind = (k) => res.flags.filter((f) => f.kind === k).length;
   const named = res.rooms.filter((r) => r.labels?.length).length;
-  return 3 * (v.matched || 0) - 2 * (v.off || 0) + named - 2 * kind('merged_rooms') - 1.5 * kind('room_not_closed') - 0.2 * kind('open_end');
+  return 3 * (v.matched || 0) - 2 * (v.off || 0) + named - 2 * kind('merged_rooms') - 1.5 * kind('room_not_closed') - 0.3 * kind('open_end');
 }
 
 export function runTrace(input = {}) {

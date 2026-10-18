@@ -9,6 +9,7 @@
 // Everything that doesn't add up becomes a located flag.
 // ============================================================
 
+import { otherViews } from './sheetScale.js';
 import {
   sub, add, mul, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex, segIntersect, lineIntersect,
 } from './vec.js';
@@ -62,8 +63,11 @@ function isLabel(str) {
   if (DIM_RE.test(s) || AREA_RE.test(s) || NOISE_RE.test(s)) return false;
   if (/=|scale/i.test(s)) return false;
   if (STRUCT_RE.test(s) || NOTE_RE.test(s) || TAG_RE.test(s)) return false;
+  // a view's title (SILL DETAIL @ GARAGE, WALL TYPE LEGEND) names a view, not a room
+  if (VIEW_RE.test(s)) return false;
   return true;
 }
+const VIEW_RE = /\b(DETAILS?|SECTIONS?|ELEVATIONS?|WALL\s+TYPES?|LEGEND|SCHEDULE|AXONOMETRIC|ISOMETRIC)\b/i;
 
 /** Offset a face loop toward its left face (the room). dists[k] per half-edge. */
 export function offsetLoop(loop, nodes, distOf) {
@@ -244,6 +248,22 @@ export function analyzeGraph(g, ctx = {}) {
       const c = roomsIn.get(k) || { own: 0, containers: 0 };
       if (c.own === 0 && spansSheet(b)) frameComps.add(k);
     }
+    // the sheet's other views (a sill detail, a wall-type legend beside the
+    // plan): linework standing apart from the building with a view's own
+    // title or scale note under it is that view, rooms or not
+    const views = ctx.allTexts ? otherViews(ctx.allTexts) : [];
+    if (views.length) {
+      const lenOf = new Map();
+      for (const e of g.edges) { const k = compOf.get(e.u); lenOf.set(k, (lenOf.get(k) || 0) + Math.hypot(nodes[e.v].x - nodes[e.u].x, nodes[e.v].y - nodes[e.u].y)); }
+      const main = [...lenOf].filter(([k]) => !frameComps.has(k)).sort((p, q) => q[1] - p[1])[0]?.[0];
+      const mb = cbb.get(main);
+      for (const [k, b] of cbb) {
+        if (k === main || frameComps.has(k) || !mb) continue;
+        const apart = b.x1 < mb.x0 || b.x0 > mb.x1 || b.y1 < mb.y0 || b.y0 > mb.y1;
+        const m = 3;
+        if (apart && views.some((v) => v.x >= b.x0 - m && v.x <= b.x1 + m && v.y >= b.y0 - m && v.y <= b.y1 + m)) frameComps.add(k);
+      }
+    }
     // Roomless linework well away from the building (title block, details,
     // schedules) isn't part of it. Anything overlapping the building stays —
     // a leaking wall there must be flagged, never dropped.
@@ -256,11 +276,26 @@ export function analyzeGraph(g, ctx = {}) {
         const far = b.x1 < bb.x0 - 6 || b.x0 > bb.x1 + 6 || b.y1 < bb.y0 - 6 || b.y0 > bb.y1 + 6;
         if (far) frameComps.add(k);
       }
+      // …and linework with rooms of its own well away from the building
+      // (the main wall network) whose rooms no name names (a detail's boxes)
+      const lenOf = new Map();
+      for (const e of g.edges) { const k = compOf.get(e.u); lenOf.set(k, (lenOf.get(k) || 0) + Math.hypot(nodes[e.v].x - nodes[e.u].x, nodes[e.v].y - nodes[e.u].y)); }
+      const main = [...lenOf].filter(([k]) => !frameComps.has(k)).sort((p, q) => q[1] - p[1])[0]?.[0];
+      const mb = cbb.get(main);
+      const named = (k) => interior.some((f) => f.comp === k && (ctx.texts || []).some((t) => isLabel(t.str) && pointInPoly(t, f.poly)));
+      if (mb) {
+        for (const k of roomComps) {
+          if (k === main || frameComps.has(k)) continue;
+          const b = cbb.get(k);
+          const far = b.x1 < mb.x0 - 6 || b.x0 > mb.x1 + 6 || b.y1 < mb.y0 - 6 || b.y0 > mb.y1 + 6;
+          if (far && !named(k)) frameComps.add(k);
+        }
+      }
     }
     if (frameComps.size) {
       const g2 = { nodes: g.nodes, edges: g.edges.filter((e) => !frameComps.has(compOf.get(e.u))).map((e, i) => ({ ...e, id: i })) };
       const res = analyzeGraph(g2, { ...ctx, _frameChecked: true });
-      res.flags.push({ id: 'f_frame', severity: 'info', kind: 'frame', at: null, msg: `${frameComps.size} piece(s) of non-building linework ignored (sheet border, title block, details)` });
+      res.flags.push({ id: 'f_frame', severity: 'info', kind: 'frame', at: null, msg: `${frameComps.size} piece(s) of non-building linework ignored (sheet border, title block, details and other views)` });
       res.ignoredEdges = g.edges.length - g2.edges.length;
       return res;
     }
