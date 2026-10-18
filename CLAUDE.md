@@ -80,6 +80,14 @@ TileTakeoff works the other way round:
     swings only with their leaf. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
     lighter than the sheet's wall pen) are never wall faces; `runTrace` also cuts every body along a door's closed leaf (hinge → `closed`):
     a threshold or leaf drawn across a doorway is no wall.
+  - `sheetScale.js` which scale the floor plan is drawn at: every scale note read text by text (a
+    view's number bubble is no part of it; "SCALE:" + its value as two texts; AutoCAD SHX's flattened
+    stacked fractions, `SCALE:  "=1'-0"14"=1'-0"` = 1/4"), and the note printed with the plan's title
+    ("BASEMENT PLAN", not "SEE … PLAN" / details / sections) wins over the sheet's commonest note (its
+    details'). `planEvidence.detectSheetScale` uses it (`how: 'title' | 'common'`).
+    Room names (`analyze.js` `isLabel`): framing / beam callouts (LVL, HEADER, W18x71, 2x10 @ 16" O.C.),
+    construction notes (… ABOVE, TO BE, SEE), door tags (3'0" X 6'8"), stair notes (UP 22R), window /
+    equipment codes and CAD attribute dumps never name a room.
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
     used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
@@ -166,7 +174,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 405 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 409 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -199,6 +207,11 @@ TileTakeoff works the other way round:
   within 3%, 34 silent with the estimator's scale; 7 / 144 with the scale the trace reads (it takes a
   detail's scale on 5 of 7 plans). Failure classes: wrong / missing scale; structural callouts read
   as room names; big rooms traced as fragments; open rooms merged; small baths / WCs 5–15% off.
+  Now (sheetScale.js + label filters): the plan's scale is right on 9 of the 10 benchmark sheets and
+  the trace scores 25 / 190 with its own scale. The tenth, Saddle A-103 (second floor), says 1/4" but
+  is plotted at 5.53 ft/in (its 28'-11" dimension measures 752.6 px between ticks = Moshe's own
+  calibration); its dimension text is drawn as strokes with no text layer, so only reading the
+  dimension strings (OCR) can catch it. Scale verification from dimension strings / door tags is next.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.

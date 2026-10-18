@@ -8,6 +8,7 @@
 
 import { arcFromBezier, arcsFromPolylines, isDoorSwing, readLeaves } from '../engine/trace/arcs.js';
 import { parseScaleNote } from '../engine/trace/analyze.js';
+import { planScale } from '../engine/trace/sheetScale.js';
 import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 import { chromatic } from './pdfVectors.js';
@@ -124,13 +125,19 @@ export function evidenceToFeet(ev, scale, region = null) {
   return { lines, bodies, arcs, texts, labels, hints, layered };
 }
 
-/** Try to read the drawing scale off the sheet. Returns { id, label, scale } or null. */
+/**
+ * Read the floor plan's drawing scale off the sheet: the note printed with
+ * the plan's title (a sheet's details and sections carry their own), else
+ * the note most of the sheet agrees on. Returns { id, label, scale, how,
+ * title? } or null.
+ */
 export function detectSheetScale(ev, planDpi) {
   if (!planDpi) return null;
-  const id = parseScaleNote(ev.texts);
+  const pick = planScale(ev.texts);
+  const id = pick?.id || parseScaleNote(ev.texts);
   if (!id) return null;
   const a = ARCH_SCALES.find((x) => x.id === id);
   const fpi = archFeetPerPaperInch(a);
   if (!a || !fpi) return null;
-  return { id, label: a.label, scale: fpi / planDpi };
+  return { id, label: a.label, scale: fpi / planDpi, how: pick?.how || 'common', ...(pick?.title ? { title: pick.title } : {}) };
 }
