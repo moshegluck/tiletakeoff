@@ -228,10 +228,32 @@ export function dropDetached(segs, ends, options = {}, log = []) {
   const total = new Map();
   segs.forEach((s, i) => { const r = find(i); total.set(r, (total.get(r) || 0) + dist(s.a, s.b)); });
   const biggest = Math.max(0, ...total.values());
-  const keep = segs.map((_, i) => {
-    const t = total.get(find(i));
-    return t >= opt.minComponentLen || t === biggest;
-  });
+  const big = new Set([...total].filter(([, t]) => t >= opt.minComponentLen || t === biggest).map(([r]) => r));
+  // a short piece of wall standing between two windows (a corner pier, the
+  // wall between two sashes) is detached from the rest by the openings, but
+  // it is no fixture: one of its free ends faces a kept wall's end in line
+  // across the gap, at the same thickness
+  const free = ends.filter((e) => !e.joined);
+  const endIdx = new GridIndex(4);
+  free.forEach((e, i) => endIdx.insert(i, e.p.x, e.p.y, e.p.x, e.p.y));
+  // (a window's width away — not a scrap left a hair off a jamb — and longer than it is thick)
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const e of free) {
+      const r = find(e.bi);
+      if (big.has(r) || total.get(r) < 1.5 * e.t) continue;
+      const R = 10;
+      for (const k of endIdx.query(e.p.x - R, e.p.y - R, e.p.x + R, e.p.y + R)) {
+        const f = free[k];
+        if (!big.has(find(f.bi))) continue;
+        const g = collinearGap(e, f);
+        if (!g || g.gap < opt.minOpening || g.gap > R || Math.abs(e.t - f.t) > 0.35 * Math.max(e.t, f.t)) continue;
+        big.add(r); grew = true;
+        break;
+      }
+    }
+  }
+  const keep = segs.map((_, i) => big.has(find(i)));
   const dropped = keep.filter((k) => !k).length;
   if (dropped) log.push({ kind: 'scrap', at: null, note: `${dropped} detached piece(s) ignored (fixtures, columns, symbols)` });
   const remap = new Map();

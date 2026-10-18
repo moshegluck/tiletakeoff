@@ -56,7 +56,9 @@ TileTakeoff works the other way round:
     faced by a hairline lying face to face along a wall (toilet tank, vanity, counter) is not wall.
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
     gap inside the wall's thickness → a window (closes the room, stays in wall LF).
-  - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures),
+  - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures) — but not a
+    pier between windows (a short piece, longer than thick, whose free end faces a kept wall's end in line
+    across a window-wide gap at the same thickness: Promenade's corner piers),
     bridges doors/openings (swing arcs as evidence), builds the planar graph, traces faces.
     Joins: an end touching only a scrap shorter than half its thickness still finds its corner; a
     tee met just past the other wall's end extends that wall; collinear pieces that each turn into a
@@ -129,6 +131,8 @@ TileTakeoff works the other way round:
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
+    A window-layer run ≥ 8 ft is a glass wall (`glass`: an interior glazed partition, a storefront) —
+    a wall candidate whose two light faces may pair (Saddle A-103's lecture room / open-to-assembly).
     Names in the drafter's language count (Saddle River's dims are on "Размеры"; French A-N-ENV-MUR =
     walls, -FEN = windows, -MOB = furniture) and AIA shorthand (A-FIX., A-SHBD, Q-CASE, A-COLS,
     A-FLOR, floor PAT outlines, NOT IN SCOPE → ignore).
@@ -190,7 +194,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 420 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 422 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -232,7 +236,8 @@ TileTakeoff works the other way round:
   faces through poché, overlapping marked areas once): 55 / 190 right (28.9%), 96 within 3%, 30 silent;
   Saddle p1 3 → 21, Herzka p1 1 → 4 (10 / 14 within 3%). Then dashed swings + the door-tag ruler put
   Saddle A-103 at its true scale: 0 → 15 / 27 right; all jobs 70 / 190 right (36.8%), 117 within 3%,
-  14 silent.
+  14 silent. Piers between windows + glass walls + "OPEN TO ASSEMBLY" as no floor: 71 / 190, 119
+  within 3%, 11 silent (Promenade's INDOOR ACTIVITY 1,002 / 1,015; Saddle's LECTURE ROOM 01 1,029 / 1,031).
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.

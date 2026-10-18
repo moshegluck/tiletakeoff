@@ -77,6 +77,9 @@ function loadImage(src) {
   });
 }
 
+/** ft: a window-layer run this long is a glass wall, not a window in one */
+const GLASS_WALL = 8;
+
 const inRegion = (p, r) => !r || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
 
 /**
@@ -114,8 +117,17 @@ export function evidenceToFeet(ev, scale, region = null) {
   // wl: drawn on a wall layer (a sheet that names them) — the architect's own walls
   // (a white fill's edge with no stroke is a wipeout / text mask, not drawing)
   // (an SHX letter or underline is text, not drawing)
-  const lines = wallCandidates(ev.lines.filter((l) => !l.glyph && inRegion(l.a, region) && inRegion(l.b, region) && !(l.filled && l.col === '#ffffff')))
+  const drawn = ev.lines.filter((l) => !l.glyph && inRegion(l.a, region) && inRegion(l.b, region) && !(l.filled && l.col === '#ffffff'));
+  const lines = wallCandidates(drawn)
     .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall', ann: chromatic(l.col) }));
+  // a glass wall: a run on the window layer as long as a wall (an interior
+  // glazed partition, a storefront) closes rooms as a wall does
+  if (layered) {
+    for (const l of drawn) {
+      if (classifyLayer(l.layer) !== 'window' || Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) * k < GLASS_WALL) continue;
+      lines.push({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: false, ann: false, glass: true });
+    }
+  }
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
   const arcs = readSwings(ev, k, region);
   // door / window linework: where the sheet says a doorway or a window is
