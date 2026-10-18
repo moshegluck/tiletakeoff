@@ -10,6 +10,7 @@ import { roomArea } from './engine/geometry.js';
 import Landing from './components/Landing.jsx';
 import ScaleControl from './components/ScaleControl.jsx';
 import { openPlanFile, restorePlan, planKey } from './lib/planLoad.js';
+import { isStaleBuild, reloadForUpdate, takeUpdateNote, UPDATE_NOTE } from './lib/appUpdate.js';
 import { setPlanPage } from './lib/planStore.js';
 import { useBackLayer } from './lib/backStack.js';
 import { zonesOf } from './engine/zones.js';
@@ -205,6 +206,7 @@ export default function App() {
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}. Check the scale, then Trace plan or AI Detect.`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {
+      if (isStaleBuild(err) && reloadForUpdate(UPDATE_NOTE)) return;
       window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'Could not open the plan: ' + err.message } }));
     } finally { setPdfBusy(false); }
   }
@@ -212,11 +214,16 @@ export default function App() {
   useEffect(() => {
     let t = 0;
     const onToast = (e) => {
+      // any failure that is a code file from an older deploy (Trace, exports…): reload onto the new one
+      if (isStaleBuild(e.detail?.msg) && reloadForUpdate(UPDATE_NOTE)) return;
       clearTimeout(t);
       setToast(e.detail);
       t = setTimeout(() => setToast(null), e.detail?.action ? 5000 : 2400);
     };
     window.addEventListener('tt:toast', onToast);
+    // reloaded onto a new version (see appUpdate.js): say so
+    const note = takeUpdateNote();
+    if (note) { setToast({ msg: note, ok: true }); t = setTimeout(() => setToast(null), 6000); }
     const onKey = (e) => {
       if (/input|select|textarea/i.test(e.target.tagName)) return;
       const k = e.key.toLowerCase();

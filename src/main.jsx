@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import './styles/app.css';
+import { isStaleBuild, reloadForUpdate, UPDATE_NOTE } from './lib/appUpdate.js';
 
 // "tiletakeoff.vercel.app." (with a trailing dot) is a separate origin: some
 // browsers reject its certificate, it has its own saved data, and sign-up
@@ -16,6 +17,9 @@ if (window.location.hostname.endsWith('.')) {
   for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
     document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
   }
+  // a code file from before the latest deploy is gone: reload onto the new one
+  window.addEventListener('vite:preloadError', () => { reloadForUpdate(UPDATE_NOTE); });
+  window.addEventListener('unhandledrejection', (e) => { if (isStaleBuild(e.reason)) reloadForUpdate(UPDATE_NOTE); });
   createRoot(document.getElementById('root')).render(
     <ErrorBoundary>
       <App />
