@@ -53,7 +53,7 @@ function prep(raw, opt) {
     const s0 = dot(r.a, u), s1 = dot(r.b, u);
     out.push({
       th, u, n, rho: (dot(r.a, n) + dot(r.b, n)) / 2,
-      s0: Math.min(s0, s1), s1: Math.max(s0, s1), w: r.w || 0, wl: !!r.wl, ann: !!r.ann, src: r.src || 'vector',
+      s0: Math.min(s0, s1), s1: Math.max(s0, s1), w: r.w || 0, wl: !!r.wl, ann: !!r.ann, glass: !!r.glass, src: r.src || 'vector',
     });
   }
   return out;
@@ -89,7 +89,7 @@ function dashRuns(runs, at) {
         dup: seq.reduce((acc, r) => acc + r.dup, 0), dashed: true,
       });
     } else {
-      for (const r of seq) out.push({ a: r.a, b: r.b, w: r.w, wl: r.wl, ann: r.ann, dup: r.dup, ...(r.pens ? { pens: r.pens } : {}) });
+      for (const r of seq) out.push({ a: r.a, b: r.b, w: r.w, wl: r.wl, ann: r.ann, dup: r.dup, ...(r.glass ? { glass: true } : {}), ...(r.pens ? { pens: r.pens } : {}) });
     }
     i = j + 1;
   }
@@ -120,7 +120,7 @@ export function mergeCollinear(raw, options = {}) {
       const pa = { x: l.u.x * l.s0 + l.n.x * l.rho, y: l.u.y * l.s0 + l.n.y * l.rho };
       const pb = { x: l.u.x * l.s1 + l.n.x * l.rho, y: l.u.y * l.s1 + l.n.y * l.rho };
       const a = dot(pa, u), b = dot(pb, u);
-      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, wl: !!l.wl, ann: l.ann, src: l.src, orig: { a: pa, b: pb } };
+      return { rho: (dot(pa, n) + dot(pb, n)) / 2, s0: Math.min(a, b), s1: Math.max(a, b), w: l.w, wl: !!l.wl, ann: l.ann, glass: l.glass, src: l.src, orig: { a: pa, b: pb } };
     }).sort((p, q) => p.rho - q.rho);
     // band by rho (again anchored on the band's first line)
     let band = [];
@@ -129,7 +129,7 @@ export function mergeCollinear(raw, options = {}) {
       if (band.length === 1) {
         // a line with nothing to merge with is emitted exactly as drawn
         const o = band[0].orig;
-        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, wl: band[0].wl, ann: band[0].ann, dup: 1 });
+        merged.push({ a: { ...o.a }, b: { ...o.b }, w: band[0].w, wl: band[0].wl, ann: band[0].ann, dup: 1, ...(band[0].glass ? { glass: true } : {}) });
         band = [];
         return;
       }
@@ -140,8 +140,8 @@ export function mergeCollinear(raw, options = {}) {
       // heavy; a long hairline dimension string that brushes a few heavy
       // wall end-caps stays a hairline
       const pen = new Map();
-      let annL = 0, allL = 0;   // a run drawn mostly in an annotation colour is annotation
-      const addPen = (l) => { pen.set(l.w, (pen.get(l.w) || 0) + (l.s1 - l.s0)); allL += l.s1 - l.s0; if (l.ann) annL += l.s1 - l.s0; };
+      let annL = 0, allL = 0, glassL = 0;   // a run drawn mostly in an annotation colour is annotation (mostly glazing: glass)
+      const addPen = (l) => { pen.set(l.w, (pen.get(l.w) || 0) + (l.s1 - l.s0)); allL += l.s1 - l.s0; if (l.ann) annL += l.s1 - l.s0; if (l.glass) glassL += l.s1 - l.s0; };
       const runW = () => {
         const most = Math.max(...pen.values());
         return Math.max(...[...pen].filter(([, L]) => L >= most * 0.5).map(([pw]) => pw));
@@ -154,17 +154,17 @@ export function mergeCollinear(raw, options = {}) {
       let pieces = [band[0]];
       const runs = [];
       const at = (sv) => ({ x: u.x * sv + n.x * rho, y: u.y * sv + n.y * rho });
-      const emit = () => runs.push({ a: at(a), b: at(b), s0: a, s1: b, w: runW(), wl, ann: annL > allL / 2, dup: cnt,
+      const emit = () => runs.push({ a: at(a), b: at(b), s0: a, s1: b, w: runW(), wl, ann: annL > allL / 2, dup: cnt, ...(glassL > allL / 2 ? { glass: true } : {}),
         ...(pen.size > 1 ? { pens: pieces.map((pc) => ({ a: at(pc.s0), b: at(pc.s1), w: pc.w })) } : {}) });
       let first = band[0];
       const emitRun = () => {
-        if (cnt === 1) runs.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, s0: a, s1: b, w: first.w, wl, ann: first.ann, dup: 1 });
+        if (cnt === 1) runs.push({ a: { ...first.orig.a }, b: { ...first.orig.b }, s0: a, s1: b, w: first.w, wl, ann: first.ann, dup: 1, ...(first.glass ? { glass: true } : {}) });
         else emit();
       };
       for (let i = 1; i < band.length; i++) {
         const l = band[i];
         if (l.s0 <= b + opt.collinearGapTol) { b = Math.max(b, l.s1); wl = wl || l.wl; cnt++; addPen(l); pieces.push(l); }
-        else { emitRun(); a = l.s0; b = l.s1; wl = l.wl; cnt = 1; first = l; pen.clear(); annL = allL = 0; addPen(l); pieces = [l]; }
+        else { emitRun(); a = l.s0; b = l.s1; wl = l.wl; cnt = 1; first = l; pen.clear(); annL = allL = glassL = 0; addPen(l); pieces = [l]; }
       }
       emitRun();
       merged.push(...dashRuns(runs, at));
@@ -357,6 +357,8 @@ export function pairWalls(rawLines, options = {}) {
   const light = (w, ratio) => heavyW > 0 && (w || 0) < heavyW * ratio;
   const hairline = (c) => {
     const l = lines[c.i], m = lines[c.j];
+    // a glass wall (both faces on the window layer, a storefront's full run) is drawn light by convention
+    if (l.glass && m.glass && !c.thick) return false;
     if ((l.ann && light(c.wi, opt.hairlineRatio)) || (m.ann && light(c.wj, opt.hairlineRatio))) return true;
     if (c.thick) return l.ann || m.ann || light(c.wi, opt.thickPenRatio) || light(c.wj, opt.thickPenRatio);
     return heavyW > 0 && Math.max(c.wi || 0, c.wj || 0) < heavyW * opt.hairlineRatio;

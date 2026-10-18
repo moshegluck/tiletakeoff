@@ -20,7 +20,7 @@ const IN = 1 / 12;
 /** @type {[string, RegExp][]} */
 export const ROOM_TYPES = [
   // not floor at all: walled in, but nothing to finish
-  ['nofloor', /\b(unexcavated|unexc|crawl\s*space|crawlspace|open\s+to\s+below|shaft|chase)\b/i],
+  ['nofloor', /\b(unexcavated|unexc|crawl\s*space|crawlspace|open\s+to\s+(below|above|\w+\s+below|assembly|sanctuary|atrium|lobby|foyer|hall)|shaft|chase)\b/i],
   ['bath', /\b(bath|bathroom|bth|wc|w\.c\.?|powder|pwdr|toilet|lav|lavatory|ensuite|en-suite|shower|restroom|half bath|1\/2 bath)\b/i],
   ['closet', /\b(closet|clos|clo|cl|wic|w\.i\.c\.?|walk-?in|linen|lin|pantry|pan|storage|stor|wardrobe)\b/i],
   ['kitchen', /\b(kitchen|kit|kitch|kitchenette)\b/i],
