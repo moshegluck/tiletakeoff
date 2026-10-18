@@ -265,10 +265,40 @@ export function analyzeGraph(g, ctx = {}) {
     for (const { o, cover } of byDepth.values()) if (cover >= 0.5 * L && (best === base || o < best)) best = o;
     return best;
   };
+  // the wall's face as drawn: a heavy face line doubled by a lighter one a
+  // hair inside (gypsum, the fill's edge) can leave the wall model's face on
+  // the light one. Within 1½" of it, along most of the edge, the heavy line
+  // in the wall pen is the face the room stops at.
+  const drawn = ctx.wallPen > 0 && opt.faceSnap !== false ? (ctx.drawn || []).filter((l) => (l.w || 0) >= 0.8 * ctx.wallPen && !l.ann) : [];
+  const drawnIdx = new GridIndex(4);
+  drawn.forEach((l, i) => drawnIdx.insert(i, Math.min(l.a.x, l.b.x), Math.min(l.a.y, l.b.y), Math.max(l.a.x, l.b.x), Math.max(l.a.y, l.b.y)));
+  const onFace = (h, base) => {
+    if (!drawn.length) return base;
+    const p = nodes[h.from], q = nodes[h.to], L = dist(p, q);
+    if (L < 1) return base;
+    const u = norm(sub(q, p)), n = perp(u), win = 1.5 / 12, r = base + win;
+    const byDepth = new Map();
+    for (const i of drawnIdx.query(Math.min(p.x, q.x) - r, Math.min(p.y, q.y) - r, Math.max(p.x, q.x) + r, Math.max(p.y, q.y) + r)) {
+      const l = drawn[i];
+      const lu = norm(sub(l.b, l.a));
+      if (Math.abs(cross(u, lu)) > 0.02) continue;
+      const o = (dot(sub(l.a, p), n) + dot(sub(l.b, p), n)) / 2;
+      if (Math.abs(o - base) > win) continue;
+      const s0 = dot(sub(l.a, p), u), s1 = dot(sub(l.b, p), u);
+      const cover = Math.min(L, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1));
+      if (cover <= 0) continue;
+      const key = Math.round(o * 96);   // ⅛" bins
+      const cur = byDepth.get(key) || { o: 0, cover: 0, n: 0 };
+      byDepth.set(key, { o: (cur.o * cur.n + o) / (cur.n + 1), cover: cur.cover + cover, n: cur.n + 1 });
+    }
+    let best = base, bestD = Infinity;
+    for (const { o, cover } of byDepth.values()) if (cover >= 0.5 * L && Math.abs(o - base) < bestD && o > 0) { best = o; bestD = Math.abs(o - base); }
+    return best;
+  };
   const distFor = (h) => {
     const e = h.e;
     if (isDoorway(e)) return opt.floorAtDoor === 'face' ? (e.t || 0) / 2 : 0;
-    return furred(h, (e.t || 0) / 2);
+    return furred(h, onFace(h, (e.t || 0) / 2));
   };
   const rooms = [];
   const voids = [];

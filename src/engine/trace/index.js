@@ -131,7 +131,7 @@ function traceReading(input = {}) {
     const g0 = buildGraph(segs.concat(openings), o2, lg);
     const g = pruneGraph(g0, o2, lg);
     // 5. faces → rooms, LF, flags
-    const res = analyzeGraph(g, { texts: input.labels || texts, allTexts: texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [] });
+    const res = analyzeGraph(g, { texts: input.labels || texts, allTexts: texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [], drawn: input.lines || [], wallPen: paired.stats?.heavyW || 0 });
     return { g, res };
   };
   let { g, res } = solve([], log);

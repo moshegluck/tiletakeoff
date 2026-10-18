@@ -380,7 +380,13 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
       const L = dist(sg.a, sg.b);
       if (c.t * L > sg.t && (1 - c.t) * L > sg.t) return false;   // runs on past it: a tee
       const v = norm(sub(sg.b, sg.a));
-      if (Math.abs(dot(v, e.dir)) > Math.cos(45 * DEG)) return false;
+      if (Math.abs(dot(v, e.dir)) > Math.cos(45 * DEG)) {
+        // the same wall carrying on behind the end (a scrap of it before the
+        // corner) is no reason it isn't a plain L
+        const mid = { x: (sg.a.x + sg.b.x) / 2, y: (sg.a.y + sg.b.y) / 2 };
+        if (dot(sub(mid, e.p), e.dir) < 0 && Math.abs(cross(e.dir, sub(mid, e.p))) < Math.max(e.t, sg.t)) continue;
+        return false;
+      }
       n++;
     }
     return n === 1;
