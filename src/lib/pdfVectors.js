@@ -50,7 +50,9 @@ export async function readLayers(doc) {
 export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_000_000, layers = null } = {}) {
   const viewport = page.getViewport({ scale: renderScale });
   const vt = viewport.transform;
-  const ops = await page.getOperatorList();
+  // the drawing only: markups and comments (a reviewer's Bluebeam areas,
+  // clouds, notes) are annotations — never walls
+  const ops = await page.getOperatorList({ annotationMode: 0 /* AnnotationMode.DISABLE */ });
   const lines = [];
   const curves = [];
   const opTexts = [];          // text read straight off the drawing operators (with its layer)
@@ -189,6 +191,20 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       texts.push({ str, x: c.x, y: c.y - h * 0.35, h });
     }
   } catch (e) { textError = e?.message || String(e); }
+  // AutoCAD plots its SHX-font text as strokes and lays the words over them as
+  // invisible "AutoCAD SHX Text" annotations: that's where the room names are
+  let shx = 0;
+  try {
+    for (const a of await page.getAnnotations()) {
+      if (a.titleObj?.str !== 'AutoCAD SHX Text' || !a.rect) continue;
+      const str = (a.contentsObj?.str || '').trim();
+      if (!str) continue;
+      const p0 = apply(vt, a.rect[0], a.rect[1]), p1 = apply(vt, a.rect[2], a.rect[3]);
+      const w = Math.abs(p1.x - p0.x), h = Math.abs(p1.y - p0.y);
+      texts.push({ str, x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, h: Math.min(w, h) || h, shx: true });
+      shx++;
+    }
+  } catch { /* no annotations */ }
   let textSource = 'content';
   if (!texts.length && opTexts.length) { texts = opTexts; textSource = 'operators'; }
   else if (layers && opTexts.length) {
@@ -208,7 +224,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
     width: Math.ceil(viewport.width), height: Math.ceil(viewport.height),
     stats: {
       ops: ops.fnArray.length, painted, clipOnly, lines: lines.length, curves: curves.length, texts: texts.length,
-      textSource, ...(textError ? { textError } : {}), layered: !!layers,
+      textSource, ...(textError ? { textError } : {}), layered: !!layers, ...(shx ? { shxTexts: shx } : {}),
     },
   };
 }

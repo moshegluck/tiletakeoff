@@ -16,6 +16,12 @@
 //   missing — no traced room holds the answer
 //   silent  — wrong (beyond 3%) and the room carries no flag: the one number that must be 0
 // With --baseline, exits 1 when a sheet scores fewer rights or more silent errors than before.
+//
+// A sheet with "marked": true is an estimator's marked plan: its Bluebeam
+// area polygons (scripts/markedKeys.mjs) are the answers. Each marked area is
+// located in the traced room that covers most of it; a traced room's floor is
+// right when it equals the marked areas inside it within max(1 SF, 1%). The
+// trace never sees the markups (annotations aren't drawing).
 // Client PDFs never go in the repo: the manifest points at them where they are.
 // ============================================================
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -25,6 +31,8 @@ import { extractPageVectors, readLayers } from '../src/lib/pdfVectors.js';
 import { evidenceToFeet, detectSheetScale } from '../src/lib/planEvidence.js';
 import { runTrace } from '../src/engine/trace/index.js';
 import { printedAreas } from '../src/engine/trace/analyze.js';
+import { readMarkedKeys, areaItems } from './markedKeys.mjs';
+import { score, scoreMarked } from './benchScore.mjs';
 
 const RENDER_SCALE = 2, PLAN_DPI = 72 * RENDER_SCALE;
 const args = process.argv.slice(2);
@@ -33,51 +41,13 @@ const manifestPath = args.find((a) => a.endsWith('.json') && args[args.indexOf(a
 if (!manifestPath) { console.error('usage: node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json]'); process.exit(2); }
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
-const inPoly = (p, poly) => {
-  let c = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i], b = poly[j];
-    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c;
-  }
-  return c;
-};
-const inRoom = (p, r) => inPoly(p, r.poly) && !(r.holes || []).some((h) => inPoly(p, h));
-
-/** Score one traced sheet against its answers. */
-export function score(res, answers) {
-  const out = { answers: answers.length, right: 0, close: 0, merged: 0, missing: 0, silent: 0, wrong: [] };
-  const byRoom = new Map();
-  for (const a of answers) {
-    const r = res.rooms.find((rm) => inRoom(a.at, rm));
-    if (!r) { out.missing++; out.wrong.push({ ...a, why: 'no room' }); continue; }
-    if (!byRoom.has(r)) byRoom.set(r, []);
-    byRoom.get(r).push(a);
-  }
-  for (const [r, as] of byRoom) {
-    const want = as.reduce((s, a) => s + a.sf, 0);
-    // a printed tag measures to the wall faces across doorways; a hand-audited
-    // room is the takeoff's own floor (to the door's centre)
-    const got = as[0].src === 'printed' ? (r.areaFaces ?? r.area) : r.area;
-    const d = Math.abs(got - want);
-    const zones = as.length > 1 && r.printedParts && r.areaCheck === 'match';
-    if (as.length > 1 && !zones) {
-      out.merged += as.length;
-      for (const a of as) out.wrong.push({ ...a, why: `merged into ${r.name} (${r.area.toFixed(0)} SF)`, flagged: r.status !== 'ok' });
-      if (r.status === 'ok') out.silent += as.length;
-      continue;
-    }
-    const n = as.length;
-    if (d <= Math.max(1, 0.01 * want)) { out.right += n; out.close += n; continue; }
-    if (d <= Math.max(3, 0.03 * want)) { out.close += n; out.wrong.push(...as.map((a) => ({ ...a, why: `${got.toFixed(1)} SF (${(((got - want) / want) * 100).toFixed(1)}%)`, flagged: r.status !== 'ok', near: true }))); continue; }
-    const flagged = r.status !== 'ok';
-    if (!flagged) out.silent += n;
-    out.wrong.push(...as.map((a) => ({ ...a, why: `${r.name}: ${got.toFixed(0)} SF (${(((got - want) / want) * 100).toFixed(0)}%)`, flagged })));
-  }
-  return out;
-}
-
 const doc = (() => { const cache = new Map(); return async (path) => {
   if (!cache.has(path)) cache.set(path, await pdfjs.getDocument({ data: new Uint8Array(readFileSync(path)), disableFontFace: true, verbosity: 0 }).promise);
+  return cache.get(path);
+}; })();
+
+const markedOf = (() => { const cache = new Map(); return async (path) => {
+  if (!cache.has(path)) cache.set(path, await readMarkedKeys(new Uint8Array(readFileSync(path))));
   return cache.get(path);
 }; })();
 
@@ -86,7 +56,13 @@ for (const sh of manifest.sheets) {
   if (!existsSync(sh.pdf)) { console.log(`── ${sh.name}: ${sh.pdf} not found — skipped`); continue; }
   const d = await doc(sh.pdf);
   const ev = await extractPageVectors(await d.getPage(sh.page || 1), RENDER_SCALE, pdfjs.OPS, { layers: await readLayers(d) });
-  const sc = detectSheetScale(ev, PLAN_DPI);
+  let sc = detectSheetScale(ev, PLAN_DPI);
+  // --key-scale: take the scale the estimator calibrated the markups with (to
+  // tell a wrong scale apart from wrong geometry)
+  if (sh.marked && args.includes('--key-scale')) {
+    const k = (await markedOf(sh.pdf))[(sh.page || 1) - 1]?.ptToFt;
+    if (k) sc = { label: 'as marked', scale: k / RENDER_SCALE };
+  }
   if (!sc) { console.log(`── ${sh.name}: no scale on the sheet — skipped`); continue; }
   const input = evidenceToFeet(ev, sc.scale, null);
   const t0 = Date.now();
@@ -95,9 +71,15 @@ for (const sh of manifest.sheets) {
   const answers = [];
   if (sh.printed) for (const t of printedAreas(input.texts)) answers.push({ name: `${t.sf} SF tag`, at: { x: t.x, y: t.y }, sf: t.sf, src: 'printed' });
   for (const r of sh.rooms || []) answers.push({ ...r, src: 'audited' });
-  const s = score(res, answers);
+  let s;
+  if (sh.marked) {
+    const keys = (await markedOf(sh.pdf))[(sh.page || 1) - 1]?.items || [];
+    const vp = (await d.getPage(sh.page || 1)).getViewport({ scale: RENDER_SCALE });
+    const toFt = ([x, y]) => { const [px, py] = vp.convertToViewportPoint(x, y); return { x: px * sc.scale, y: py * sc.scale }; };
+    s = scoreMarked(res, areaItems(keys).map((it) => ({ ...it, poly: it.pts.map(toFt) })));
+  } else s = score(res, answers);
   const pct = (n) => (s.answers ? `${((100 * n) / s.answers).toFixed(1)}%` : '—');
-  console.log(`── ${sh.name} (${basename(sh.pdf)} p${sh.page || 1}, ${ms} ms): ${res.rooms.length} rooms, ${res.counts.error} errors`);
+  console.log(`── ${sh.name} (${basename(sh.pdf)} p${sh.page || 1}, ${ms} ms): ${res.rooms.length} rooms, ${res.counts.error} errors, scale ${sc.label || sc.scale.toFixed(4)}${sh.marked ? ` · marked ${s.keySf.toFixed(0)} SF in ${s.regions} regions, traced ${s.gotSf.toFixed(0)} SF there` : ''}`);
   console.log(`   answers ${s.answers} · right ${s.right} (${pct(s.right)}) · within 3% ${s.close} (${pct(s.close)}) · merged ${s.merged} · missing ${s.missing} · SILENT ${s.silent}`);
   for (const w of s.wrong) console.log(`     ${w.near ? '   near   ' : w.flagged === false ? '!! SILENT ' : '   flagged'} ${String(w.name).padEnd(22)} want ${String(w.sf).padStart(6)}  ${w.why}${w.at ? `  @${w.at.x.toFixed(0)},${w.at.y.toFixed(0)}` : ''}`);
   report.push({ name: sh.name, rooms: res.rooms.length, errors: res.counts.error, ms, ...s, wrong: s.wrong.map(({ at, ...w }) => w) });
