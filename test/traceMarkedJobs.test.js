@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { pairWalls } from '../src/engine/trace/walls.js';
 import { evidenceToFeet } from '../src/lib/planEvidence.js';
 import { cadText, markGlyphs } from '../src/lib/pdfVectors.js';
+import { arcsFromDashes, isDoorSwing } from '../src/engine/trace/arcs.js';
 
 // Regressions from Moshe's marked jobs (454 Saddle River Rd, the Herzka
 // residence, Promenade at Middletown): AutoCAD sheets whose SHX text is
@@ -62,5 +63,34 @@ describe('marked jobs — SHX text, poché strokes', () => {
     expect(east.t * 12).toBeCloseTo(5.6, 1);
     // the strokes are still a pattern, never walls
     expect(res.bodies.every((b) => Math.abs(b.a.y - b.b.y) < 1e-6 ? Math.max(b.a.x, b.b.x) > 3 : true)).toBe(true);
+  });
+
+  it('reads a door swing plotted dashed (Saddle River: every door, 45° open)', () => {
+    // hinge (0,0), r = 3', closed along +x, open at 45°: the arc as dashes of
+    // two short pieces each, gaps between; the leaf drawn as a thin
+    // rectangle whose corner meets the arc's open end
+    const r = 3, pts = (a0, a1) => [a0, (a0 + a1) / 2, a1].map((a) => ({ x: r * Math.cos(a), y: r * Math.sin(a) }));
+    const lines = [];
+    const deg = Math.PI / 180;
+    for (let a = 0; a < 45 - 1e-9; a += 9) {
+      const p = pts(a * deg, (a + 6) * deg);
+      lines.push({ a: p[0], b: p[1] }, { a: p[1], b: p[2] });
+    }
+    const open = { x: r * Math.cos(45 * deg), y: r * Math.sin(45 * deg) };
+    lines.push({ a: open, b: { x: open.x - 0.06, y: open.y + 0.06 } });     // the leaf's short side at the open end
+    // a straight dashed line nearby is no swing
+    for (let x = 0; x < 6; x += 0.5) lines.push({ a: { x, y: -1 }, b: { x: x + 0.3, y: -1 } });
+    const arcs = arcsFromDashes(lines);
+    expect(arcs.length).toBe(1);
+    expect(arcs[0].r).toBeCloseTo(3, 2);
+    expect(arcs[0].c.x).toBeCloseTo(0, 2);
+    expect(arcs[0].sweepDeg).toBeGreaterThan(35);
+    expect(arcs[0].sweepDeg).toBeLessThan(50);   // (the leaf's side, tangent at the open end, carries it on a little)
+    // a full swing plotted dashed is a door swing like any other
+    const full = [];
+    for (let a = 0; a < 90 - 1e-9; a += 9) { const p = pts(a * deg, (a + 6) * deg); full.push({ a: p[0], b: p[1] }, { a: p[1], b: p[2] }); }
+    const f = arcsFromDashes(full);
+    expect(f.length).toBe(1);
+    expect(isDoorSwing(f[0])).toBe(true);
   });
 });

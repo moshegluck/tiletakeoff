@@ -6,10 +6,10 @@
 //   scanned PDF / image → raster stroke detection (+ any text layer)
 // ============================================================
 
-import { arcFromBezier, arcsFromPolylines, isDoorSwing, readLeaves } from '../engine/trace/arcs.js';
+import { arcFromBezier, arcsFromPolylines, arcsFromDashes, isDoorSwing, readLeaves } from '../engine/trace/arcs.js';
 import { parseScaleNote } from '../engine/trace/analyze.js';
 import { planScale } from '../engine/trace/sheetScale.js';
-import { dimensionScale } from '../engine/trace/dimScale.js';
+import { dimensionScale, doorTags, doorTagScale } from '../engine/trace/dimScale.js';
 import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 import { chromatic } from './pdfVectors.js';
@@ -80,6 +80,27 @@ function loadImage(src) {
 const inRegion = (p, r) => !r || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
 
 /**
+ * The sheet's door swings (ft, at `k` ft per px), each with the way it closes
+ * when its leaf is drawn: Bézier arcs, swings a CAD export flattened into
+ * short straight pieces, and swings plotted dashed.
+ */
+function readSwings(ev, k, region = null) {
+  const P = (p) => ({ x: p.x * k, y: p.y * k });
+  const swings = [], short = [];
+  const sheetLines = ev.lines.filter((l) => !l.glyph && inRegion(l.a, region)).map((l) => ({ a: P(l.a), b: P(l.b) }));
+  for (const c of ev.curves || []) {
+    if (!inRegion(c.pieces[0].p0, region)) continue;
+    const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
+    if (isDoorSwing(arc)) swings.push(arc); else if (arc) short.push(arc);
+  }
+  for (const arc of [...arcsFromPolylines(sheetLines), ...arcsFromDashes(sheetLines)]) {
+    if (isDoorSwing(arc)) swings.push(arc); else short.push(arc);
+  }
+  // which way each door closes (from its drawn leaf); doors drawn part open
+  return readLeaves(swings, short, sheetLines);
+}
+
+/**
  * px evidence → feet input for runTrace. region is a px rect {x0,y0,x1,y1} or null.
  * A CAD sheet that names its wall layers gives only those lines (and lines on
  * layers we can't name) to the wall finder, and only room-label text to room
@@ -96,19 +117,7 @@ export function evidenceToFeet(ev, scale, region = null) {
   const lines = wallCandidates(ev.lines.filter((l) => !l.glyph && inRegion(l.a, region) && inRegion(l.b, region) && !(l.filled && l.col === '#ffffff')))
     .map((l) => ({ a: P(l.a), b: P(l.b), w: (l.w || 0) * k, wl: layered && classifyLayer(l.layer) === 'wall', ann: chromatic(l.col) }));
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
-  const swings = [], short = [];
-  const sheetLines = ev.lines.filter((l) => !l.glyph && inRegion(l.a, region)).map((l) => ({ a: P(l.a), b: P(l.b) }));
-  for (const c of ev.curves || []) {
-    if (!inRegion(c.pieces[0].p0, region)) continue;
-    const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
-    if (isDoorSwing(arc)) swings.push(arc); else if (arc) short.push(arc);
-  }
-  // swings a CAD export flattened into short straight pieces
-  for (const arc of arcsFromPolylines(sheetLines)) {
-    if (isDoorSwing(arc)) swings.push(arc); else short.push(arc);
-  }
-  // which way each door closes (from its drawn leaf); doors drawn part open
-  const arcs = readLeaves(swings, short, sheetLines);
+  const arcs = readSwings(ev, k, region);
   // door / window linework: where the sheet says a doorway or a window is
   // (kind: door | window | opening = a layer holding both)
   const hints = [];
@@ -133,8 +142,10 @@ export function evidenceToFeet(ev, scale, region = null) {
  * the note most of the sheet agrees on — then measured against the sheet's
  * own dimension strings. When enough of them agree on a different scale
  * (a note copied from another sheet, a plot fitted to the paper), they win.
- * Returns { id, label, scale, how: 'title'|'common'|'dimensions', title?,
- * note?, dims? } or null. A measured scale that's no standard one has id null.
+ * With no dimension strings to read, the door tags do it (each names the
+ * leaf of the swing it stands in). Returns { id, label, scale, how:
+ * 'title'|'common'|'dimensions'|'doors', title?, note?, dims?, doors? } or
+ * null. A measured scale that's no standard one has id null.
  */
 export function detectSheetScale(ev, planDpi) {
   if (!planDpi) return null;
@@ -144,14 +155,29 @@ export function detectSheetScale(ev, planDpi) {
   const fpi = a ? archFeetPerPaperInch(a) : null;
   const noted = a && fpi ? { id, label: a.label, scale: fpi / planDpi, how: pick?.how || 'common', ...(pick?.title ? { title: pick.title } : {}) } : null;
   const dims = dimensionScale(ev.texts, ev.lines || [], planDpi);
-  if (!dims || dims.votes < 5 || dims.agree < 0.4) return noted;
-  const measured = { votes: dims.votes, of: dims.of, fpi: +dims.fpi.toFixed(3) };
-  if (noted && Math.abs(dims.fpi / fpi - 1) <= 0.02) return { ...noted, dims: measured };
-  const std = ARCH_SCALES.find((x) => { const f = archFeetPerPaperInch(x); return f && Math.abs(f / dims.fpi - 1) <= 0.01; });
+  if (dims && dims.votes >= 5 && dims.agree >= 0.4) return measuredScale(noted, fpi, dims, planDpi, 'dimensions', 0.02, 0.01);
+  // no dimension strings to read (drawn as strokes): the door tags, each in
+  // the swing of the door it names, against the swing's radius
+  const tags = doorTags(ev.texts);
+  if (tags.length >= 5) {
+    const k0 = noted ? noted.scale : 4 / planDpi;
+    const arcs = readSwings(ev, k0).map((a) => ({ c: { x: a.c.x / k0, y: a.c.y / k0 }, r: a.r / k0, p0: { x: a.p0.x / k0, y: a.p0.y / k0 }, p3: { x: a.p3.x / k0, y: a.p3.y / k0 } }));
+    const doors = doorTagScale(tags, arcs, planDpi);
+    // a swing's radius reads to about 1%: a note within 3% stands
+    if (doors && doors.votes >= 5 && doors.votes >= 0.6 * doors.of) return measuredScale(noted, fpi, doors, planDpi, 'doors', 0.03, 0.015);
+  }
+  return noted;
+}
+
+/** A scale measured off the sheet (fpi = feet per paper inch) against its note. */
+function measuredScale(noted, fpi, m, planDpi, how, confirmTol, stdTol) {
+  const measured = { votes: m.votes, of: m.of, fpi: +m.fpi.toFixed(3) };
+  if (noted && Math.abs(m.fpi / fpi - 1) <= confirmTol) return { ...noted, [how === 'dimensions' ? 'dims' : how]: measured };
+  const std = ARCH_SCALES.find((x) => { const f = archFeetPerPaperInch(x); return f && Math.abs(f / m.fpi - 1) <= stdTol; });
   return {
     id: std ? std.id : null,
-    label: std ? std.label : `1" = ${dims.fpi.toFixed(2)}' (measured)`,
-    scale: (std ? archFeetPerPaperInch(std) : dims.fpi) / planDpi,
-    how: 'dimensions', dims: measured, ...(noted ? { note: noted.label } : {}),
+    label: std ? std.label : `1" = ${m.fpi.toFixed(2)}' (measured)`,
+    scale: (std ? archFeetPerPaperInch(std) : m.fpi) / planDpi,
+    how, [how === 'dimensions' ? 'dims' : how]: measured, ...(noted ? { note: noted.label } : {}),
   };
 }

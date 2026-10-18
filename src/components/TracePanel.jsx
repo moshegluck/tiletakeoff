@@ -44,7 +44,7 @@ export default function TracePanel() {
         const st = useStore.getState();
         if (sheetScale && !st.scale) {
           st.setScale(sheetScale.scale); st.setArchScale(sheetScale.id);
-          window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `Scale read from sheet · ${sheetScale.label}`, ok: true } }));
+          window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: sheetScale.note ? `Scale measured on the sheet (${sheetScale.how === 'doors' ? 'door tags' : 'dimensions'}) · ${sheetScale.label} — the note says ${sheetScale.note}` : `Scale read from sheet · ${sheetScale.label}`, ok: true } }));
         }
       } catch (_) { /* reading is best-effort */ }
     })();
@@ -184,7 +184,9 @@ export default function TracePanel() {
         </div>
         {sheet && (!s.scale || s.archScale !== sheet.id) && (
           <button className="tr-suggest" onClick={applySheetScale}>
-            Sheet says <b>{sheet.label}</b> — use it
+            {sheet.note
+              ? <>Sheet measures <b>{sheet.label}</b> by its {sheet.how === 'doors' ? 'door tags' : 'dimensions'} (the note says {sheet.note}) — use it</>
+              : <>Sheet says <b>{sheet.label}</b> — use it</>}
           </button>
         )}
         <div className="tr-grid">

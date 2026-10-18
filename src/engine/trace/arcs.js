@@ -213,6 +213,158 @@ export function arcsFromPolylines(lines, { maxSeg = 1.2, tol = 0.02 } = {}) {
   return out;
 }
 
+/**
+ * Door swings drawn dashed: AutoCAD plots a dashed polyline arc as its dashes
+ * — runs of a few short pieces with gaps between (Saddle River's doors).
+ * Chain the dashes that carry on from one another across a gap (the gap runs
+ * the way the dash was heading, the next dash heads on the same way, the arc
+ * turns one way throughout), fit the circle through them, and hand back the
+ * same arc a solid swing gives. Three dashes at least.
+ * @param {{a:{x,y},b:{x,y}}[]} lines  in feet
+ * @param {{ maxSeg?:number, tol?:number, gap?:number }} [opt]
+ */
+export function arcsFromDashes(lines, { maxSeg = 0.6, tol = 0.02, gap = 0.45 } = {}) {
+  // the dashes: runs of short pieces meeting end to end
+  const segs = [];
+  for (const l of lines) {
+    const L = dist(l.a, l.b);
+    if (L > 0.01 && L <= maxSeg) segs.push(l);
+  }
+  const endIdx = new GridIndex(Math.max(tol * 4, 0.1));
+  const ends = [];
+  segs.forEach((l, i) => {
+    ends.push({ i, w: 0, p: l.a }, { i, w: 1, p: l.b });
+    endIdx.insert(ends.length - 2, l.a.x, l.a.y, l.a.x, l.a.y);
+    endIdx.insert(ends.length - 1, l.b.x, l.b.y, l.b.x, l.b.y);
+  });
+  const parent = segs.map((_, i) => i);
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  ends.forEach((e, k) => {
+    const near = [...endIdx.query(e.p.x - tol, e.p.y - tol, e.p.x + tol, e.p.y + tol)].filter((m) => m !== k && ends[m].i !== e.i && dist(ends[m].p, e.p) <= tol);
+    if (near.length !== 1) return;
+    // a dash runs on smoothly through its joints (a leaf's corner meeting the arc's end is no joint of it)
+    const o = ends[near[0]], other = (x) => (x.w ? segs[x.i].a : segs[x.i].b);
+    if (dot(norm(sub(other(e), e.p)), norm(sub(other(o), o.p))) > -Math.cos(35 * Math.PI / 180)) return;
+    parent[find(e.i)] = find(o.i);
+  });
+  const groups = new Map();
+  segs.forEach((_, i) => { const g = find(i); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(i); });
+  // order each dash's pieces into a path of points
+  const dashes = [];
+  for (const ids of groups.values()) {
+    if (ids.length > 6) continue;
+    const pts = [segs[ids[0]].a, segs[ids[0]].b];
+    const left = new Set(ids.slice(1));
+    let grew = true;
+    while (left.size && grew) {
+      grew = false;
+      for (const j of left) {
+        const l = segs[j], head = pts[0], tail = pts[pts.length - 1];
+        if (dist(l.a, tail) <= tol) pts.push(l.b); else if (dist(l.b, tail) <= tol) pts.push(l.a);
+        else if (dist(l.a, head) <= tol) pts.unshift(l.b); else if (dist(l.b, head) <= tol) pts.unshift(l.a);
+        else continue;
+        left.delete(j); grew = true;
+      }
+    }
+    if (left.size) continue;
+    const len = pts.slice(1).reduce((a, p, k) => a + dist(pts[k], p), 0);
+    if (len > maxSeg * 1.5) continue;
+    dashes.push({ pts, len });
+  }
+  if (dashes.length < 3) return [];
+  // link a dash's end to the dash that carries on across a gap
+  const dIdx = new GridIndex(Math.max(gap, 0.1));
+  const tips = [];
+  dashes.forEach((d, k) => {
+    const n = d.pts.length;
+    tips.push({ k, end: 0, p: d.pts[0], dir: norm(sub(d.pts[0], d.pts[1])) });
+    tips.push({ k, end: 1, p: d.pts[n - 1], dir: norm(sub(d.pts[n - 1], d.pts[n - 2])) });
+  });
+  tips.forEach((t, i) => dIdx.insert(i, t.p.x, t.p.y, t.p.x, t.p.y));
+  const link = new Map();
+  const cosA = Math.cos(25 * Math.PI / 180);
+  tips.forEach((t, i) => {
+    let best = -1, bd = Infinity;
+    // (only ahead of the dash; a tip in a dense field of strokes — hatch — is skipped)
+    const pad = gap * 0.45;
+    const q = dIdx.query(t.p.x + Math.min(0, t.dir.x) * gap - pad, t.p.y + Math.min(0, t.dir.y) * gap - pad, t.p.x + Math.max(0, t.dir.x) * gap + pad, t.p.y + Math.max(0, t.dir.y) * gap + pad);
+    if (q.size > 40) return;
+    for (const j of q) {
+      const u = tips[j];
+      if (u.k === t.k) continue;
+      const dx = u.p.x - t.p.x, dy = u.p.y - t.p.y;
+      const ahead = dx * t.dir.x + dy * t.dir.y;
+      if (ahead <= tol) continue;
+      const g = Math.hypot(dx, dy);
+      if (g > gap) continue;
+      // the gap runs on the way the dash heads; the next dash heads on away from it
+      if (ahead < cosA * g || -(dx * u.dir.x + dy * u.dir.y) < cosA * g) continue;
+      if (g < bd) { bd = g; best = j; }
+    }
+    if (best >= 0) link.set(i, best);
+  });
+  const out = [];
+  const seen = new Uint8Array(dashes.length);
+  for (let k = 0; k < dashes.length; k++) {
+    if (seen[k]) continue;
+    // walk to one end of the run, then along it
+    let tip = 2 * k, guard = 0;
+    while (guard++ < dashes.length) {
+      const j = link.get(tip);
+      if (j == null || link.get(j) !== tip) break;
+      tip = (j ^ 1);                  // the far end of that dash
+      if (tips[tip].k === k) break;
+    }
+    // tip is now a free end: walk from it through the other end of each dash
+    const run = [];
+    let cur = tip;
+    guard = 0;
+    while (guard++ <= dashes.length) {
+      const d = tips[cur].k;
+      if (seen[d]) break;
+      seen[d] = 1;
+      const pts = tips[cur].end === 0 ? dashes[d].pts : [...dashes[d].pts].reverse();
+      run.push(...pts);
+      const far = cur ^ 1, j = link.get(far);
+      if (j == null || link.get(j) !== far) break;
+      cur = j;
+    }
+    seen[k] = 1;
+    if (run.length < 6) continue;
+    const fit = fitCircle(run);
+    if (!fit) continue;
+    const { c, r } = fit;
+    if (run.some((p) => Math.abs(dist(c, p) - r) / r > 0.04)) continue;
+    let sweep = 0, turn = 0, ok = true;
+    for (let m = 1; m < run.length; m++) {
+      const a0 = sub(run[m - 1], c), a1 = sub(run[m], c);
+      const da = Math.atan2(cross(a0, a1), dot(a0, a1));
+      if (Math.abs(da) > 1e-6) { if (turn && Math.sign(da) !== turn) { ok = false; break; } turn = Math.sign(da); }
+      sweep += da;
+    }
+    if (!ok) continue;
+    out.push({ c, r, sweepDeg: Math.abs(sweep) * 180 / Math.PI, p0: run[0], p3: run[run.length - 1], src: 'dashed' });
+  }
+  return out;
+}
+
+/** The circle through points, least squares (Kåsa): { c, r } or null. */
+function fitCircle(pts) {
+  const n = pts.length, mx = pts.reduce((a, p) => a + p.x, 0) / n, my = pts.reduce((a, p) => a + p.y, 0) / n;
+  let suu = 0, suv = 0, svv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+  for (const p of pts) {
+    const u = p.x - mx, v = p.y - my;
+    suu += u * u; suv += u * v; svv += v * v;
+    suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+  }
+  const det = suu * svv - suv * suv;
+  if (Math.abs(det) < 1e-12) return null;
+  const b1 = (suuu + suvv) / 2, b2 = (svvv + svuu) / 2;
+  const uc = (b1 * svv - b2 * suv) / det, vc = (suu * b2 - suv * b1) / det;
+  const c = { x: mx + uc, y: my + vc };
+  return { c, r: Math.sqrt(uc * uc + vc * vc + (suu + svv) / n) };
+}
+
 function circumcentre(a, b, c) {
   const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
   if (Math.abs(d) < 1e-12) return null;

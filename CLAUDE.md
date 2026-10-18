@@ -75,8 +75,9 @@ TileTakeoff works the other way round:
     to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face),
     sheet-border / title-block removal (by page extent), all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
-  - `arcs.js` door-swing recognition from Bézier curves, and from swings a CAD export flattened into
-    chains of straight pieces (`arcsFromPolylines`); `readLeaves` reads each swing's drawn leaf
+  - `arcs.js` door-swing recognition from Bézier curves, from swings a CAD export flattened into
+    chains of straight pieces (`arcsFromPolylines`), and from swings plotted dashed (`arcsFromDashes`:
+    dashes that carry on from one another across their gaps, least-squares circle — Saddle River); `readLeaves` reads each swing's drawn leaf
     (the edge closest to the radius: open end → `closed` = the other end) and keeps part-open (25–55°)
     swings only with their leaf. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
     lighter than the sheet's wall pen) are never wall faces; `runTrace` also cuts every body along a door's closed leaf (hinge → `closed`):
@@ -90,7 +91,10 @@ TileTakeoff works the other way round:
     (texts carry `rot`: 0 across, 90 up the sheet); with ≥ 5 votes and ≥ 40% agreeing, the dimensions
     confirm the note (`dims`) or overrule it (`how: 'dimensions'`, `note` = what it said; a plot at no
     standard scale gets id null, label `1" = 5.53' (measured)`). Herzka: 1/4" confirmed by 61–81
-    dimensions a floor. `planEvidence.detectSheetScale` does both.
+    dimensions a floor. With no dimension text (drawn as strokes), the door tags do it (`doorTags` /
+    `doorTagScale`): a "3'0" X 6'8"" tag stands in its door's swing, and the swing's radius is that leaf
+    — ≥ 5 agreeing votes confirm the note (within 3%) or overrule it (`how: 'doors'`). Saddle A-103:
+    note 1/4", 10 / 10 tags say 5.53 ft/in. `planEvidence.detectSheetScale` does all three.
     Room names (`analyze.js` `isLabel`): framing / beam callouts (LVL, HEADER, W18x71, 2x10 @ 16" O.C.),
     construction notes (… ABOVE, TO BE, SEE), door tags (3'0" X 6'8"), stair notes (UP 22R), window /
     equipment codes and CAD attribute dumps never name a room.
@@ -186,7 +190,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 417 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 420 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -226,7 +230,9 @@ TileTakeoff works the other way round:
   dimension strings (OCR) can catch it — dimScale.js does it wherever dimensions are text.
   Then (layer names in Russian / French / AIA shorthand, SHX letters + underlines out of the walls,
   faces through poché, overlapping marked areas once): 55 / 190 right (28.9%), 96 within 3%, 30 silent;
-  Saddle p1 3 → 21, Herzka p1 1 → 4 (10 / 14 within 3%). Saddle A-103 still at the wrong scale (all 27).
+  Saddle p1 3 → 21, Herzka p1 1 → 4 (10 / 14 within 3%). Then dashed swings + the door-tag ruler put
+  Saddle A-103 at its true scale: 0 → 15 / 27 right; all jobs 70 / 190 right (36.8%), 117 within 3%,
+  14 silent.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
