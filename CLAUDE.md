@@ -144,7 +144,8 @@ TileTakeoff works the other way round:
   drawn over each other (a shower floor / mikvah pool over the room's floor) count once.
   `--key-scale` uses the estimator's calibration (tells a wrong scale from wrong geometry).
   It also reports `scope` regions (the trace runs past the marked edge across open floor — part of a
-  room tiled, the estimator's choice) beside `geo`, the regions the drawing bounds. The 2024 marked
+  room tiled, the estimator's choice) beside `geo`, the regions the drawing bounds; marked slivers
+  under 5 SF (a curb, a niche, a stray click) aren't scored. The 2024 marked
   jobs in Moshe's Drive are listed in `samples/marked-jobs.json` (Drive ids, pages to skip);
   `scripts/markedManifest.mjs <folder> manifest.json` builds the manifest from the downloaded PDFs.
   The trace never reads annotations as drawing (`pdfVectors.js`: annotationMode DISABLE); AutoCAD's
@@ -268,15 +269,16 @@ TileTakeoff works the other way round:
   within 3%, 11 silent (Promenade's INDOOR ACTIVITY 1,002 / 1,015; Saddle's LECTURE ROOM 01 1,029 / 1,031).
   Layered wall faces at doors + stair runs off the floor: 73 / 190 right (38.4%), 123 within 3%, 14 silent.
   Patriot's audited key: NEW PLAY AREA 432.5 → 414.0 (the existing stair's bottom 7 treads come off it).
-- Moshe's 2024 marked jobs (Oct 19 2026; 28 jobs / 71 floor-plan sheets / 1,305 marked areas from his
-  Google Drive, `samples/marked-jobs.json`; houses, 2–3 family, multifamily, a school, a shul, a
-  nursing facility). Baseline: 391 right (30.0%), 632 within 3%, 103 silent with the estimator's
-  scale; 295 / 1,044 right on the 57 sheets whose scale the trace read. Now: 441 right (33.8%), 712
-  within 3%, 81 silent; own scale 360 / 1,074 right on 59 sheets, 60 silent. What moved it: the plan
-  title nearest its note, floor plan before foundation plan, dimensions alone with no note, door
-  ruler only past 8% (Houston p2 0 → 6, Howard p3 7 → 13, Rose Hill p2 0 → 3, Monroe / Arlington
-  traced at all); framed doorways (Carlton p3 3 → 6); heavy faces paired first (22 Rita p1 0 → 9,
-  p3 2 → 11); window / finish codes out of the room names; the paper around the building no room.
+- Moshe's 2024 marked jobs (Oct 19 2026; 28 jobs / 71 floor-plan sheets / 1,263 marked areas ≥ 5 SF from
+  his Google Drive, `samples/marked-jobs.json`; houses, 2–3 family, multifamily, a school, a shul, a
+  nursing facility). Baseline: 386 right (30.6%), 622 within 3%, 102 silent with the estimator's
+  scale; 290 / 1,010 right on the 57 sheets whose scale the trace read, 76 silent. Now: 435 right
+  (34.4%), 698 within 3%, 80 silent; own scale 355 / 1,040 right on 59 sheets, 58 silent. What moved
+  it: the plan title nearest its note, floor plan before foundation plan, dimensions alone with no
+  note, door ruler only past 8% (Houston p2 0 → 6, Howard p3 7 → 13, Rose Hill p2 0 → 3, Monroe /
+  Arlington traced at all); framed doorways (Carlton p3 3 → 6); heavy faces paired first (22 Rita
+  p1 0 → 9, p3 2 → 11); window / finish codes out of the room names; the paper around the building
+  no room.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);

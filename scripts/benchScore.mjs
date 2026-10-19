@@ -129,7 +129,7 @@ export function openEdge(ks, rs, lines, step = 0.25) {
  * overlap (over half of either, sampled on a 3" grid) joined into one. A
  * region is right when its traced floor equals its marked floor within
  * max(1 SF, 1%). Marked areas drawn over each other count once. A marked
- * area no traced room covers is missing.
+ * area no traced room covers is missing; one under 5 SF isn't scored.
  *
  * With the sheet's drawn lines (`lines`, ft), a region whose traced floor
  * runs on past the marked area mostly across open floor (nothing drawn along
@@ -146,7 +146,8 @@ export function scoreMarked(res, items, grid = 0.25, lines = null) {
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   });
   const roomAt = (p) => res.rooms.findIndex((r, i) => p.x >= boxes[i][0] && p.x <= boxes[i][2] && p.y >= boxes[i][1] && p.y <= boxes[i][3] && inRoom(p, r));
-  const keys = items.filter((it) => !/deduct/i.test(it.subject));
+  // (a sliver under 5 SF — a curb, a niche, a stray click — is no room's floor)
+  const keys = items.filter((it) => !/deduct/i.test(it.subject) && it.sf >= 5);
   // overlap[k] = Map(room index → sampled area of key k inside it)
   const cell = grid * grid;
   const overlap = keys.map((it) => {
