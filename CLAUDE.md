@@ -335,8 +335,12 @@ TileTakeoff works the other way round:
   Keter p1 (its labels land in more pieces, 7 → 2 right); (3) open plans merged (a foyer into the dining room,
   a kitchen into the family room) and doors without swings left open; (4) estimators' kitchens stop
   at the base cabinets (Marked Plans (1): 62 SF marked vs 86 SF room, five units) — ask Moshe whether
-  the cabinet footprint comes off a kitchen floor before modelling it; (5) the `scope` test (open
-  floor along the marked edge) catches few cases — plans are dense with lines.
+  the cabinet footprint comes off a kitchen floor before modelling it — 36 Ellish's estimator kept the
+  counters in, 10 Monroe p2's stopped at one; (5) the `scope` test (open floor along the marked edge)
+  catches few cases — plans are dense with lines; (6) a short wall drawn only as a hatch fill on layer
+  "0" (no face lines on a wall layer) is no wall on a layered sheet: Bais Rochel p1's 6,009 SF
+  lunchroom leaks past the kitchen door beside one (also its 1,388 / 1,329 SF storage and kitchen) —
+  a filled wall-shaped strip between two wall ends should read as wall.
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road
