@@ -13,12 +13,14 @@ import { roomArea } from './geometry.js';
 import { analyzeCuts } from './cutEngine.js';
 import { roomRegions } from './zones.js';
 import { roomPattern, wasteFor } from './patterns.js';
-import { floorTakeoff, wallParts, wallTileHeight, roundUp } from './takeoffRules.js';
+import { floorTakeoff, wallParts, wallTileHeight, roomFixtures, roomAccents, baseTakeoff, roundUp } from './takeoffRules.js';
 
 /**
  * Net area a material covers across rooms. A floor material assigned to a
  * room covers that room's FIELD (room minus its border bands and inlays);
- * a floor material picked on a design zone covers that zone.
+ * a floor material picked on a design zone covers that zone; the room's
+ * shower-floor tile its shower footprints; a tiled base's tile its LF × its
+ * height; an accent wall's tile its run × the tiled height.
  * @param {import('./types.js').Material} material
  * @param {import('./types.js').Room[]} rooms
  * @returns {{ netSf: number, usedRooms: {name:string,sf:number,lf?:number,pattern?:string}[] }}
@@ -28,17 +30,33 @@ export function materialArea(material, rooms, materials = null) {
   const usedRooms = [];
   const isWall = (id) => (materials ? materials.find((m) => m.id === id)?.type === 'wall' : id === material.id);
   for (const r of rooms) {
+    // a tiled base, in whatever tile it's cut from
+    const base = baseTakeoff(r);
+    if (base && base.materialId === material.id && base.sf > 0) {
+      netSf += base.sf;
+      usedRooms.push({ name: `${r.name} · ${base.heightIn}" base`, sf: base.sf, lf: base.lf, pattern: 'border', text: base.text });
+    }
     if (material.type === 'wall') {
-      if (!r.assigned?.includes(material.id)) continue;
+      const accent = roomAccents(r).some((a) => a.materialId === material.id);
+      if (!r.assigned?.includes(material.id) && !accent) continue;
       // perimeter × tiled height − 14 SF a door (8 at 4'), − 10 a tub, windows
       // not deducted, rounded up (takeoffRules.js); the height is the design
       // pick (wainscot / shower) else the full wall. A second wall tile in a
-      // bath is the shower / tub walls' — each covers its own part
-      const w = wallParts(r, r.assigned.filter(isWall), wallTileHeight(r)).find((x) => x.materialId === material.id);
-      if (!w) continue;
-      netSf += w.sf;
-      usedRooms.push({ name: w.part === 'all' ? r.name : `${r.name} · ${w.label.toLowerCase()}`, sf: w.sf, text: w.text });
+      // bath is the shower / tub walls' — each covers its own part; an
+      // accent wall's tile its run
+      for (const w of wallParts(r, r.assigned.filter(isWall), wallTileHeight(r)).filter((x) => x.materialId === material.id)) {
+        netSf += w.sf;
+        usedRooms.push({ name: w.part === 'all' ? r.name : `${r.name} · ${w.label.toLowerCase()}`, sf: w.sf, text: w.text });
+      }
       continue;
+    }
+    // the shower floors' tile
+    if (r.finish?.showerFloorMaterialId === material.id) {
+      for (const s of roomFixtures(r).showers) {
+        const sf = roundUp(s.w * s.d);
+        netSf += sf;
+        usedRooms.push({ name: `${r.name} · shower floor`, sf, pattern: 'grid' });
+      }
     }
     // floor: the room's field (outline minus holes, bands and inlays) and
     // any design zones picked in this material

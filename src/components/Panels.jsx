@@ -14,7 +14,7 @@ import PatternSwatch from './PatternSwatch.jsx';
 import { materialItem, saveMine } from '../lib/library.js';
 import { markupValue, markupCost, markupUnit, markupDims, summarizeMarkups, MARKUP_TYPES, isMeasured } from '../engine/markups.js';
 import { roomRegions, zonesOf, isAxisRect } from '../engine/zones.js';
-import { roomFixtures, floorTakeoff, wallParts, wetRun, wallTileHeight, parseShowers, showersText, parseWindows, windowsText } from '../engine/takeoffRules.js';
+import { roomFixtures, floorTakeoff, wallParts, wetRun, wallTileHeight, parseShowers, showersText, parseWindows, windowsText, roomAccents, baseTakeoff } from '../engine/takeoffRules.js';
 
 const money = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -186,8 +186,12 @@ function RoomCard({ room: r }) {
 /* ---- Takeoff: tubs, showers, wall tile height, and the arithmetic ----
    Artistic's rules (engine/takeoffRules.js): floor = room − shower − 10 a
    tub; walls = perimeter × tiled height − 14 a door (8 at 4'), − 10 a tub;
-   windows never deducted; everything rounded up. The numbers show their
+   windows never deducted; everything rounded up. The shower floors' tile,
+   accent walls (tub BW, vanity BW: a run in its own tile) and a tiled base
+   (LF × its height, its own tile) are picked here. The numbers show their
    working so they can be checked against the plan. */
+const ACCENT_LABELS = ['Tub BW', 'Shower BW', 'Vanity BW', 'Sink BW', 'Toilet BW', 'Feature wall'];
+const BASE_HEIGHTS = [4, 6, 8];
 function RoomTakeoff({ room: r }) {
   const s = useProject();
   const fx = roomFixtures(r);
@@ -195,7 +199,14 @@ function RoomTakeoff({ room: r }) {
   React.useEffect(() => { setShText(showersText(roomFixtures(r).showers)); }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const setFx = (patch) => s.updateRoom(r.id, { fixtures: { ...(r.fixtures || {}), ...patch } });
   const wallMats = r.assigned.map((id) => s.materials.find((m) => m.id === id)).filter((m) => m && m.type === 'wall');
-  const wallMat = wallMats[0];
+  const accents = r.finish?.accents || [];
+  const wallMat = wallMats[0] || (roomAccents(r).some((a) => a.materialId) ? s.materials.find((m) => m.id === roomAccents(r).find((a) => a.materialId).materialId) : null);
+  const allWallTiles = s.materials.filter((m) => m.type === 'wall');
+  const floorTiles = s.materials.filter((m) => m.type !== 'wall');
+  const setAccents = (list) => s.applyFinish(r.id, { accents: list });
+  const base = r.finish?.base || null;
+  const baseTo = baseTakeoff(r);
+  const showerTileId = r.finish?.showerFloorMaterialId || '';
   const [winText, setWinText] = React.useState(windowsText(fx.windows));
   React.useEffect(() => { setWinText(windowsText(roomFixtures(r).windows)); }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const th = r.finish?.wallTileHeight;
@@ -229,6 +240,15 @@ function RoomTakeoff({ room: r }) {
             onChange={(e) => setWinText(e.target.value)} onBlur={() => { const w = parseWindows(winText); setFx({ windows: w }); setWinText(windowsText(w)); }} /></label>
         </div>
       )}
+      {fx.showers.length > 0 && (
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <label className="mini" style={{ flex: 1 }} title="The tile the shower floors are laid in (a mosaic, pebbles): its own line on the quantity list">Shower floor tile
+            <select className="inp" value={showerTileId} onChange={(e) => s.applyFinish(r.id, { showerFloorMaterialId: e.target.value || null })}>
+              <option value="">— not picked (NA) —</option>
+              {floorTiles.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select></label>
+        </div>
+      )}
       {wallMats.length === 2 && wet.lf > 0 && (
         <div className="row" style={{ gap: 6, marginTop: 6 }}>
           <label className="mini" style={{ flex: 1 }} title="The shower / tub walls' tile covers the wet run (W + 2·D a shower, 10 LF a tub); the other tile the rest of the walls">{wet.shower ? 'Shower' : 'Tub'} walls in
@@ -252,12 +272,45 @@ function RoomTakeoff({ room: r }) {
           {mode === 'custom' && <DimInput value={th} system={s.unitSystem} onCommit={(h) => s.applyFinish(r.id, { wallTileHeight: Math.min(h, ceiling) })} />}
         </div>
       )}
+      {accents.map((a, i) => (
+        <div key={a.id || i} className="row" style={{ gap: 6, marginTop: 6 }} title="An accent wall: its run (LF) in its own tile, taken off the rest of the walls; 30% waste">
+          <select className="inp" style={{ flex: 1.2 }} value={a.label} onChange={(e) => setAccents(accents.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}>
+            {[...new Set([...ACCENT_LABELS, a.label])].map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <DimInput value={a.lf || 0} system={s.unitSystem} onCommit={(lf) => setAccents(accents.map((x, j) => (j === i ? { ...x, lf } : x)))} />
+          <select className="inp" style={{ flex: 1.4 }} value={a.materialId || ''} onChange={(e) => setAccents(accents.map((x, j) => (j === i ? { ...x, materialId: e.target.value || null } : x)))}>
+            <option value="">— tile —</option>
+            {allWallTiles.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <button className="icon-btn" title="Remove the accent wall" onClick={() => setAccents(accents.filter((_, j) => j !== i))}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
+          </button>
+        </div>
+      ))}
+      <div className="row" style={{ gap: 6, marginTop: 6 }}>
+        <button className="ghost-add" style={{ margin: 0, flex: 1 }} title="A tub / vanity back wall or a feature wall in its own tile"
+          onClick={() => setAccents([...accents, { label: fx.tubs ? 'Tub BW' : 'Feature wall', lf: fx.tubs ? 5 : 0, materialId: allWallTiles.find((m) => !wallMats.includes(m))?.id || null }])}>+ Accent wall</button>
+        <label className="mini" style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }} title="A tiled base (kick toe): strips cut from a tile around the foot of the walls, its own line">
+          <input type="checkbox" checked={!!base} onChange={(e) => s.applyFinish(r.id, { base: e.target.checked ? { heightIn: 6, materialId: null } : null })} /> Tiled base</label>
+      </div>
+      {base && (
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <select className="inp" style={{ flex: 0.8 }} value={String(base.heightIn)} onChange={(e) => s.applyFinish(r.id, { base: { ...base, heightIn: +e.target.value } })}>
+            {[...new Set([...BASE_HEIGHTS, +base.heightIn])].map((h) => <option key={h} value={String(h)}>{`${h}" base`}</option>)}
+          </select>
+          <select className="inp" style={{ flex: 2 }} value={base.materialId || ''} onChange={(e) => s.applyFinish(r.id, { base: { ...base, materialId: e.target.value || null } })}>
+            <option value="">— base tile not picked (NA) —</option>
+            {s.materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+      )}
       <div className="takeoff-math">
         <div><b>Floor</b> {floor.text}</div>
-        {floor.showers.map((x, i) => <div key={i}><b>Shower floor</b> {showersText([x])} = {x.sf} SF</div>)}
+        {floor.showers.map((x, i) => <div key={i}><b>Shower floor</b> {showersText([x])} = {x.sf} SF{showerTileId ? ` (${matName(showerTileId)})` : ''}</div>)}
         {parts.length === 1 && <div><b>Walls</b> {parts[0].text}</div>}
         {parts.length > 1 && parts.map((w) => <div key={w.materialId}><b>{w.part === 'all' ? 'Walls' : w.label}</b> ({matName(w.materialId)}) {w.text}{w.overlap ? ' — each wall tile on the whole wall' : ''}</div>)}
         {!parts.length && <div className="dim">Assign a wall tile to take off its walls.</div>}
+        {baseTo && baseTo.lf > 0 && <div><b>Tiled base</b> {baseTo.text}{baseTo.materialId ? ` (${matName(baseTo.materialId)})` : ' — tile not picked'}</div>}
       </div>
     </div>
   );

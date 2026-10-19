@@ -14,7 +14,7 @@
 // ============================================================
 
 import { centroid, roomArea, polygonArea } from '../engine/geometry.js';
-import { floorTakeoff, wallTakeoff, wallParts, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
+import { floorTakeoff, wallTakeoff, wallParts, wallTileHeight, roomFixtures, roomAccents, baseTakeoff, roundUp } from '../engine/takeoffRules.js';
 import { roomTypeOf } from '../engine/trace/analyze.js';
 import { formatLength, formatArea, ARCH_SCALES } from '../engine/units.js';
 import { markupValue, markupUnit, markupCost, isMeasured, MARKUP_TYPES } from '../engine/markups.js';
@@ -60,15 +60,18 @@ const ft = (h) => (Math.abs(h - Math.round(h)) < 0.01 ? `${Math.round(h)}'` : n2
 export function roomMarks(r, ctx) {
   const type = r.roomType && r.roomType !== 'nofloor' ? r.roomType : roomTypeOf(r.name);
   const floorTiled = ctx.allFloor || (r.assigned || []).some((id) => ctx.floorIds.has(id)) || (r.zones || []).some((z) => z.materialId);
-  const wallTiled = (r.assigned || []).some((id) => ctx.wallIds.has(id));
+  const accents = roomAccents(r).filter((a) => a.materialId);
+  const wallTiled = (r.assigned || []).some((id) => ctx.wallIds.has(id)) || accents.length > 0;
   const fx = roomFixtures(r);
   const floor = floorTiled ? floorTakeoff(r) : null;
   const h = wallTiled ? wallTileHeight(r) : 0;
   const walls = wallTiled ? wallTakeoff(r, h) : null;
-  // a bath's second wall tile covers the shower / tub walls, the first the rest
+  // a bath's second wall tile covers the shower / tub walls, the first the
+  // rest; an accent wall (tub BW) its run in its own tile
   const parts = wallTiled ? wallParts(r, (r.assigned || []).filter((id) => ctx.wallIds.has(id)), h) : [];
-  const split = parts.length === 2 && parts[0].part === 'wet';
-  const wallSf = !walls ? 0 : split ? parts[0].sf + parts[1].sf : walls.sf;
+  const split = parts.some((x) => x.part === 'wet' || x.part === 'accent');
+  // (tiles sharing one wall with nothing to say how — `overlap` — count it once)
+  const wallSf = !walls ? 0 : split ? parts.filter((x, i) => !x.overlap || parts.findIndex((y) => y.overlap) === i).reduce((a, x) => a + x.sf, 0) : walls.sf;
   const ceiling = r.wallHeight ?? 8;
   const full = wallTiled && h >= ceiling - 1e-6;
   // room dims as Moshe writes them (9.25x5) when the room is a rectangle
@@ -77,8 +80,10 @@ export function roomMarks(r, ctx) {
   const rect = Math.abs(roomArea(r) + (r.holes || []).reduce((a, hh) => a + Math.abs(polygonArea(hh)), 0) - w * d) < 0.02 * w * d;
   const dims = rect ? `${n2(Math.round(w * 4) / 4)}x${n2(Math.round(d * 4) / 4)}` : '';
   const scope = wallTiled ? (full ? `${ft(ceiling)} ceiling - fully tiled` : `${ft(h)} tile`) : '';
-  const paren = [dims, ...fx.showers.map((x) => `sf${n2(x.w)}x${n2(x.d)}`), fx.tubs ? (fx.tubs > 1 ? `${fx.tubs} tubs` : 'tub') : ''].filter(Boolean).join(' ');
-  const header = `${r.name}${(type === 'bath' || fx.showers.length || fx.tubs) && paren ? ` (${paren})` : ''}${scope ? ` ${scope}` : ''}`;
+  // an accent wall as Moshe writes it in the header: tubaccentw6lf
+  const acc = accents.map((a) => `${(a.label.split(/\s+/)[0] || 'accent').toLowerCase()}accentw${n2(a.lf)}lf`);
+  const paren = [dims, ...fx.showers.map((x) => `sf${n2(x.w)}x${n2(x.d)}`), fx.tubs ? (fx.tubs > 1 ? `${fx.tubs} tubs` : 'tub') : '', ...acc].filter(Boolean).join(' ');
+  const header = `${r.name}${(type === 'bath' || fx.showers.length || fx.tubs || acc.length) && paren ? ` (${paren})` : ''}${scope ? ` ${scope}` : ''}`;
   return {
     type, color: HIGHLIGHT[type] || HIGHLIGHT.room, floor, walls, wallSf, wallParts: split ? parts : null, wallTiled, full, height: h, fx, dims, header,
     windows: walls ? walls.windows : 0, tiled: floorTiled || wallTiled,
@@ -114,6 +119,8 @@ export function summarize(st) {
       const scope = mk.full ? 'fully tiled' : `${ft(mk.height)} tile`;
       if (mk.wallParts) for (const w of mk.wallParts) lines.push({ label: `${w.label} - ${scope}`, qty: w.sf, unit: 'SF', math: w.text });
       else if (mk.walls) lines.push({ label: `Walls - ${scope}`, qty: mk.walls.sf, unit: 'SF', math: mk.walls.text.replace(/ · .*$/, '') });
+      const base = baseTakeoff(r);
+      if (base && base.lf > 0) lines.push({ label: `Tiled base ${n2(base.heightIn)}"`, qty: roundUp(base.lf), unit: 'LF', math: base.text });
       if (mk.windows) lines.push({ label: 'Window cut', qty: mk.windows, unit: 'EA', math: 'never deducted' });
       rooms.push({ name: r.name, header: mk.header, type: mk.type, lines, floorSf: mk.floor?.sf || 0, wallSf: mk.wallSf });
     }

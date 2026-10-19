@@ -20,15 +20,18 @@
 // rate and is listed in `flags` — never a guessed price.
 // ============================================================
 
-import { floorTakeoff, wallParts, wallTileHeight, roomFixtures, roomWindows, roundUp } from '../engine/takeoffRules.js';
+import { floorTakeoff, wallParts, wallTileHeight, roomFixtures, roomWindows, roomAccents, baseTakeoff, roundUp } from '../engine/takeoffRules.js';
+import { roomPattern, patternLabel } from '../engine/patterns.js';
 import { roomRegions } from '../engine/zones.js';
 import { takeoffPages, markContext, roomMarks } from './markedPdf.js';
 
 /** Rate card (proposal #41765). Confirm per job — these are the defaults. */
 export const ARTISTIC_RATES = {
   rectified: 7.75, large: 8.75, xlUpcharge: 2, showerStd: 185, showerLg: 385,
-  niche: 145, seat: 250, window: 145, miter: 65, ramBoard: 0.95,
+  niche: 145, seat: 250, window: 145, miter: 65, ramBoard: 0.95, pattern: 8.75,
 };
+/** Layouts priced as pattern labor (checkerboard, herringbone…), not by the tile's size tier. */
+export const PATTERN_LABOR = /herringbone|chevron|basketweave|versailles|pinwheel|checker/i;
 /** A shower floor this big is "large" (~20 SF); smaller is standard (~14 SF). */
 export const SHOWER_LG_SF = 17;
 /** Miter around a standard niche. */
@@ -69,17 +72,26 @@ export function installTier(m) {
 
 /**
  * The install line(s) for a tile surface: description, item code and rate
- * by tier, plus the x-large upcharge line.
+ * by tier, plus the x-large upcharge line. A floor laid in a special layout
+ * (`pattern`: herringbone, basketweave…) is priced as pattern labor instead
+ * (Willow Tree's checkerboard foyer: 162 SF @ $8.75, "Checker board Fl").
  * @param {'floor'|'wall'} surface
  * @param {object|null} m material
  * @param {number} qty SF
  * @param {string} [note] appended to the description (" - 4' high", " (border)")
+ * @param {object} [R] rates
+ * @param {string} [pattern] the layout the floor is laid in
  */
-export function tileLines(surface, m, qty, note = '', R = ARTISTIC_RATES) {
+export function tileLines(surface, m, qty, note = '', R = ARTISTIC_RATES, pattern = '') {
   const t = installTier(m);
   const size = t ? `${n2(m.tw)}X${n2(m.th)}` : '';
   const Surface = surface === 'wall' ? 'Wall' : 'Floor';
   if (!t) return [{ desc: `${Surface} Tile Install${note} - tile not selected`, qty, item: '', rate: null, flag: `${surface} tile not picked` }];
+  if (surface === 'floor' && PATTERN_LABOR.test(pattern || '')) {
+    const lines = [{ desc: `${patternLabel(pattern)} style labor for floor ${size}${note}`, qty, item: 'Pattern Fl', rate: R.pattern }];
+    if (t.xl) lines.push({ desc: `Upcharge for x-large format tiles ${size}`, qty, item: 'Upcharge X Large', rate: R.xlUpcharge });
+    return lines;
+  }
   if (t.tier === 'other') return [{ desc: `${Surface} Tile Install ${size}${note}`, qty, item: '', rate: null, flag: `${size} is not on the rate card` }];
   const lines = t.tier === 'large'
     ? [{ desc: `Install large ${surface} tile ${size}${note}`, qty, item: surface === 'wall' ? 'Large wall tile' : 'Large floor tile', rate: R.large }]
@@ -119,7 +131,7 @@ export function buildProposal(st, R = ARTISTIC_RATES) {
       } else {
         const floorMats = (r.assigned || []).map(mat).filter((m) => m && m.type !== 'wall');
         const reg = floorMats.length || (r.zones || []).some((z) => z.materialId) ? roomRegions(r) : null;
-        for (const m of floorMats) lines.push(...tileLines('floor', m, floorTakeoff(r, reg?.fieldArea).sf, '', R).map((l) => ({ ...l, floor: true })));
+        for (const m of floorMats) lines.push(...tileLines('floor', m, floorTakeoff(r, reg?.fieldArea).sf, '', R, roomPattern(r, m)).map((l) => ({ ...l, floor: true })));
         for (const z of reg ? reg.inlays : []) {
           const m = mat(z.zone.materialId);
           if (m) lines.push(...tileLines('floor', m, roundUp(z.area), ` (${z.zone.name.toLowerCase()} inlay)`, R).map((l) => ({ ...l, floor: true })));
@@ -129,21 +141,24 @@ export function buildProposal(st, R = ARTISTIC_RATES) {
           if (m) lines.push(...tileLines('floor', m, roundUp(b.area), ` (${b.zone.name.toLowerCase()} ${n2((b.zone.width || 0) * 12)}")`, R).map((l) => ({ ...l, floor: true })));
         }
       }
-      // shower floors: 1 EA each, standard or large
+      // shower floors: 1 EA each, standard or large, with the tile it's laid in
+      const showerTile = mat(r.finish?.showerFloorMaterialId);
+      const showerSize = installTier(showerTile) ? ` ${n2(showerTile.tw)}X${n2(showerTile.th)}` : '';
       for (const s of fx.showers) {
         const sf = roundUp(s.w * s.d), lg = sf >= SHOWER_LG_SF;
-        lines.push({ desc: `Install ${lg ? 'large' : 'standard'} shower floor (${sf}sf)`, qty: 1, item: lg ? 'Shower Fl Lg' : 'Shower Fl', rate: lg ? R.showerLg : R.showerStd });
+        lines.push({ desc: `Install ${lg ? 'large' : 'standard'} shower floor${showerTile ? ` with ${showerTile.name}` : ''} (${sf}sf)${showerSize}`, qty: 1, item: lg ? 'Shower Fl Lg' : 'Shower Fl', rate: lg ? R.showerLg : R.showerStd });
       }
       // walls, then what goes with tiled walls: window cuts, niches, seats, miter
       const wallMats = (r.assigned || []).map(mat).filter((x) => x && x.type === 'wall');
-      if (wallMats.length) {
+      if (wallMats.length || roomAccents(r).some((a) => a.materialId)) {
         const h = wallTileHeight(r);
         const full = h >= (r.wallHeight ?? 8) - 1e-6;
-        // one tile: the whole wall; a bath's second tile: its shower / tub walls
+        // one tile: the whole wall; a bath's second tile: its shower / tub walls;
+        // an accent wall (TUB BW, VANITY BW): its run in its own tile
         for (const w of wallParts(r, wallMats.map((m) => m.id), h)) {
-          const what = w.part === 'all' ? '' : w.part === 'wet' ? ` - ${w.label.toUpperCase()}` : ' - REST OF WALLS';
+          const what = w.part === 'all' ? '' : w.part === 'wet' || w.part === 'accent' ? ` - ${w.label.toUpperCase()}` : ' - REST OF WALLS';
           lines.push(...tileLines('wall', mat(w.materialId), w.sf, `${what}${full ? '' : ` - ${ftTxt(h)} high`}`, R).map((l) => ({ ...l, wall: !l.item.startsWith('Upcharge'), math: w.text })));
-          if (w.overlap && w.materialId === wallMats[0].id) flags.push(`${r.name}: ${wallMats.length} wall tiles — each priced on the whole wall`);
+          if (w.overlap && w.materialId === wallMats[0].id) flags.push(`${r.name}: ${wallMats.length} wall tiles — each priced on the whole wall (name the extra one's run as an accent wall)`);
         }
         const wins = roomWindows(r);
         for (const x of wins) lines.push({ desc: `Labor to cut tiles around window (${x.h ? `${n2(x.w)}x${n2(x.h)}` : `${n2(x.w)}' wide`})`, qty: 1, item: 'Window', rate: R.window });
@@ -160,6 +175,13 @@ export function buildProposal(st, R = ARTISTIC_RATES) {
           lines.push({ desc: `*OPTIONAL* 45 Miter cut corner with epoxy for ${what} (per lf)`, qty: +miter.toFixed(2), item: 'Miter LF', rate: R.miter, optional: true });
         }
         if (wins.length > sized.length) flags.push(`${r.name}: window size (W x H) needed for the miter`);
+      }
+      // tiled base: per LF; no rate on the card — Moshe sets it per job
+      const base = baseTakeoff(r);
+      if (base && base.lf > 0) {
+        const bm = mat(base.materialId);
+        const size = installTier(bm) ? ` - ${n2(bm.tw)}X${n2(bm.th)} TILE` : '';
+        lines.push({ desc: `${n2(base.heightIn)}" Tiled base per Ln Ft${size}`, qty: roundUp(base.lf), item: 'Base', rate: R.base ?? null, flag: R.base == null ? 'tiled base has no rate on the card — set it' : undefined, math: base.text });
       }
       if (!lines.length) continue;
       pageRows.push({ type: 'sub', text: roomMarks(r, ctx).header });
