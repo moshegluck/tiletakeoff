@@ -166,7 +166,10 @@ TileTakeoff works the other way round:
     a wall candidate whose two light faces may pair (Saddle A-103's lecture room / open-to-assembly).
     Names in the drafter's language count (Saddle River's dims are on "Размеры"; French A-N-ENV-MUR =
     walls, -FEN = windows, -MOB = furniture) and AIA shorthand (A-FIX., A-SHBD, Q-CASE, A-COLS,
-    A-FLOR, floor PAT outlines, NOT IN SCOPE → ignore).
+    A-FLOR, floor PAT outlines, NOT IN SCOPE → ignore), and the same in plain words (Counter,
+    A-KITCHEN, A-FXTR-PLUM, A-Closet Shelves, ADA - FLOOR SPACE, INSULATION, FOOTINGS, DTEXT, PRESNOTE,
+    TITLEBLOCK, SIGN-SEAL → ignore; 36 Ellish's "Counter" paired with a wall face into a 27" wall;
+    DoorSwing → door).
 - `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list)
 - `src/lib/rasterWalls.js` scanned plans: blob filter, auto-deskew, H/V stroke detection
 - `src/lib/planEvidence.js`, `traceClient.js`, `traceWorker.js` read plan → feet → solve in a Worker
@@ -240,7 +243,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 450 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 451 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -296,7 +299,8 @@ TileTakeoff works the other way round:
   Arlington traced at all); framed doorways (Carlton p3 3 → 6); heavy faces paired first (22 Rita
   p1 0 → 9, p3 2 → 11); window / finish codes out of the room names; the paper around the building
   no room. Then finish / title-block text out of the room names and doubtful pieces counted against a
-  reading: 451 right (35.7%), 710 within 3%, 73 silent; own scale 367 / 1,040, 57 silent.
+  reading, casework / text layers in plain words: 454 right (35.9%), 713 within 3%, 74 silent; own
+  scale 372 / 1,040, 57 silent.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);

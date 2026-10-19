@@ -54,7 +54,7 @@ export function roomTypeOf(name) {
 // ABOVE TO BE…"), door tags ("3'0" X 6'8""), stair notes ("UP 22R"),
 // window / equipment codes ("2165 CA-3"), CAD attribute dumps.
 const STRUCT_RE = /\b(LVL|PSL|LSL|GLU-?LAM|HEADERS?|HDR|BEAMS?|JOISTS?|JST|TJI|TRUSS(ES)?|GIRDERS?|STUDS?|RAFTERS?|LINTELS?|FTGS?|FOOTINGS?|REBAR|DECKING|CONC\.?|CONCRETE|CMU|HSS|BRG|BEARING|ANCHOR|BOLTS?|HANGERS?|SIMPSON|PLYWOOD|SHEATHING|OSB|FLANGE)\b|\bW\d+\s*[xX]\s*\d+|\b\d+\s*[xX]\s*\d+\b|\(\d+\)\s*\d|@\s*\d+\s*"?\s*O\.?\s*C\b/i;
-const NOTE_RE = /\b(TO BE|ABOVE|BELOW|SEE|PROVIDE|VERIFY|REMOVE|INSTALL|W\/|MIN\.|MAX\.)\b/i;
+const NOTE_RE = /\b(TO BE|ABOVE|BELOW|SEE|PROVIDE|VERIFY|REMOVE|INSTALL)\b|\bW\/(?!D\b)|\b(MIN|MAX)\./i;
 const TAG_RE = /\d\s*'\s*-?\s*\d*\s*"?\s*[xX×]\s*\d+\s*'|^(UP|DN|DOWN)\.?\s*\d+\s*R\b|^\d{3,4}\s*[A-Z]{1,3}(-\d+)?$|^\(.*\d\.\d/i;
 
 // a window maker's code: the unit's size (2959 = 2'-9" x 5'-9") and type

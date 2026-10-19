@@ -26,6 +26,16 @@ describe('CAD layer names', () => {
     expect(['A-Wall', 'A-WALL-FULL', 'A-WALL-TYP1'].map(classifyLayer)).toEqual(['wall', 'wall', 'wall']);
   });
 
+  it('casework, fixtures, footings, text and the seal named in plain words are no walls (36 Ellish, 10 Monroe, Carlton Rd)', () => {
+    // 36 Ellish's kitchenette counter ("Counter") paired with the wall's face into a 27" wall
+    const plain = ['Counter', 'A-KITCHEN', 'ktcn n bath', 'x-bas|A-FXTR-PLUM', 'A-Closet Shelves', 'ADA - FLOOR SPACE', 'SC-INSULATION',
+      'FOOTINGS', 'A-FOOTING', 'CONCRETE', 'REBAR', 'x-first|A-CLNG-PROF', 'JUNK', 'DTEXT', 'TEXT1', 'ARWALLTEX', 'PRESNOTE', 'TITLEBLOCK',
+      'SIGN-SEAL', 'A-North Arrow'];
+    expect(plain.filter((n) => classifyLayer(n) !== 'ignore')).toEqual([]);
+    expect(classifyLayer('DoorSwing')).toBe('door');
+    expect(['A-WALL', 'EXISTING WALLS', 'PART', 'S-C Detacter'].map(classifyLayer)).toEqual(['wall', 'wall', 'other', 'other']);
+  });
+
   it('reads layer names in the drafter\'s language and in AIA shorthand (Saddle River, Promenade)', () => {
     // Saddle River's dimensions are on "Размеры" (Russian: dimensions); paired with a wall face they made a 20" wall
     expect(['Размеры', 'Cotation', 'A-FIX.', 'A-SHBD', 'logo', 'A-N-MOB-MOB-TAB-CHA'].map(classifyLayer)).toEqual(['ignore', 'ignore', 'ignore', 'ignore', 'ignore', 'ignore']);

@@ -124,6 +124,9 @@ describe('which words name rooms', () => {
     expect(name(['HIGH CEILING FAMILY ROOM'])).toBe('HIGH CEILING FAMILY ROOM');
     expect(name(['P.R.'])).toBe('P.R.');
     expect(name(['UNIT 201'])).toBe('UNIT 201');
+    // a note with "W/ " in it is a note (34 Ellish's attic stair); a W/D closet is a laundry
+    expect(name(['PULL DOWN ATTIC STAIR W/ R-38 INSULATED COVER.'])).toBe('Space 1');
+    expect(name(['W/D'])).toBe('W/D');
   });
 });
 
