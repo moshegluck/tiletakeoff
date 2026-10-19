@@ -4,7 +4,7 @@
 // line, with the stair's note beside it (UP / DN / 22R). The floor stops at
 // the run: an estimator takes the landings, not the treads.
 // ============================================================
-import { dot, perp, norm, sub, GridIndex } from './vec.js';
+import { dot, perp, sub, GridIndex } from './vec.js';
 
 const STAIR_TEXT = /\b(UP|DN|DOWN)\b|\b\d{1,2}\s*R\b|\bRISERS?\b|\bTREADS?\b|\bSTAIRS?\b/i;
 

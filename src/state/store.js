@@ -476,6 +476,11 @@ export const useStore = create((rawSet, get) => {
       if (patch.wallMaterialId) { setOnly('wall', patch.wallMaterialId); if (!fin.wallTileHeight) fin.wallTileHeight = 4; }
       // which wall tile covers a bath's shower / tub walls (the other: the rest)
       if ('wetWallMaterialId' in patch) fin.wetWallMaterialId = patch.wetWallMaterialId;
+      // the shower floors' tile; a tiled base { heightIn, materialId } (null = none);
+      // accent walls [{ id, label, lf, materialId }] (tub BW, vanity BW…)
+      if ('showerFloorMaterialId' in patch) fin.showerFloorMaterialId = patch.showerFloorMaterialId || null;
+      if ('base' in patch) fin.base = patch.base ? { heightIn: +patch.base.heightIn || 6, materialId: patch.base.materialId || null } : null;
+      if ('accents' in patch) fin.accents = (patch.accents || []).map((a) => ({ id: a.id || nanoid(), label: a.label || 'Accent wall', lf: +a.lf || 0, materialId: a.materialId || null }));
       if ('wallTileHeight' in patch) {
         fin.wallTileHeight = patch.wallTileHeight;
         if (patch.wallTileHeight === 0) { setOnly('wall', null); fin.wallTile = null; }

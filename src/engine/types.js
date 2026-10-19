@@ -44,7 +44,7 @@
  * @property {number} [spurLf]         traced: LF of partitions dead-ending in the room
  * @property {{width?: number}[]} [openings] traced: doors / openings on the room's walls
  * @property {number} [doorHeight]     ft, door head height for wall tile above openings
- * @property {{wallTileHeight?: number}} [finish] design picks (floor / paint / wall tile)
+ * @property {{wallTileHeight?: number, wetWallMaterialId?: string, showerFloorMaterialId?: string|null, base?: {heightIn:number, materialId:string|null}|null, accents?: {id:string, label:string, lf:number, materialId:string|null}[]}} [finish] design picks (floor / paint / wall tile, shower floor tile, tiled base, accent walls)
  * @property {Zone[]} [zones]          floor design zones (borders/inlays)
  */
 

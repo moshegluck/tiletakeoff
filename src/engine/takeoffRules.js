@@ -162,9 +162,18 @@ export function wetRun(r) {
   return { lf, text: parts.join(' + '), shower: fx.showers.length > 0, tub: fx.tubs > 0 };
 }
 
+/** Accent walls a room's finish names (tub BW, vanity BW, a feature wall): label, LF, tile. */
+export function roomAccents(r) {
+  return (Array.isArray(r.finish?.accents) ? r.finish.accents : [])
+    .filter((a) => a && +a.lf > 0)
+    .map((a) => ({ id: a.id, label: String(a.label || 'Accent wall'), lf: +a.lf, materialId: a.materialId || null }));
+}
+
 /**
- * The wall tile lines of a room (Willow Tree #41765). One wall tile covers
- * the whole wall. A second wall tile in a room with a shower or tub is the
+ * The wall tile lines of a room (Willow Tree #41765). An accent wall (tub
+ * BW, vanity BW, a feature wall: `finish.accents`) is its run × the tiled
+ * height in its own tile, taken off the rest. One wall tile covers the rest
+ * of the wall. A second wall tile in a room with a shower or tub is the
  * shower / tub walls' tile (`finish.wetWallMaterialId`, else the second one
  * picked): it covers the wet run × the tiled height; the rest of the walls
  * carry the doors and the 10 SF tub deduction. Each line carries its
@@ -173,36 +182,75 @@ export function wetRun(r) {
  * @param {object} r room
  * @param {string[]} wallIds the room's wall tile materials, in the order picked
  * @param {number} [height] tiled height
- * @returns {{ materialId:string, part:'all'|'wet'|'rest', label:string, sf:number, text:string, overlap?:boolean }[]}
+ * @returns {{ materialId:string, part:'all'|'wet'|'rest'|'accent', label:string, sf:number, text:string, lf?:number, overlap?:boolean }[]}
  */
 export function wallParts(r, wallIds, height = wallTileHeight(r)) {
   const ids = [...new Set((wallIds || []).filter(Boolean))];
-  if (!ids.length) return [];
+  const accents = roomAccents(r).filter((a) => a.materialId);
+  if (!ids.length && !accents.length) return [];
   const whole = wallTakeoff(r, height);
-  const wet = wetRun(r);
-  if (ids.length !== 2 || !(wet.lf > 0)) {
-    return ids.map((id) => ({ materialId: id, part: 'all', label: 'Walls', sf: whole.sf, text: whole.text, overlap: ids.length > 1 }));
-  }
-  const wetId = ids.includes(r.finish?.wetWallMaterialId) ? r.finish.wetWallMaterialId : ids[1];
-  const restId = ids.find((id) => id !== wetId);
   const h = whole.height;
-  const wetLf = Math.min(wet.lf, whole.lf);
-  const wetGross = wetLf * h;
-  const restLf = whole.lf - wetLf;
-  const restGross = restLf * h;
+  /** @type {any[]} */
+  const out = [];
+  let accentLf = 0;
+  for (const a of accents) {
+    const lf = Math.min(a.lf, Math.max(0, whole.lf - accentLf));
+    if (!(lf > 0)) continue;
+    accentLf += lf;
+    out.push({ materialId: a.materialId, part: 'accent', label: a.label, lf, sf: roundUp(lf * h), text: `${n1(lf)} LF × ${n1(h)}' = ${n1(lf * h)} → ${roundUp(lf * h)} SF` });
+  }
+  if (!ids.length) return out;
   const ded = whole.doors.reduce((a, d) => a + d.sf, 0) + whole.tub;
-  const restNet = Math.max(0, restGross - ded);
   const dedText = [
     ...whole.doors.map((d) => `− ${n1(d.sf)} (${d.wide ? `${n1(d.width)}' opening` : 'door'})`),
     ...(whole.tub ? [`− ${whole.tub} (tub)`] : []),
   ];
+  // the wall the accents leave: the whole perimeter less their run
+  const runLf = whole.lf - accentLf;
+  const run = (lf, minus) => {
+    const gross = lf * h, net = Math.max(0, gross - ded);
+    return { sf: roundUp(net), text: `${minus ? `(${n1(whole.lf)} − ${n1(minus)})` : n1(lf)} LF × ${n1(h)}' = ${n1(gross)}${dedText.length ? ' ' + dedText.join(' ') : ''} = ${n1(net)} → ${roundUp(net)} SF` };
+  };
+  const wet = wetRun(r);
+  if (ids.length !== 2 || !(wet.lf > 0)) {
+    const rest = accentLf > 0 ? run(runLf, accentLf) : { sf: whole.sf, text: whole.text };
+    const label = accentLf > 0 ? 'Rest of walls' : 'Walls';
+    const part = /** @type {'rest'|'all'} */ (accentLf > 0 ? 'rest' : 'all');
+    return [...out, ...ids.map((id) => ({ materialId: id, part, label, sf: rest.sf, text: rest.text, overlap: ids.length > 1 }))];
+  }
+  const wetId = ids.includes(r.finish?.wetWallMaterialId) ? r.finish.wetWallMaterialId : ids[1];
+  const restId = ids.find((id) => id !== wetId);
+  const wetLf = Math.min(wet.lf, runLf);
+  const wetGross = wetLf * h;
+  const rest = run(runLf - wetLf, wetLf + accentLf);
   const label = wet.shower && wet.tub ? 'Shower & tub walls' : wet.shower ? 'Shower walls' : 'Tub walls';
   return [
+    ...out,
     { materialId: wetId, part: 'wet', label, sf: roundUp(wetGross), text: `${wet.text} = ${n1(wetLf)} LF × ${n1(h)}' = ${n1(wetGross)} → ${roundUp(wetGross)} SF` },
-    {
-      materialId: restId, part: 'rest', label: 'Rest of walls', sf: roundUp(restNet),
-      text: `(${n1(whole.lf)} − ${n1(wetLf)}) LF × ${n1(h)}' = ${n1(restGross)}${dedText.length ? ' ' + dedText.join(' ') : ''} = ${n1(restNet)} → ${roundUp(restNet)} SF`,
-    },
+    { materialId: restId, part: 'rest', label: 'Rest of walls', sf: rest.sf, text: rest.text },
   ];
 }
 
+/**
+ * A room's tiled base (`finish.base`: { heightIn, materialId }): strips cut
+ * from a tile, run around the wall's foot — not floor tile, not wall field.
+ * LF = the walls less their doorways (a traced room's wall LF is net of its
+ * doorways; otherwise 2 LF a door, as the wall takeoff takes); SF = LF ×
+ * the base height. null when the room has no tiled base.
+ * @returns {{ lf:number, heightIn:number, sf:number, materialId:string|null, text:string } | null}
+ */
+export function baseTakeoff(r) {
+  const b = r.finish?.base;
+  if (!b || !(+b.heightIn > 0)) return null;
+  const fx = roomFixtures(r);
+  const traced = Number.isFinite(r.wallLf);
+  const perim = roomWallLf(r);
+  const doors = traced ? 0 : fx.doors * STD_DOOR_LF;
+  const lf = Math.max(0, perim - doors);
+  const h = +b.heightIn;
+  const sf = lf * h / 12;
+  return {
+    lf, heightIn: h, sf, materialId: b.materialId || null,
+    text: `${doors ? `${n1(perim)} − ${n1(doors)} (door${fx.doors > 1 ? `s ×${fx.doors}` : ''}) = ` : ''}${n1(lf)} LF × ${n1(h)}" = ${n1(sf)} SF`,
+  };
+}

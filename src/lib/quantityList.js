@@ -17,7 +17,7 @@
 // no tile picked → NA. Labor (niches, window cuts…) is not in it.
 // ============================================================
 
-import { floorTakeoff, wallParts, wallTileHeight, roomFixtures, roundUp } from '../engine/takeoffRules.js';
+import { floorTakeoff, wallParts, wallTileHeight, roomFixtures, roomAccents, baseTakeoff, roundUp } from '../engine/takeoffRules.js';
 import { roomRegions } from '../engine/zones.js';
 import { roomPattern } from '../engine/patterns.js';
 import { roomTypeOf } from '../engine/trace/analyze.js';
@@ -38,8 +38,10 @@ const PATTERNED = /herringbone|chevron|basketweave|versailles|pinwheel/i;
  * 48X48 elsewhere 25% · other large format (24X48, 36X36, 12X36, 10X30,
  * 8X48 / 9X48 plank) 22% · mosaic / pebble / 3X12 subway 15% · 24X24 /
  * 12X24 in open areas 20% · herringbone / patterned layouts 15% · shower
- * floors 15% · borders / listello 10% · default 10%.
- * @param {'floor'|'wall'|'shower'|'border'} surface
+ * floors 15% · borders / listello 10% · default 10%. An accent wall (tub /
+ * vanity / shower BW, a feature wall) is 30% wherever it is — every cut
+ * lands in the feature.
+ * @param {'floor'|'wall'|'shower'|'border'|'accent'} surface
  * @param {object|null} m material (null = no tile picked)
  * @param {string} roomType
  * @param {string} [pattern] the layout the room lays it in
@@ -47,6 +49,7 @@ const PATTERNED = /herringbone|chevron|basketweave|versailles|pinwheel/i;
 export function artisticWaste(surface, m, roomType, pattern = 'grid') {
   if (surface === 'border') return 0.10;
   if (surface === 'shower') return 0.15;
+  if (surface === 'accent') return 0.30;
   const a = Math.max(+m?.tw || 0, +m?.th || 0), b = Math.min(+m?.tw || 0, +m?.th || 0);
   const sized = a > 0 && b > 0;
   const xl = sized && b >= 48;
@@ -77,14 +80,16 @@ export function itemText(m) {
 /**
  * The quantity list of the whole job, page by page (pure; tested).
  * floorSf / wallSf are the Floor… / Wall… rows (they tie to the proposal's
- * office-use note); shower floors, borders and listello sit outside both.
+ * office-use note); shower floors, borders, listello and tiled base sit
+ * outside both. Tiled base: LF × its height, its own tile (NA until
+ * picked), the room's waste for that tile + 10 points.
  */
 export function quantityList(st) {
   const pages = takeoffPages(st);
   const ctx = markContext(st, pages.flatMap((p) => p.rooms));
   const mat = (id) => st.materials.find((m) => m.id === id) || null;
   const rows = [];
-  const sum = { floorSf: 0, wallSf: 0, showerSf: 0, borderSf: 0, lf: 0 };
+  const sum = { floorSf: 0, wallSf: 0, showerSf: 0, borderSf: 0, baseSf: 0, lf: 0 };
   const naRooms = [];
   for (const p of pages) {
     const pageRows = [];
@@ -117,25 +122,31 @@ export function quantityList(st) {
             : { loc: `Border — ${b.zone.name} (${n2(b.lf)} LF × ${n2(w * 12)}")`, item: itemText(m), unit: 'SF', count: roundUp(b.area), waste: 0.10, math: `${n2(b.area)} SF band, ${n2(w * 12)}" wide`, kind: 'border' });
         }
       }
+      const showerTile = mat(r.finish?.showerFloorMaterialId);
       for (const s of fx.showers) {
-        lines.push({ loc: `Shower Floor (${n2(s.w)}x${n2(s.d)})`, item: 'NA', unit: 'SF', count: roundUp(s.w * s.d), waste: artisticWaste('shower', null, type), math: `${n2(s.w)} × ${n2(s.d)} = ${n2(s.w * s.d)}`, kind: 'shower' });
+        lines.push({ loc: `Shower Floor (${n2(s.w)}x${n2(s.d)})`, item: itemText(showerTile), unit: 'SF', count: roundUp(s.w * s.d), waste: artisticWaste('shower', showerTile, type), math: `${n2(s.w)} × ${n2(s.d)} = ${n2(s.w * s.d)}`, kind: 'shower' });
       }
       const wallMats = (r.assigned || []).map(mat).filter((x) => x && x.type === 'wall');
-      if (wallMats.length) {
+      if (wallMats.length || roomAccents(r).some((a) => a.materialId)) {
         const h = wallTileHeight(r);
         const full = h >= (r.wallHeight ?? 8) - 1e-6;
         for (const w of wallParts(r, wallMats.map((m) => m.id), h)) {
           const m = mat(w.materialId);
-          const what = w.part === 'all' ? 'Wall' : w.part === 'wet' ? w.label : 'Rest of Walls';
-          lines.push({ loc: full ? what : `${what} — ${ftTxt(h)} high`, item: itemText(m), unit: 'SF', count: w.sf, waste: artisticWaste('wall', m, type, roomPattern(r, m)), math: w.text.replace(/ · .*$/, ''), kind: 'wall' });
+          const what = w.part === 'all' ? 'Wall' : w.part === 'wet' ? w.label : w.part === 'accent' ? `Wall — ${w.label}` : 'Rest of Walls';
+          lines.push({ loc: full ? what : `${what} — ${ftTxt(h)} high`, item: itemText(m), unit: 'SF', count: w.sf, waste: artisticWaste(w.part === 'accent' ? 'accent' : 'wall', m, type, roomPattern(r, m)), math: w.text.replace(/ · .*$/, ''), kind: 'wall' });
         }
+      }
+      const base = baseTakeoff(r);
+      if (base && base.lf > 0) {
+        const m = mat(base.materialId);
+        lines.push({ loc: `Base — ${n2(base.heightIn)}" tiled base (${n2(base.lf)} LF)`, item: itemText(m), unit: 'SF', count: +base.sf.toFixed(2), waste: +(artisticWaste('floor', m, type) + 0.10).toFixed(2), math: base.text, kind: 'base' });
       }
       if (!lines.length) continue;
       // the room header as the proposal writes it: dims, shower, ceiling, scope
       pageRows.push({ type: 'sub', text: roomMarks(r, ctx).header });
       for (const l of lines) {
         pageRows.push({ type: 'line', ...l });
-        sum[{ floor: 'floorSf', wall: 'wallSf', shower: 'showerSf', border: 'borderSf', lf: 'lf' }[l.kind]] += l.count;
+        sum[{ floor: 'floorSf', wall: 'wallSf', shower: 'showerSf', border: 'borderSf', base: 'baseSf', lf: 'lf' }[l.kind]] += l.count;
       }
       if (lines.some((l) => l.item === 'NA')) naRooms.push(r.name);
     }
