@@ -84,13 +84,18 @@ const READINGS = [
 /**
  * How well a trace agrees with what the sheet itself says: printed room
  * areas it matches (or misses), named rooms each in a room of their own,
- * names merged into one room or left in no room, wall ends left open.
+ * names merged into one room or left in no room, wall ends left open — and
+ * how much of it the trace itself doubts: rooms carrying a flag, and
+ * nameless pieces (furniture drawn light closes into them when every pen
+ * may draw a wall).
  */
 export function readingScore(res) {
   const v = res.verify || {};
   const kind = (k) => res.flags.filter((f) => f.kind === k).length;
   const named = res.rooms.filter((r) => r.labels?.length).length;
-  return 3 * (v.matched || 0) - 2 * (v.off || 0) + named - 2 * kind('merged_rooms') - 1.5 * kind('room_not_closed') - 0.3 * kind('open_end');
+  const doubted = res.rooms.filter((r) => r.status !== 'ok').length;
+  return 3 * (v.matched || 0) - 2 * (v.off || 0) + named - 2 * kind('merged_rooms') - 1.5 * kind('room_not_closed') - 0.3 * kind('open_end')
+    - 0.3 * doubted - 0.1 * (res.rooms.length - named);
 }
 
 export function runTrace(input = {}) {

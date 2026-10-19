@@ -118,13 +118,19 @@ TileTakeoff works the other way round:
     Room names (`analyze.js` `isLabel`): framing / beam callouts (LVL, HEADER, W18x71, 2x10 @ 16" O.C.),
     construction notes (… ABOVE, TO BE, SEE), door tags (3'0" X 6'8"), stair notes (UP 22R), window /
     equipment codes ("2959 CA.-2", "4121 AWNG.", "DH (2) 3753"), finish code strings ("DE-2 PL-1 TI-2"),
-    framing tags (F.J.-1, FB.1) and CAD attribute dumps never name a room.
+    framing tags (F.J.-1, FB.1) and CAD attribute dumps never name a room; nor do a finish plan's callouts
+    and legend ("PL-2 - PL-3", "HIGH CEILING: PA-2", "FU-2 UNDER COUNTER", CLEAR MIRROR, UP TO CEILING,
+    LINEAR DRAIN, "& PLUMBING", material names), the title block (SEAL, DESCRIPTION, an address, e-mail,
+    phone), roof / gypsum notes, OPTIONAL DOOR, or garbled text with no 3-letter word (a type's
+    abbreviation — WC, CL — or one with stops — P.R. — still names its room).
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
     used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
     when a rule could be wrong for this drawing (`READINGS`: every pen can be a wall; no masonry) and
     keeps the one that agrees best with the sheet's own evidence (`readingScore`: printed areas,
-    named rooms, merged / unplaced names, open ends at 0.3 each).
+    named rooms, merged / unplaced names, open ends at 0.3 each, rooms the trace flags at 0.3 each and
+    nameless rooms at 0.1: furniture drawn light closes into dozens of doubtful pieces when every pen
+    may draw a wall — 22 Rita p2, 19 Virginia, 4 Howard p2 keep the drawing as drawn).
   - Plan check (`analyze.js` `printedAreas` / `checkPrintedAreas`): room tags that print an area
     ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (within
     `AREA_TOL` 3% / 2 SF, compared at the wall faces: `room.areaFaces`, since a tag stops at the wall
@@ -234,7 +240,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 448 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 450 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -289,7 +295,8 @@ TileTakeoff works the other way round:
   note, door ruler only past 8% (Houston p2 0 → 6, Howard p3 7 → 13, Rose Hill p2 0 → 3, Monroe /
   Arlington traced at all); framed doorways (Carlton p3 3 → 6); heavy faces paired first (22 Rita
   p1 0 → 9, p3 2 → 11); window / finish codes out of the room names; the paper around the building
-  no room.
+  no room. Then finish / title-block text out of the room names and doubtful pieces counted against a
+  reading: 451 right (35.7%), 710 within 3%, 73 silent; own scale 367 / 1,040, 57 silent.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
@@ -320,9 +327,8 @@ TileTakeoff works the other way round:
 - Three+ wall tiles in one room each price the whole wall unless the extra ones are set as accent
   walls (flagged). Tiled base has no rate on #41765's card yet (each line flagged until it's set).
 - Marked-jobs failure classes still open: (1) the nursing facility at 3/32" with 45° wings
-  (03-15-24 p2/p4/p6) traces as ~1,000 fragments; (2) "every pen can draw a wall" wins its score on
-  sheets where it does worse (Howard p2, Keter p1, Mikva: furniture and window glass close into named
-  pieces) — `readingScore` needs a better tell; (3) open plans merged (a foyer into the dining room,
+  (03-15-24 p2/p4/p6) traces as ~1,000 fragments; (2) "every pen can draw a wall" still wins on
+  Keter p1 (its labels land in more pieces, 7 → 2 right); (3) open plans merged (a foyer into the dining room,
   a kitchen into the family room) and doors without swings left open; (4) estimators' kitchens stop
   at the base cabinets (Marked Plans (1): 62 SF marked vs 86 SF room, five units) — ask Moshe whether
   the cabinet footprint comes off a kitchen floor before modelling it; (5) the `scope` test (open
