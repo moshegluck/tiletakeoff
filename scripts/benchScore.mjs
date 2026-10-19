@@ -60,6 +60,67 @@ function overlapOf(ks, grid) {
   return extra;
 }
 
+/** Index drawn lines (feet) in a coarse grid; near(p, dir) = a line runs by p, along dir. */
+export function lineIndex(lines, cellSize = 2) {
+  const cells = new Map();
+  const key = (i, j) => `${i},${j}`;
+  for (const l of lines) {
+    const x0 = Math.floor(Math.min(l.a.x, l.b.x) / cellSize), x1 = Math.floor(Math.max(l.a.x, l.b.x) / cellSize);
+    const y0 = Math.floor(Math.min(l.a.y, l.b.y) / cellSize), y1 = Math.floor(Math.max(l.a.y, l.b.y) / cellSize);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 400) continue;
+    for (let i = x0; i <= x1; i++) for (let j = y0; j <= y1; j++) { const k = key(i, j); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(l); }
+  }
+  return {
+    near(p, dir, tol = 0.4, maxDeg = 25) {
+      const i = Math.floor(p.x / cellSize), j = Math.floor(p.y / cellSize);
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+        for (const l of cells.get(key(i + di, j + dj)) || []) {
+          const vx = l.b.x - l.a.x, vy = l.b.y - l.a.y, L2 = vx * vx + vy * vy;
+          if (L2 < 1e-6) continue;
+          const t = Math.max(0, Math.min(1, ((p.x - l.a.x) * vx + (p.y - l.a.y) * vy) / L2));
+          if (Math.hypot(l.a.x + t * vx - p.x, l.a.y + t * vy - p.y) > tol) continue;
+          const cos = Math.abs(vx * dir.x + vy * dir.y) / Math.sqrt(L2);
+          if (cos >= Math.cos((maxDeg * Math.PI) / 180)) return true;
+        }
+      }
+      return false;
+    },
+  };
+}
+
+/**
+ * Where a region's traced floor runs on past its marked areas, is the marked
+ * edge drawn there? An estimator who tiles part of an open room (an entry pad
+ * inside the door, the kitchen end of a kitchen / family room) stops the tile
+ * in open floor, with nothing drawn along the edge: that is scope, not a
+ * trace error. Where a drawn line runs along the edge the trace went through
+ * it. Returns the marked edge (ft) the trace runs past, and how much of it has
+ * nothing drawn along it.
+ */
+export function openEdge(ks, rs, lines, step = 0.25) {
+  let past = 0, open = 0;
+  const inAny = (p, polys) => polys.some((poly) => inPoly(p, poly));
+  const roomPolys = rs.map((r) => r.poly), keyPolys = ks.map((k) => k.poly);
+  for (const k of ks) {
+    const P = k.poly;
+    const sgn = Math.sign(P.reduce((s, p, i) => { const q = P[(i + 1) % P.length]; return s + p.x * q.y - q.x * p.y; }, 0)) || 1;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], L = Math.hypot(b.x - a.x, b.y - a.y);
+      if (L < 1e-6) continue;
+      const dir = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
+      const out = { x: dir.y * sgn, y: -dir.x * sgn };   // outward normal
+      for (let s = step / 2; s < L; s += step) {
+        const p = { x: a.x + dir.x * s, y: a.y + dir.y * s };
+        const q = { x: p.x + out.x * 0.6, y: p.y + out.y * 0.6 };
+        if (!inAny(q, roomPolys) || inAny(q, keyPolys)) continue;
+        past += step;
+        if (!lines.near(p, dir)) open += step;
+      }
+    }
+  }
+  return { past, open };
+}
+
 /**
  * Score a trace against an estimator's marked areas (polygons in feet, the
  * trace's frame). An estimator draws one polygon over several rooms of one
@@ -69,9 +130,17 @@ function overlapOf(ks, grid) {
  * region is right when its traced floor equals its marked floor within
  * max(1 SF, 1%). Marked areas drawn over each other count once. A marked
  * area no traced room covers is missing.
+ *
+ * With the sheet's drawn lines (`lines`, ft), a region whose traced floor
+ * runs on past the marked area mostly across open floor (nothing drawn along
+ * the marked edge: `openEdge`) is `scope` — part of a room tiled, the
+ * estimator's choice, not something the walls can tell. `geo` scores the
+ * rest: the regions the drawing itself bounds.
  */
-export function scoreMarked(res, items, grid = 0.25) {
+export function scoreMarked(res, items, grid = 0.25, lines = null) {
   const out = { answers: 0, right: 0, close: 0, merged: 0, missing: 0, split: 0, silent: 0, wrong: [], keySf: 0, gotSf: 0, regions: 0 };
+  out.scope = 0; out.geo = { answers: 0, right: 0, close: 0, silent: 0 };
+  const idx = lines ? lineIndex(lines) : null;
   const boxes = res.rooms.map((r) => {
     const xs = r.poly.map((p) => p.x), ys = r.poly.map((p) => p.y);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
@@ -115,17 +184,22 @@ export function scoreMarked(res, items, grid = 0.25) {
     const n = ks.length, want = ks.reduce((a, it) => a + it.sf, 0) - overlapOf(ks, grid);
     out.answers += n; out.keySf += want;
     const label = ks.map((it) => `${it.subject || 'area'} ${it.sf}`).join(' + ').slice(0, 90);
-    if (!rs.length) { out.missing += n; out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: 'no traced room', flagged: false }); continue; }
+    const geo = (k) => { out.geo.answers += n; if (k === 'right') out.geo.right += n; if (k === 'right' || k === 'close') out.geo.close += n; if (k === 'silent') out.geo.silent += n; };
+    if (!rs.length) { out.missing += n; geo('wrong'); out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: 'no traced room', flagged: false }); continue; }
     const got = rs.reduce((a, r) => a + r.area, 0);
     out.gotSf += got;
     if (rs.length > 1) out.split += n;
     const d = Math.abs(got - want), flagged = rs.some((r) => r.status !== 'ok');
     const names = rs.map((r) => r.name).join(' + ').slice(0, 60);
-    if (d <= Math.max(1, 0.01 * want)) { out.right += n; out.close += n; continue; }
-    if (d <= Math.max(3, 0.03 * want)) { out.close += n; out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: `${names}: ${got.toFixed(1)} SF (${(((got - want) / want) * 100).toFixed(1)}%)`, near: true, flagged }); continue; }
+    if (d <= Math.max(1, 0.01 * want)) { out.right += n; out.close += n; geo('right'); continue; }
+    if (d <= Math.max(3, 0.03 * want)) { geo('close'); out.close += n; out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: `${names}: ${got.toFixed(1)} SF (${(((got - want) / want) * 100).toFixed(1)}%)`, near: true, flagged }); continue; }
     if (got > want) out.merged += n;
     if (!flagged) out.silent += n;
-    out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: `${names}: ${got.toFixed(0)} SF (${(((got - want) / want) * 100).toFixed(0)}%)`, flagged });
+    // scope: the trace runs on past the marked edge across open floor
+    let scope = false;
+    if (idx && got > want) { const e = openEdge(ks, rs, idx); scope = e.open >= Math.max(1.5, 0.5 * e.past); }
+    if (scope) out.scope += n; else geo(flagged ? 'wrong' : 'silent');
+    out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: `${names}: ${got.toFixed(0)} SF (${(((got - want) / want) * 100).toFixed(0)}%)`, flagged, scope });
   }
   return out;
 }

@@ -339,7 +339,6 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   const hintIdx = new GridIndex(4);
   hints.forEach((h, i) => hintIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
   const reachOf = (t) => Math.max(1.25, (t || 0) / 2 + 0.75);
-  const hinted = (a, b, t) => hints.length > 0 && hintCoverage(a, b, hints, hintIdx, reachOf(t)) >= 0.6;
   // a window, not a doorway: drawn on a window layer, and nothing on a door
   // (or door-and-window) layer across it. It closes the room; it is no
   // break in the wall at the floor (wall LF runs under it).
@@ -347,6 +346,27 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   const winHints = hints.filter((h) => h.kind === 'window'), doorHints = hints.filter((h) => h.kind && h.kind !== 'window');
   winHints.forEach((h, i) => windowIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
   doorHints.forEach((h, i) => doorIdx.insert(i, Math.min(h.a.x, h.b.x), Math.min(h.a.y, h.b.y), Math.max(h.a.x, h.b.x), Math.max(h.a.y, h.b.y)));
+  // the door's frame drawn at both jambs (a pocket door, a cased opening: no
+  // swing, the leaf not drawn across): door-layer drawing at each end of the
+  // gap, as deep as the wall is thick, across it
+  const framed = (a, b, t) => {
+    const W = dist(a, b), T = t || 0.4;
+    if (!doorHints.length || W < 1e-6 || W > 8) return false;
+    const u = norm(sub(b, a)), n = perp(u), band = T / 2 + 0.15;
+    const ends = [[Infinity, -Infinity], [Infinity, -Infinity]];   // n-range of the drawing at each end
+    for (const i of doorIdx.query(Math.min(a.x, b.x) - band, Math.min(a.y, b.y) - band, Math.max(a.x, b.x) + band, Math.max(a.y, b.y) + band)) {
+      const h = doorHints[i];
+      for (const p of [h.a, h.b]) {
+        const o = dot(sub(p, a), n), s = dot(sub(p, a), u);
+        if (Math.abs(o) > band) continue;
+        const k = s >= -0.05 && s <= 0.3 * W ? 0 : s >= 0.7 * W && s <= W + 0.05 ? 1 : -1;
+        if (k < 0) continue;
+        ends[k][0] = Math.min(ends[k][0], o); ends[k][1] = Math.max(ends[k][1], o);
+      }
+    }
+    return ends.every(([lo, hi]) => hi - lo >= 0.6 * T);
+  };
+  const hinted = (a, b, t) => hints.length > 0 && (hintCoverage(a, b, hints, hintIdx, reachOf(t)) >= 0.6 || framed(a, b, t));
   // …or, on a sheet without layers, the window symbol itself: two or more
   // lines running across the gap inside the wall's thickness (frame, glass,
   // sill). A doorway has nothing drawn along it there.

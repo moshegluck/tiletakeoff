@@ -20,6 +20,12 @@ describe('CAD layer names', () => {
     expect(['A-WALL-DEMO', 'A - DEMOLISH', 'A - ABOVE', 'A-WALL-PATT', 'T - DIMS INTERIOR CD'].map(classifyLayer)).toEqual(['ignore', 'ignore', 'ignore', 'ignore', 'ignore']);
   });
 
+  it('a wall-type layer holds the tags naming each wall\'s type, not walls (Carlton Rd, Bais Rochel)', () => {
+    // Carlton's "A-WALL TYPE" diamonds paired into 10" walls
+    expect(['A-WALL TYPE', 'A-WALLTYPE', 'A-Wall_Type', 'WALL TYPES'].map(classifyLayer)).toEqual(['ignore', 'ignore', 'ignore', 'ignore']);
+    expect(['A-Wall', 'A-WALL-FULL', 'A-WALL-TYP1'].map(classifyLayer)).toEqual(['wall', 'wall', 'wall']);
+  });
+
   it('reads layer names in the drafter\'s language and in AIA shorthand (Saddle River, Promenade)', () => {
     // Saddle River's dimensions are on "Размеры" (Russian: dimensions); paired with a wall face they made a 20" wall
     expect(['Размеры', 'Cotation', 'A-FIX.', 'A-SHBD', 'logo', 'A-N-MOB-MOB-TAB-CHA'].map(classifyLayer)).toEqual(['ignore', 'ignore', 'ignore', 'ignore', 'ignore', 'ignore']);

@@ -26,9 +26,9 @@ export function dimFeet(str) {
  * @param {{str,x,y,h?,rot?}[]} texts   px (rendered image)
  * @param {{a,b}[]} lines               px
  * @param {number} pxPerInch            render px per paper inch (144 at 2×)
- * @returns {{ fpi: number, votes: number, of: number, agree: number } | null}
+ * @returns {{ fpi: number, votes: number, of: number, agree: number, all: number[] } | null}
  *   fpi the sheet's dimensions agree on, how many voted for it (within 1%),
- *   how many dimensions were measured in all
+ *   how many dimensions were measured in all, and every vote
  */
 export function dimensionScale(texts, lines, pxPerInch) {
   const dims = texts.map((t) => ({ t, v: dimFeet(t.str) })).filter((d) => d.v && d.v >= 2);
@@ -71,7 +71,7 @@ export function dimensionScale(texts, lines, pxPerInch) {
     const agree = votes.filter((g) => Math.abs(g / f - 1) <= 0.01);
     if (!best || agree.length > best.votes) best = { fpi: agree.reduce((a, g) => a + g, 0) / agree.length, votes: agree.length };
   }
-  return { fpi: best.fpi, votes: best.votes, of: votes.length, agree: best.votes / votes.length };
+  return { fpi: best.fpi, votes: best.votes, of: votes.length, agree: best.votes / votes.length, all: votes };
 }
 
 /** Door tags ("3'0" X 6'8"", "2'-8" x 6'-8"") with the leaf width they state (ft). */

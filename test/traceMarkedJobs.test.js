@@ -5,6 +5,7 @@ import { cadText, markGlyphs } from '../src/lib/pdfVectors.js';
 import { arcsFromDashes, isDoorSwing } from '../src/engine/trace/arcs.js';
 import { runTrace } from '../src/engine/trace/index.js';
 import { roomTypeOf } from '../src/engine/trace/analyze.js';
+import { joinWalls, bridgeOpenings } from '../src/engine/trace/graph.js';
 
 // Regressions from Moshe's marked jobs (454 Saddle River Rd, the Herzka
 // residence, Promenade at Middletown): AutoCAD sheets whose SHX text is
@@ -173,5 +174,35 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(res.rooms.map((r) => r.name)).toEqual(['LIVING ROOM']);
     expect(res.flags.filter((f) => f.severity === 'error')).toEqual([]);
     expect(res.flags.some((f) => f.kind === 'frame')).toBe(true);
+  });
+
+  it("a doorway framed at both jambs on the door layer is a door, even beside another door's jamb (Carlton Rd's vanity rooms)", () => {
+    // the vanity under the bath: the bath's door above (y = 0), the linen
+    // closet's door on the right (x = 6.56), and the way out below (y = 3): a
+    // pocket door, only its frame drawn at each jamb, a dashed line across.
+    // Its right jamb is the closet door's jamb too.
+    const t = 4 * IN;
+    const walls = [
+      { a: { x: 0, y: 3 }, b: { x: 3.31, y: 3 }, t }, { a: { x: 6.56, y: 3 }, b: { x: 8.06, y: 3 }, t },
+      { a: { x: 0, y: 0 }, b: { x: 3.33, y: 0 }, t }, { a: { x: 6.56, y: 0 }, b: { x: 8.06, y: 0 }, t },
+      { a: { x: 8.06, y: 0 }, b: { x: 8.06, y: 3 }, t },
+    ];
+    const arcs = [{ c: { x: 6.22, y: 0.5 }, r: 2, sweepDeg: 90, p0: { x: 6.22, y: 2.5 }, p3: { x: 4.22, y: 0.5 } }];   // the closet's door
+    const square = (x0, x1, y0, y1) => [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]
+      .map(([ax, ay, bx, by]) => ({ a: { x: ax, y: ay }, b: { x: bx, y: by }, kind: 'door' }));
+    const frames = [...square(3.31, 3.47, 3 - t / 2, 3 + t / 2), ...square(5.97, 6.14, 3 - t / 2, 3 + t / 2),
+      ...square(3.33, 3.5, -t / 2, t / 2), ...square(5.83, 6.0, -t / 2, t / 2)];
+    const run = (hints) => {
+      const j = joinWalls(walls.map((w) => ({ ...w, kind: 'wall' })));
+      return bridgeOpenings(j.segs, j.ends, arcs, {}, [], hints);
+    };
+    const across = (os) => os.find((o) => Math.abs(o.a.y - 3) < 0.05 && Math.abs(o.b.y - 3) < 0.05);
+    const out = run(frames);
+    expect(across(out)).toBeTruthy();
+    expect(across(out).width).toBeCloseTo(6.56 - 3.31, 1);
+    // two doors' frames one above the other are no doorway between them (through the vanity)
+    expect(out.some((o) => Math.abs(o.a.x - o.b.x) < 0.1 && o.a.x < 4)).toBe(false);
+    // nothing drawn at its jambs: an inferred gap at the closet door's jamb stays open, as before
+    expect(across(run([]))).toBeFalsy();
   });
 });

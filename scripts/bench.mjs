@@ -76,16 +76,21 @@ for (const sh of manifest.sheets) {
     const keys = (await markedOf(sh.pdf))[(sh.page || 1) - 1]?.items || [];
     const vp = (await d.getPage(sh.page || 1)).getViewport({ scale: RENDER_SCALE });
     const toFt = ([x, y]) => { const [px, py] = vp.convertToViewportPoint(x, y); return { x: px * sc.scale, y: py * sc.scale }; };
-    s = scoreMarked(res, areaItems(keys).map((it) => ({ ...it, poly: it.pts.map(toFt) })));
+    const drawn = ev.lines.filter((l) => !l.glyph && !(l.filled && l.col === '#ffffff'))
+      .map((l) => ({ a: { x: l.a.x * sc.scale, y: l.a.y * sc.scale }, b: { x: l.b.x * sc.scale, y: l.b.y * sc.scale } }));
+    s = scoreMarked(res, areaItems(keys).map((it) => ({ ...it, poly: it.pts.map(toFt) })), 0.25, drawn);
   } else s = score(res, answers);
   const pct = (n) => (s.answers ? `${((100 * n) / s.answers).toFixed(1)}%` : '—');
   console.log(`── ${sh.name} (${basename(sh.pdf)} p${sh.page || 1}, ${ms} ms): ${res.rooms.length} rooms, ${res.counts.error} errors, scale ${sc.label || sc.scale.toFixed(4)}${sh.marked ? ` · marked ${s.keySf.toFixed(0)} SF in ${s.regions} regions, traced ${s.gotSf.toFixed(0)} SF there` : ''}`);
   console.log(`   answers ${s.answers} · right ${s.right} (${pct(s.right)}) · within 3% ${s.close} (${pct(s.close)}) · merged ${s.merged} · missing ${s.missing} · SILENT ${s.silent}`);
-  for (const w of s.wrong) console.log(`     ${w.near ? '   near   ' : w.flagged === false ? '!! SILENT ' : '   flagged'} ${String(w.name).padEnd(22)} want ${String(w.sf).padStart(6)}  ${w.why}${w.at ? `  @${w.at.x.toFixed(0)},${w.at.y.toFixed(0)}` : ''}`);
+  if (s.geo) console.log(`   bounded by the drawing ${s.geo.answers} · right ${s.geo.right} · within 3% ${s.geo.close} · SILENT ${s.geo.silent} · scope (part of a room tiled) ${s.scope}`);
+  for (const w of s.wrong) console.log(`     ${w.near ? '   near   ' : w.scope ? '   scope  ' : w.flagged === false ? '!! SILENT ' : '   flagged'} ${String(w.name).padEnd(22)} want ${String(w.sf).padStart(6)}  ${w.why}${w.at ? `  @${w.at.x.toFixed(0)},${w.at.y.toFixed(0)}` : ''}`);
   report.push({ name: sh.name, rooms: res.rooms.length, errors: res.counts.error, ms, ...s, wrong: s.wrong.map(({ at, ...w }) => w) });
 }
 const tot = report.reduce((a, r) => ({ answers: a.answers + r.answers, right: a.right + r.right, close: a.close + r.close, silent: a.silent + r.silent }), { answers: 0, right: 0, close: 0, silent: 0 });
 console.log(`\nALL: ${tot.answers} answers · right ${tot.right} (${tot.answers ? ((100 * tot.right) / tot.answers).toFixed(1) : '—'}%) · within 3% ${tot.close} · silent ${tot.silent}`);
+const geo = report.filter((r) => r.geo).reduce((a, r) => ({ answers: a.answers + r.geo.answers, right: a.right + r.geo.right, close: a.close + r.geo.close, silent: a.silent + r.geo.silent, scope: a.scope + r.scope }), { answers: 0, right: 0, close: 0, silent: 0, scope: 0 });
+if (geo.answers) console.log(`BOUNDED BY THE DRAWING: ${geo.answers} answers · right ${geo.right} (${((100 * geo.right) / geo.answers).toFixed(1)}%) · within 3% ${geo.close} · silent ${geo.silent} · scope ${geo.scope}`);
 if (opt('json')) writeFileSync(opt('json'), JSON.stringify({ sheets: report, total: tot }, null, 2));
 if (opt('baseline') && existsSync(opt('baseline'))) {
   const base = JSON.parse(readFileSync(opt('baseline'), 'utf8'));
