@@ -54,28 +54,47 @@ export function roomTypeOf(name) {
 // ABOVE TO BE…"), door tags ("3'0" X 6'8""), stair notes ("UP 22R"),
 // window / equipment codes ("2165 CA-3"), CAD attribute dumps.
 const STRUCT_RE = /\b(LVL|PSL|LSL|GLU-?LAM|HEADERS?|HDR|BEAMS?|JOISTS?|JST|TJI|TRUSS(ES)?|GIRDERS?|STUDS?|RAFTERS?|LINTELS?|FTGS?|FOOTINGS?|REBAR|DECKING|CONC\.?|CONCRETE|CMU|HSS|BRG|BEARING|ANCHOR|BOLTS?|HANGERS?|SIMPSON|PLYWOOD|SHEATHING|OSB|FLANGE)\b|\bW\d+\s*[xX]\s*\d+|\b\d+\s*[xX]\s*\d+\b|\(\d+\)\s*\d|@\s*\d+\s*"?\s*O\.?\s*C\b/i;
-const NOTE_RE = /\b(TO BE|ABOVE|BELOW|SEE|PROVIDE|VERIFY|REMOVE|INSTALL|W\/|MIN\.|MAX\.)\b/i;
+const NOTE_RE = /\b(TO BE|ABOVE|BELOW|SEE|PROVIDE|VERIFY|REMOVE|INSTALL)\b|\bW\/(?!D\b)|\b(MIN|MAX)\./i;
 const TAG_RE = /\d\s*'\s*-?\s*\d*\s*"?\s*[xX×]\s*\d+\s*'|^(UP|DN|DOWN)\.?\s*\d+\s*R\b|^\d{3,4}\s*[A-Z]{1,3}(-\d+)?$|^\(.*\d\.\d/i;
 
 // a window maker's code: the unit's size (2959 = 2'-9" x 5'-9") and type
 // (casement, awning, double hung, fixed …), in either order ("3259 CA.-3",
 // "4121 AWNG.", "DH (2) 3753", "CA.-2 2553")
 const WINDOW_RE = /\b\d{4}\b/;
-const WINDOW_TYPE_RE = /\b(CA|CASE|CSMT|CASEMENT|AWN|AWNG|AWNING|DH|SH|FIXED|FIEXD|FIX|FX|SL|SLD|SLIDER|PIC|TR|TRANS|TRANSOM|HOPPER|BOW|BAY)\b/i;
-// a finish / framing code: TI-2, PL-1, GR-1, FB.1, F.J.-1 (alone or several together)
-const CODE_TOKEN_RE = /^[A-Z](\.?[A-Z]){0,3}\.?-?\d{1,3}[A-Z]?$/i;
+const WINDOW_TYPE_RE = /\b(CA|CASE|CSMT|CASEMENT|AWN|AWNG|ANWG|AWNING|DH|SH|FIXED|FIEXD|FIX|FX|SL|SLD|SLIDER|PIC|TR|TRANS|TRANSOM|HOPPER|BOW|BAY)\b/i;
+// a finish / framing code: TI-2, PL-1, GR-1, FB.1, F.J.-1 (alone or several
+// together, joined by - & / , +: "PL-2 - PL-3", "- ST-1")
+const CODE_TOKEN_RE = /^[A-Z](\.?[A-Z]){0,3}\.?-?\d{1,3}[A-Z]?,?$/i;
+const CODE_JOIN_RE = /^[-–&/,+]$/;
 const FRAMING_TAG_RE = /^(F\.?J|C\.?J|F\.?B|R\.?B)\.?-?\d/i;
+// a finish plan's callouts and legend: "HIGH CEILING: PA-2", "ALL INTERIOR
+// DOORS: DO-2", "FU-2 UNDER COUNTER", "CLEAR MIRROR UP TO CEILING", "LINEAR
+// DRAIN", "BASE MLDG TAG", "GEN. SPEC. & FINISH", "Porcelain Tile"
+const FINISH_CALLOUT_RE = /:\s*[A-Z]{1,3}-\d/i;
+const FINISH_CODE_LEAD_RE = /^[A-Z]{1,3}-\d{1,2}[A-Z]?\s/i;
+const FINISH_NOTE_RE = /\b(MIRRORS?|CEILINGS?|DRAINS?|MLDG|MOULDINGS?|MOLDINGS?|COUNTERS?|COUNTERTOPS?|BACKSPLASH|WAINSCOT|GROUT|TAGS?|SPEC\.?|SPECIFIED|SPECIFICATIONS?|FURNITURE|W\s?ALLS?|PORCELAIN|CERAMIC|TRAVERTINE|MARBLE|GRANITE|QUARTZ|LAMINATE|HARDWOOD|ROOFING|EPDM|E\.P\.D\.M\.|GYPSUM|SHINGLES?|SIDING|OPTIONAL|OPENINGS?)\b/i;
+const LEGEND_WORD_RE = /^(FINISH|FLOOR|BASE|FULL|GEN\.?|GENERAL|NOTES?|SEAL|DESCRIPTION|DATE|DRAWN(\s+BY)?|CHECKED(\s+BY)?|REVISIONS?|REV\.?|ISSUED?(\s+FOR)?|PROJECT|SHEET|JOB|CLIENT|OWNER|ARCHITECT|ENGINEER|DRAWING|TITLE|NO\.?)\s*:?$/i;
+// the title block's address, e-mail, phone
+const ADDRESS_RE = /@|\b[A-Z]{2}\s+\d{5}(-\d{4})?\b|^\d+\s+\D*\b(STREET|AVENUE|ROAD|BOULEVARD|DRIVE|LANE|PARKWAY|PLACE|COURT|TERRACE|WAY|HIGHWAY|ROUTE|AVE|BLVD|PKWY|HWY|RTE|ST|RD|DR|LN|PL|CT|TER)\b|\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/i;
 
 function isLabel(str) {
   const s = (str || '').trim();
   if (s.length < 2 || !/[a-z].*[a-z]/i.test(s)) return false;
-  if (DIM_RE.test(s) || AREA_RE.test(s) || NOISE_RE.test(s)) return false;
+  if (DIM_RE.test(s) || AREA_RE.test(s) || NOISE_RE.test(s) || LEGEND_WORD_RE.test(s)) return false;
   if (/=|scale/i.test(s)) return false;
-  if (STRUCT_RE.test(s) || NOTE_RE.test(s) || TAG_RE.test(s)) return false;
+  if (STRUCT_RE.test(s) || NOTE_RE.test(s) || TAG_RE.test(s) || ADDRESS_RE.test(s)) return false;
   if (WINDOW_RE.test(s) && WINDOW_TYPE_RE.test(s) && roomTypeOf(s) === 'room') return false;
-  const tokens = s.split(/\s+/);
+  // a phrase broken off mid-way ("& PLUMBING", "DOOR TAG &") belongs to a note
+  if (/^[&+,]|[&+,]$/.test(s)) return false;
+  const tokens = s.split(/\s+/).filter((t) => !CODE_JOIN_RE.test(t));
   // (a code whose letters name a room — WC-1, CL-2, BR-2 — still names it)
-  if (FRAMING_TAG_RE.test(s) || (tokens.every((t) => CODE_TOKEN_RE.test(t)) && roomTypeOf(s) === 'room')) return false;
+  const named = roomTypeOf(s) !== 'room';
+  if (FRAMING_TAG_RE.test(s) || (!named && tokens.every((t) => CODE_TOKEN_RE.test(t)))) return false;
+  if (!named && (FINISH_CALLOUT_RE.test(s) || FINISH_CODE_LEAD_RE.test(s) || FINISH_NOTE_RE.test(s))) return false;
+  // a name has a word in it: garbled text ("Bi 7 ,", "„O-LX.O-£", "H I")
+  // has none; a room's abbreviation names its type (WC, CL) or is spelled
+  // with stops (P.R., B.R. 2)
+  if (!named && !/[a-z]{3}/i.test(s) && !/^([A-Z]\.){2,3}(\s*\d+)?$/i.test(s)) return false;
   // a view's title (SILL DETAIL @ GARAGE, WALL TYPE LEGEND) names a view, not a room
   if (VIEW_RE.test(s)) return false;
   return true;

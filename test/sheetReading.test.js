@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readScale, scaleNotes, planTitles, planScale } from '../src/engine/trace/sheetScale.js';
-import { runTrace } from '../src/engine/trace/index.js';
+import { runTrace, readingScore } from '../src/engine/trace/index.js';
 import { dimFeet, dimensionScale, doorTags } from '../src/engine/trace/dimScale.js';
 import { detectSheetScale } from '../src/lib/planEvidence.js';
 
@@ -107,6 +107,41 @@ describe('which words name rooms', () => {
     // …and a code whose letters name a room does
     const wc = runTrace({ bodies: box(0), texts: [{ str: 'WC-1', x: 10, y: 6 }] });
     expect(wc.rooms[0]).toMatchObject({ name: 'WC-1', type: 'bath' });
+  });
+
+  it('a finish plan\'s callouts and legend, the title block and garbled text are not room names (19 Virginia, 22 Rita, Keter)', () => {
+    const t = 5 / 12;
+    const box = [[0, 0, 20, 0], [0, 12, 20, 12], [0, 0, 0, 12], [20, 0, 20, 12]]
+      .map(([x1, y1, x2, y2]) => ({ a: { x: x1, y: y1 }, b: { x: x2, y: y2 }, t }));
+    const notes = ['PL-2 - PL-3', '- ST-1', 'HIGH CEILING: PA-2, DROP: PA-1', 'ALL EXTERIOR DOORS: DO-1', 'FU-2 UNDER', 'COUNTER',
+      'CLEAR MIRROR', 'UP TO CEILING', 'LINEAR DRAIN', '& PLUMBING', 'DOOR TAG &', 'MLDG TAG', 'FINISH', 'GEN.', 'SPECIFIED', 'W ALLS',
+      'SEAL', '412 N. MAIN STREET. SUITE 301', 'MONROE NY 10950', 'INFO@EXAMPLE.COM', 'EPDM ROOFING PITCH', 'OPTIONAL DOOR',
+      'ANWG. 4121', 'Porcelain Tile', 'Bi 7 ,', '„O-LX.O-£', 'H I', '42" WALL'];
+    const name = (texts) => runTrace({ bodies: box, texts: texts.map((str, i) => ({ str, x: 1 + 0.6 * i, y: 2 + (i % 8) })) }).rooms[0].name;
+    expect(name(notes)).toBe('Space 1');
+    expect(name([...notes, 'ROOM #7 ADA'])).toBe('ROOM #7 ADA');
+    // a room's own name with a finish word in it still names it; an abbreviation with stops does
+    expect(name(['HIGH CEILING FAMILY ROOM'])).toBe('HIGH CEILING FAMILY ROOM');
+    expect(name(['P.R.'])).toBe('P.R.');
+    expect(name(['UNIT 201'])).toBe('UNIT 201');
+    // a note with "W/ " in it is a note (34 Ellish's attic stair); a W/D closet is a laundry
+    expect(name(['PULL DOWN ATTIC STAIR W/ R-38 INSULATED COVER.'])).toBe('Space 1');
+    expect(name(['W/D'])).toBe('W/D');
+  });
+});
+
+describe('which reading of the sheet is kept', () => {
+  const rooms = (named, unnamed, doubted) => [
+    ...Array.from({ length: named }, (_, i) => ({ labels: ['X'], status: i < doubted ? 'check' : 'ok' })),
+    ...Array.from({ length: unnamed }, (_, i) => ({ labels: [], status: i + named < doubted ? 'check' : 'ok' })),
+  ];
+  it('a reading that closes furniture into dozens of doubtful nameless pieces scores below the drawing as drawn (22 Rita, 19 Virginia)', () => {
+    const asDrawn = { verify: {}, flags: [{ kind: 'merged_rooms' }], rooms: rooms(29, 45, 40) };
+    const everyPen = { verify: {}, flags: [{ kind: 'merged_rooms' }], rooms: rooms(35, 106, 80) };
+    expect(readingScore(asDrawn)).toBeGreaterThan(readingScore(everyPen) + 2);
+    // a light partition that splits two named rooms and nothing else still wins
+    const split = { verify: {}, flags: [], rooms: rooms(31, 45, 40) };
+    expect(readingScore(split)).toBeGreaterThan(readingScore(asDrawn) + 2);
   });
 });
 

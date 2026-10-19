@@ -29,13 +29,17 @@ const RULES = [
   // (a wall-type layer holds the tags and patterns that name each wall's type)
   ['ignore', /\b(labels?|tags?|text|txt|symbols?|symb|notes?)\b|\bwall ?types?\b/],
   ['opening', /\b(doors?|drs?)\b.*(\w*windows?|glaz\w*)|(\w*windows?|glaz\w*)\b.*\bdoors?\b|\bopenings?\b/],
-  ['door', /\b(\w*doors?|dr|drs)\b/],
+  ['door', /\b(\w*doors?|dr|drs|doorswings?)\b/],
   ['window', /\b(glaz\w*|\w*windows?|wind|wndw|win|sash\w*|storefront|curtain ?wall)\b/],
   // the same words in the drafter's language (Russian, French, German, Spanish, Italian, Polish)
   ['ignore', / (размер\p{L}*|текст\p{L}*|мебел\p{L}*|штрих\p{L}*|cot(e|es|ation|ations|a|as)|quote|bema(ß|ss)ung\p{L}*|wymiar\p{L}*|textes?|mobilier|mob|m(ö|oe)bel|muebles?|mobili|hachures?|schraffur\p{L}*) /u],
   ['door', / (двер\p{L}*|portes?|portas?|puertas?|t(ü|ue)r(en)?) /u],
   ['window', / (окн\p{L}*|окон\p{L}*|fen|fen(ê|e)tres?|fenster|ventanas?|finestr\p{L}*|janelas?) /u],
   ['ignore', /\b(dim\w*|text|txt|anno\w*|notes?|keynotes?|titles?|tblk|t ?block|frame|border|shbd|sheet|logo|revis\w*|leaders?|multileaders?|labels?|tags?|symbols?|symb|section|sect|elev\w*|details?|grid\w*|hatch\w*|pat|patt\w*|poch\w*|viewports?|vports?|defpoints|furn\w*|fix|fixt\w*|equip\w*|case|casework|built ?ins?|millwork|cabinet\w*|appl\w*|plumb\w*|plmb|elec\w*|wiring|lighting|light\w*|mech\w*|hvac|struc\w*|cols|columns?|stairs?|strs|flor|hral|deck\w*|rail\w*|site|topo\w*|landsc\w*|areas?|scope)\b/],
+  // casework, fixtures and what's drawn on or under the floor, in plain words ("Counter", "A-KITCHEN",
+  // "A-FXTR-PLUM", "A-Closet Shelves", "ADA - FLOOR SPACE", "INSULATION", "FOOTINGS"), and the sheet's
+  // text, title block and seal ("DTEXT", "PRESNOTE", "TITLEBLOCK", "SIGN-SEAL", "A-North Arrow")
+  ['ignore', /\b(counters?|countertops?|kitchens?|ktcn|vanit(y|ies)|fxtr\w*|fixtures?|shel(f|ves|ving)|ada|insul\w*|footings?|ftgs?|concrete|rebar|clng|junk|hid|\w*text\w*|\w*tex|\w*notes?|titleblock|seal|signatures?|north ?arrow)\b/],
   ['wall', /\b(\w*walls?|wall\w*|partitions?|prtn|ptn|foundation ?walls?|fdn ?walls?)\b/],
   ['wall', / (стен\p{L}*|murs?|muros?|w(a|ä)nde?|waende|ścian\p{L}*) /u],
 ];
