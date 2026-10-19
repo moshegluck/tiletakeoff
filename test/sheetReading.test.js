@@ -98,12 +98,15 @@ describe('which words name rooms', () => {
     const box = (x0) => [[x0, 0, x0 + 20, 0], [x0, 12, x0 + 20, 12], [x0, 0, x0, 12], [x0 + 20, 0, x0 + 20, 12]]
       .map(([x1, y1, x2, y2]) => ({ a: { x: x1, y: y1 }, b: { x: x2, y: y2 }, t }));
     const codes = ['2959 CA.-2', '3259 CA.-3', '4121 AWNG.', '2541 FIEXD 2571 CA.', '3565 FIXED', 'DH (2) 3753', 'DH-2 3757',
-      'DE-2 PL-1 TI-2 TI-1 TI-3 PA-2 ST-1 DE-3', 'F.J.-1', 'FB.1'];
+      'DE-2 PL-1 TI-2 TI-1 TI-3 PA-2 ST-1 DE-3', 'TI-2', 'GR-1', 'F.J.-1', 'FB.1'];
     const res = runTrace({ bodies: [...box(0), ...box(30)], texts: [{ str: 'STUDY', x: 40, y: 6 }, ...codes.map((str, i) => ({ str, x: 2 + 1.7 * i, y: 3 + (i % 3) * 3 }))] });
     expect(res.rooms.map((r) => r.name).sort()).toEqual(['STUDY', 'Space 1'].sort());
     // a room's own name beside a window code still names it
     const deck = runTrace({ bodies: box(0), texts: [{ str: 'OUTDOOR DECK 2571 CA.-3 2541 FIEXD-3', x: 10, y: 6 }] });
     expect(deck.rooms[0].type).toBe('outdoor');
+    // …and a code whose letters name a room does
+    const wc = runTrace({ bodies: box(0), texts: [{ str: 'WC-1', x: 10, y: 6 }] });
+    expect(wc.rooms[0]).toMatchObject({ name: 'WC-1', type: 'bath' });
   });
 });
 

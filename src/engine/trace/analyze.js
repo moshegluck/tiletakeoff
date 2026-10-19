@@ -62,7 +62,7 @@ const TAG_RE = /\d\s*'\s*-?\s*\d*\s*"?\s*[xX×]\s*\d+\s*'|^(UP|DN|DOWN)\.?\s*\d+
 // "4121 AWNG.", "DH (2) 3753", "CA.-2 2553")
 const WINDOW_RE = /\b\d{4}\b/;
 const WINDOW_TYPE_RE = /\b(CA|CASE|CSMT|CASEMENT|AWN|AWNG|AWNING|DH|SH|FIXED|FIEXD|FIX|FX|SL|SLD|SLIDER|PIC|TR|TRANS|TRANSOM|HOPPER|BOW|BAY)\b/i;
-// a finish / framing code: TI-2, PL-1, GR-1, FB.1, F.J.-1
+// a finish / framing code: TI-2, PL-1, GR-1, FB.1, F.J.-1 (alone or several together)
 const CODE_TOKEN_RE = /^[A-Z](\.?[A-Z]){0,3}\.?-?\d{1,3}[A-Z]?$/i;
 const FRAMING_TAG_RE = /^(F\.?J|C\.?J|F\.?B|R\.?B)\.?-?\d/i;
 
@@ -74,7 +74,8 @@ function isLabel(str) {
   if (STRUCT_RE.test(s) || NOTE_RE.test(s) || TAG_RE.test(s)) return false;
   if (WINDOW_RE.test(s) && WINDOW_TYPE_RE.test(s) && roomTypeOf(s) === 'room') return false;
   const tokens = s.split(/\s+/);
-  if (FRAMING_TAG_RE.test(s) || (tokens.length >= 2 && tokens.every((t) => CODE_TOKEN_RE.test(t)))) return false;
+  // (a code whose letters name a room — WC-1, CL-2, BR-2 — still names it)
+  if (FRAMING_TAG_RE.test(s) || (tokens.every((t) => CODE_TOKEN_RE.test(t)) && roomTypeOf(s) === 'room')) return false;
   // a view's title (SILL DETAIL @ GARAGE, WALL TYPE LEGEND) names a view, not a room
   if (VIEW_RE.test(s)) return false;
   return true;
