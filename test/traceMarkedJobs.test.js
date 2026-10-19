@@ -229,5 +229,19 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     // and no 10" wall made of its face and the tub
     expect(near(10 - T / 2).length).toBe(0);
   });
+
+  it("the paper between the sheet's border and the building is no room, joined to it or not (22 Rita)", () => {
+    // a 40' x 30' house on a 100' x 80' sheet; its border drawn as a wall
+    // would be, and a grid line drawn heavy runs from the house to the border
+    const T = 0.5, b = (x1, y1, x2, y2, t = T) => ({ a: { x: x1, y: y1 }, b: { x: x2, y: y2 }, t });
+    const bodies = [
+      b(1, 1, 99, 1), b(99, 1, 99, 79), b(99, 79, 1, 79), b(1, 79, 1, 1),            // the border
+      b(30, 20, 70, 20), b(70, 20, 70, 50), b(70, 50, 30, 50), b(30, 50, 30, 20),   // the house
+      b(1, 35, 30, 35, 0.3),                                                          // the grid line
+    ];
+    const res = runTrace({ bodies, texts: [{ str: 'LIVING ROOM', x: 50, y: 35 }], sheet: { x0: 0, y0: 0, x1: 100, y1: 80 } });
+    expect(res.rooms.map((r) => r.name)).toEqual(['LIVING ROOM']);
+    expect(res.rooms[0].area).toBeCloseTo((40 - T) * (30 - T), 0);
+  });
 });
 

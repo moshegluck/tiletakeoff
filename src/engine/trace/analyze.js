@@ -220,6 +220,21 @@ export function analyzeGraph(g, ctx = {}) {
     if (f.area > 1e-6 && loop.length >= 3) interior.push(f);
     else outer.push(f);
   }
+  // the paper around the building: a face whose edge runs along the page's
+  // edge (the sheet border, joined to the building by a grid or dimension
+  // line) is outside, never a room
+  if (ctx.sheet) {
+    const S = ctx.sheet, W = S.x1 - S.x0, H = S.y1 - S.y0, m = 0.05 * Math.min(W, H);
+    const near = (v, e) => Math.abs(v - e) <= m;
+    const alongEdge = (p, q) => {
+      const L = dist(p, q);
+      return (L >= 0.1 * H && ((near(p.x, S.x0) && near(q.x, S.x0)) || (near(p.x, S.x1) && near(q.x, S.x1))))
+        || (L >= 0.1 * W && ((near(p.y, S.y0) && near(q.y, S.y0)) || (near(p.y, S.y1) && near(q.y, S.y1))));
+    };
+    for (let i = interior.length - 1; i >= 0; i--) {
+      if (interior[i].loop.some((h) => alongEdge(nodes[h.from], nodes[h.to]))) interior.splice(i, 1);
+    }
+  }
 
   // holes: an outer boundary of one component sitting inside an interior face of another
   for (const o of outer) {
