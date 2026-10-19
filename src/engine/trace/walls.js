@@ -486,7 +486,8 @@ export function pairWalls(rawLines, options = {}) {
   // off the wall) is only its partner where no heavy face runs beside it.
   const mixed = (c) => (heavyW > 0 && light(Math.min(c.wi || 0, c.wj || 0), opt.hairlineRatio) ? 1 : 0);
   cands.sort((p, q) => p.prio - q.prio || mixed(p) - mixed(q) || (Math.abs(q.overlap - p.overlap) > 0.04 ? q.overlap - p.overlap : 0) || p.d - q.d);
-  if (Array.isArray(opt._debugPairs)) opt._debugPairs.push({ peaks, heavyW, cands, lines, hatch });
+  const debugPairs = /** @type {any} */ (opt)._debugPairs;
+  if (Array.isArray(debugPairs)) debugPairs.push({ peaks, heavyW, cands, lines, hatch });
 
   // ---- greedy assignment with per-line interval coverage ----
   let bodies = [];
