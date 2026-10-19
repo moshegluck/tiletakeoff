@@ -1,0 +1,33 @@
+{
+  "note": "Moshe's 2024 marked takeoffs (Bluebeam areas on the architect's PDF) in his Google Drive: the benchmark's answer key. The PDFs stay in Drive; fetch them (Drive connector, download_file_content) into a folder outside the repo, name each <slug>.pdf, then: node scripts/markedManifest.mjs <folder> manifest.json && node scripts/bench.mjs manifest.json --key-scale. 'skip' pages are not floor plans (interior elevations). Five sets were too large for the Drive connector (> ~6 MB): 160 Brunswick v2, Forest Chateaus Bldg #4, Bldg 1, 200 Monticello Ave, Marked Plans (7).",
+  "jobs": [
+    { "slug": "marked-plans-carlton-rd-1-19-24", "title": "Marked Plans Carlton Rd 1.19.24", "driveId": "1M1Q4OgXHl7Vuhj2wjJ9sdQxx8EkbCa7g" },
+    { "slug": "marked-83-winchester-drive-2023-10-07", "title": "Marked 83 Winchester Drive - 2023-10-07", "driveId": "1LqQiMSq-ylPRr9xphr8j-1cphcsCpkhR" },
+    { "slug": "marked-58-briarcliff-rbdc-s-s-2024-06-18", "title": "Marked 58 Briarcliff RBDC S&S 2024-06-18", "driveId": "18wH4S-9oVorpPEWHksLugOtgtguxWhRB" },
+    { "slug": "marked-plans-8-14-2023", "title": "Marked Plans 8-14-2023", "driveId": "18wAZBPCXuDhzaE623XVhXuxLmHOCI9pE" },
+    { "slug": "marked-plan-6-rose-hill-1-1", "title": "Marked plan 6 Rose Hill", "driveId": "16jXTc9TOeWwJlR9qOC1KKbClnyVJnlFX" },
+    { "slug": "skver-shul-basement-marked-plan", "title": "Skver Shul-basement, Marked Plan", "driveId": "1M74LMNS4PWjkRldMTyWxiSmSA7NM6NNC" },
+    { "slug": "4-autumn-pool-house-marked-plans", "title": "4 autumn pool house Marked Plans", "driveId": "12pjkH2n7Ck1NRVN-Z18uvw1a-ILz-jnW" },
+    { "slug": "windinh-r6-marked-plan", "title": "WINDINH R6 Marked Plan", "driveId": "11Y85PAfJ_T39nrky67ZndYJkiaj8VvLN" },
+    { "slug": "marked-keter-01-2", "title": "MARKED KETER -01 (2)", "driveId": "1-pv0LFcHfWs2zBEKJlrs8YMnbH4EX4Wj" },
+    { "slug": "14-fort-worth-pl-marked-plans", "title": "14 FORT WORTH PL Marked Plans", "driveId": "1xc5z_FbxutlfOCm--u9velFxKfu57Wo7" },
+    { "slug": "marked-plan-19-virginia-mikva", "title": "MARKED PLAN 19 Virginia Mikva", "driveId": "1udUjuLqakRCYwWRf_iCawYnU6YtrFIj4" },
+    { "slug": "10-monroe-marked-plans", "title": "10 Monroe Marked Plans", "driveId": "1sMiXarMBU0526tVPw4MbN_IdaBAjU0tU" },
+    { "slug": "marked-4-howard", "title": "Marked 4 Howard", "driveId": "1qPLmIy2hJtfU48EZlJkOwEXfxkB92Y3t" },
+    { "slug": "marked-plans-3-6-2024", "title": "Marked Plans 3-6-2024", "driveId": "1oXHgGlp1dmE8aQLTsxWbg_c_1IOA6x6Q" },
+    { "slug": "62-riverglen-dr-marked-plans", "title": "62 Riverglen Dr Marked Plans", "driveId": "1oE-281XMxjMGm5pi5kLCKpM755g9fiZ1" },
+    { "slug": "34-ellish-pkwy-marked", "title": "34 Ellish Pkwy Marked", "driveId": "1lchkK2GGjPRzpG8unZVJBpih1NCImlZ-" },
+    { "slug": "36-ellish-pkwy-marked", "title": "36 Ellish Pkwy Marked", "driveId": "1lXxkwfY11ie0OdZyQTS4TsTKshxtIbDG" },
+    { "slug": "30-beckett-marked-plans", "title": "30 Beckett marked plans", "driveId": "1k5XhsijkeCoRc8S-xTalxEvF7J2iBcfU" },
+    { "slug": "marked-19-ecbo-ridge-s-s", "title": "Marked 19 Ecbo Ridge - S&S", "driveId": "1hTQi3AMlWgPJsaOALuhuLwl_vX3hUeEU" },
+    { "slug": "trodale-116-adar-marked-plans", "title": "Trodale 116 Adar MARKED PLANS", "driveId": "1TBbeHnFVbBryxtOtkoT3eftRwtm6-Pk_" },
+    { "slug": "3-houston-marked-plan", "title": "3 houston Marked Plan", "driveId": "1a9WpkdN6imPsqvixgZclDsqBmQ_Lu6hI" },
+    { "slug": "marked-22-rita", "title": "Marked 22 Rita", "driveId": "1V3IEOxFMPWZGGg0v-qbg2C5423wmb9dz" },
+    { "slug": "13-arlington-marked0507", "title": "13 Arlington-marked0507", "driveId": "1RAPfguoJlpGc4kGRuAxkxy9bIqNgDEta" },
+    { "slug": "marked-flooring-plan-monsey-1581", "title": "Marked Flooring Plan - Monsey 1581", "driveId": "1LIa9IBmTchDNt4gWkv-8_AhoLAtdUOge" },
+    { "slug": "marked-plan-phase-2-1", "title": "Marked Plan phase 2", "driveId": "1JP--rF6FOlygzmkcTXUUw1_B3F-pKAqt" },
+    { "slug": "marked-plan-bais-rochel-2023-11-03-1", "title": "Marked Plan Bais Rochel 2023.11.03", "driveId": "1kd_9Iq0ODhAdopTJv8apBrAKo_sQWtNM" },
+    { "slug": "marked-plan-03-15-24", "title": "Marked Plan 03-15-24", "driveId": "1Q4kF3U2jCTE3IpP72O6qGfncXO-a-SEV" },
+    { "slug": "marked-plans-1", "title": "Marked Plans (1)", "driveId": "1WCmuxtx4DhzoW-Lv2ayCOnObj_tUksNd", "skip": [1, 2, 3, 4] }
+  ]
+}
