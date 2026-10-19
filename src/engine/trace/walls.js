@@ -481,7 +481,12 @@ export function pairWalls(rawLines, options = {}) {
   // or shelf line may sit a "wall thickness" off the face, but only for a short
   // stretch. Longer overlap first, then the thinner spacing.
   // (overlaps within 1/2" are a tie: the thinner spacing wins, not float noise)
-  cands.sort((p, q) => p.prio - q.prio || (Math.abs(q.overlap - p.overlap) > 0.04 ? q.overlap - p.overlap : 0) || p.d - q.d);
+  // On a sheet drawn with pen weights, both faces in a wall pen first: a heavy
+  // face's hairline partner (the tub's apron, a vanity's front a few inches
+  // off the wall) is only its partner where no heavy face runs beside it.
+  const mixed = (c) => (heavyW > 0 && light(Math.min(c.wi || 0, c.wj || 0), opt.hairlineRatio) ? 1 : 0);
+  cands.sort((p, q) => p.prio - q.prio || mixed(p) - mixed(q) || (Math.abs(q.overlap - p.overlap) > 0.04 ? q.overlap - p.overlap : 0) || p.d - q.d);
+  if (Array.isArray(opt._debugPairs)) opt._debugPairs.push({ peaks, heavyW, cands, lines, hatch });
 
   // ---- greedy assignment with per-line interval coverage ----
   let bodies = [];

@@ -205,4 +205,29 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     // nothing drawn at its jambs: an inferred gap at the closet door's jamb stays open, as before
     expect(across(run([]))).toBeFalsy();
   });
+
+  it("a wall's heavy faces pair before a heavy face and the hairline beside it (22 Rita's baths)", () => {
+    // a sheet drawn with pen weights: 10.5" exterior walls and 3.5" partitions,
+    // all heavy. One partition's far face is drawn in two pieces; a hairline
+    // (the tub's apron) runs 10.4" off its near face the whole length — longer
+    // than either piece, and a typical thickness on this sheet
+    const HAIR = 0.6 / 36, t = 3.5 * IN, T = 10.4 * IN;
+    const lines = [
+      hline(0, 0, 30), hline(T, T, 30 - T), hline(20, 0, 30), hline(20 - T, T, 30 - T),
+      vline(0, 0, 20), vline(T, T, 20 - T), vline(30, 0, 20), vline(30 - T, T, 20 - T),
+      vline(10, T, 20 - T), vline(10 + t, T, 9.5), vline(10 + t, 9.8, 20 - T),
+      vline(10 - T, T + 0.2, 20 - T - 0.2, HAIR),
+      hline(5, 20, 30 - T), hline(5 + t, 20, 30 - T),
+    ];
+    const { bodies } = pairWalls(lines);
+    const near = (x) => bodies.filter((b) => Math.abs(b.a.x - x) < 0.05 && Math.abs(b.b.x - x) < 0.05);
+    // the partition: 3.5" thick wherever its far face is drawn
+    const part = near(10 + t / 2);
+    expect(part.length).toBeGreaterThanOrEqual(2);
+    expect(part.every((b) => Math.abs(b.t - t) < 0.01)).toBe(true);
+    expect(part.reduce((a, b) => a + Math.abs(b.b.y - b.a.y), 0)).toBeGreaterThan(20 - 2 * T - 1);
+    // and no 10" wall made of its face and the tub
+    expect(near(10 - T / 2).length).toBe(0);
+  });
 });
+

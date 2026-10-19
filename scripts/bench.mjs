@@ -85,7 +85,7 @@ for (const sh of manifest.sheets) {
   console.log(`   answers ${s.answers} · right ${s.right} (${pct(s.right)}) · within 3% ${s.close} (${pct(s.close)}) · merged ${s.merged} · missing ${s.missing} · SILENT ${s.silent}`);
   if (s.geo) console.log(`   bounded by the drawing ${s.geo.answers} · right ${s.geo.right} · within 3% ${s.geo.close} · SILENT ${s.geo.silent} · scope (part of a room tiled) ${s.scope}`);
   for (const w of s.wrong) console.log(`     ${w.near ? '   near   ' : w.scope ? '   scope  ' : w.flagged === false ? '!! SILENT ' : '   flagged'} ${String(w.name).padEnd(22)} want ${String(w.sf).padStart(6)}  ${w.why}${w.at ? `  @${w.at.x.toFixed(0)},${w.at.y.toFixed(0)}` : ''}`);
-  report.push({ name: sh.name, rooms: res.rooms.length, errors: res.counts.error, ms, ...s, wrong: s.wrong.map(({ at, ...w }) => w) });
+  report.push({ name: sh.name, rooms: res.rooms.length, errors: res.counts.error, ms, reading: res.readings?.find((r) => r.chosen)?.id, scale: sc.label, ...s, wrong: s.wrong.map(({ at, ...w }) => w) });
 }
 const tot = report.reduce((a, r) => ({ answers: a.answers + r.answers, right: a.right + r.right, close: a.close + r.close, silent: a.silent + r.silent }), { answers: 0, right: 0, close: 0, silent: 0 });
 console.log(`\nALL: ${tot.answers} answers · right ${tot.right} (${tot.answers ? ((100 * tot.right) / tot.answers).toFixed(1) : '—'}%) · within 3% ${tot.close} · silent ${tot.silent}`);
