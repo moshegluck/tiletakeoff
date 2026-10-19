@@ -26,7 +26,8 @@ const RULES = [
   // room-name text: "T - ROOM LABEL", "A-AREA-IDEN" (AIA), "A-ANNO-RMNM", "ROOM TAGS"
   ['roomLabel', /\b(room|rm|space)\b.*\b(labels?|names?|tags?|iden\w*|text|txt)\b|\b(area ?iden\w*|area ?names?|rmnm|rm ?names?)\b/],
   // tags and labels are text, not the door / window drawn in the wall
-  ['ignore', /\b(labels?|tags?|text|txt|symbols?|symb|notes?)\b/],
+  // (a wall-type layer holds the tags and patterns that name each wall's type)
+  ['ignore', /\b(labels?|tags?|text|txt|symbols?|symb|notes?)\b|\bwall ?types?\b/],
   ['opening', /\b(doors?|drs?)\b.*(\w*windows?|glaz\w*)|(\w*windows?|glaz\w*)\b.*\bdoors?\b|\bopenings?\b/],
   ['door', /\b(\w*doors?|dr|drs)\b/],
   ['window', /\b(glaz\w*|\w*windows?|wind|wndw|win|sash\w*|storefront|curtain ?wall)\b/],

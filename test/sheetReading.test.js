@@ -46,6 +46,27 @@ describe('the floor plan\'s scale', () => {
     expect(scaleNotes(texts).map((n) => n.id)).toEqual(['1/8', '1/8']);
     expect(planScale(texts).id).toBe('1/8');
   });
+
+  it('a larger repeat of the plan\'s title in the title block doesn\'t take a detail\'s note (6 Rose Hill)', () => {
+    const texts = [
+      { str: 'FIRST FLOOR PLAN', x: 1074, y: 3275, h: 46 },        // under the drawing
+      { str: 'SCALE: 1/4"=1\'-0"', x: 898, y: 3311, h: 26 },
+      { str: 'SCALE: 3/4"=1\'-0"', x: 3956, y: 2549, h: 26 },      // the details'
+      { str: 'SCALE: 3/4"=1\'-0"', x: 3998, y: 3193, h: 26 },
+      { str: 'FIRST FLOOR PLAN', x: 4875, y: 3041, h: 86 },        // the title block's
+    ];
+    expect(planScale(texts)).toMatchObject({ id: '1/4', how: 'title', at: { x: 1074, y: 3275 } });
+  });
+
+  it('a floor plan\'s title wins over a foundation plan\'s on the same sheet (4 Autumn pool house)', () => {
+    const texts = [
+      { str: 'POOL HOUSE FLOOR PLAN', x: 1966, y: 1921, h: 83 },
+      { str: 'scaled: 3/8"-1\'-0"', x: 2784, y: 1921, h: 83 },
+      { str: 'FOUNDATION PLAN', x: 1711, y: 3317, h: 83 },
+      { str: 'scaled: 1/4"-1\'-0"', x: 2407, y: 3317, h: 83 },
+    ];
+    expect(planScale(texts)).toMatchObject({ id: '3/8', title: 'POOL HOUSE FLOOR PLAN' });
+  });
 });
 
 describe('which words name rooms', () => {
@@ -70,6 +91,22 @@ describe('which words name rooms', () => {
     expect(res.rooms.length).toBe(1);
     expect(res.rooms[0].name).toBe('BEDROOM 2');
     expect(res.rooms[0].type).toBe('bedroom');
+  });
+
+  it('window makers\' codes, finish codes and framing tags are not room names (4 Howard, 22 Rita, 34 Ellish, 19 Virginia)', () => {
+    const t = 5 / 12;
+    const box = (x0) => [[x0, 0, x0 + 20, 0], [x0, 12, x0 + 20, 12], [x0, 0, x0, 12], [x0 + 20, 0, x0 + 20, 12]]
+      .map(([x1, y1, x2, y2]) => ({ a: { x: x1, y: y1 }, b: { x: x2, y: y2 }, t }));
+    const codes = ['2959 CA.-2', '3259 CA.-3', '4121 AWNG.', '2541 FIEXD 2571 CA.', '3565 FIXED', 'DH (2) 3753', 'DH-2 3757',
+      'DE-2 PL-1 TI-2 TI-1 TI-3 PA-2 ST-1 DE-3', 'TI-2', 'GR-1', 'F.J.-1', 'FB.1'];
+    const res = runTrace({ bodies: [...box(0), ...box(30)], texts: [{ str: 'STUDY', x: 40, y: 6 }, ...codes.map((str, i) => ({ str, x: 2 + 1.7 * i, y: 3 + (i % 3) * 3 }))] });
+    expect(res.rooms.map((r) => r.name).sort()).toEqual(['STUDY', 'Space 1'].sort());
+    // a room's own name beside a window code still names it
+    const deck = runTrace({ bodies: box(0), texts: [{ str: 'OUTDOOR DECK 2571 CA.-3 2541 FIEXD-3', x: 10, y: 6 }] });
+    expect(deck.rooms[0].type).toBe('outdoor');
+    // …and a code whose letters name a room does
+    const wc = runTrace({ bodies: box(0), texts: [{ str: 'WC-1', x: 10, y: 6 }] });
+    expect(wc.rooms[0]).toMatchObject({ name: 'WC-1', type: 'bath' });
   });
 });
 
@@ -123,6 +160,23 @@ describe('the scale the sheet is really drawn at (its dimension strings)', () =>
     const ok = chain([1000, 1288, 1720, 2008, 2440, 2728, 3160], 4);
     expect(detectSheetScale({ texts: [...note, ...ok.texts], lines: ok.lines }, 144)).toMatchObject({ id: '1/4', how: 'title', dims: { votes: 6 } });
   });
+
+  it('with no note, the standard scale the dimensions pile up on, however noisy the rest (10 Monroe, 13 Arlington)', () => {
+    // 3/16": six true dimensions, and twelve strings read against the wrong
+    // extension lines, each voting somewhere else
+    const good = chain([1000, 1216, 1540, 1756, 2080, 2296, 2620], 16 / 3);
+    const noise = [];
+    [1.7, 2.3, 2.9, 3.4, 4.6, 6.1, 6.9, 7.4, 9.1, 11.5, 12.8, 14.2].forEach((fpi, i) => {
+      const c = chain([1000, 1216], fpi, { y: 900 + 80 * i });
+      noise.push(c);
+    });
+    const ev = { texts: [...good.texts, ...noise.flatMap((c) => c.texts)], lines: [...good.lines, ...noise.flatMap((c) => c.lines)] };
+    expect(dimensionScale(ev.texts, ev.lines, 144).agree).toBeLessThan(0.4);
+    expect(detectSheetScale(ev, 144)).toMatchObject({ id: '3/16', how: 'dimensions' });
+    // too few on any one standard: no scale (the user sets it)
+    const thin = { texts: [...chain([1000, 1216, 1540], 16 / 3).texts, ...noise.flatMap((c) => c.texts)], lines: [...chain([1000, 1216, 1540], 16 / 3).lines, ...noise.flatMap((c) => c.lines)] };
+    expect(detectSheetScale(thin, 144)).toBe(null);
+  });
 });
 
 describe("the scale the sheet's doors say (door tags in their swings)", () => {
@@ -157,5 +211,11 @@ describe("the scale the sheet's doors say (door tags in their swings)", () => {
     expect(ok.doors.votes).toBe(5);
     // too few tags: the note stands
     expect(detectSheetScale(sheet(5.533, [3, 3, 3]), 144)).toMatchObject({ id: '1/4', how: 'title' });
+  });
+
+  it('a few percent short is how CAD draws a swing, not a misplotted sheet: the note stands (3 Houston, 4 Howard)', () => {
+    // the swings a leaf's thickness short of their tags: 3.86 ft per inch against the 1/4" note
+    const ev = sheet(4 / 0.965, [2 + 8 / 12, 2 + 8 / 12, 2.5, 3, 2 + 8 / 12, 2 + 4 / 12]);
+    expect(detectSheetScale(ev, 144)).toMatchObject({ id: '1/4', how: 'title' });
   });
 });

@@ -171,6 +171,20 @@ export function detectSheetScale(ev, planDpi) {
   const noted = a && fpi ? { id, label: a.label, scale: fpi / planDpi, how: pick?.how || 'common', ...(pick?.title ? { title: pick.title } : {}) } : null;
   const dims = dimensionScale(ev.texts, ev.lines || [], planDpi);
   if (dims && dims.votes >= 5 && dims.agree >= 0.4) return measuredScale(noted, fpi, dims, planDpi, 'dimensions', 0.02, 0.01);
+  // no note to read, and the dimensions too noisy to agree as a whole (a
+  // dimension string paired with the wrong extension line votes at random):
+  // a sheet is drawn at a standard scale, and random votes don't pile up on
+  // one. The standard most of them land on (within 1.5%), several times over
+  // any other, is the scale.
+  if (!noted && dims) {
+    const tally = ARCH_SCALES.map((x) => ({ x, f: archFeetPerPaperInch(x) })).filter((s) => s.f)
+      .map((s) => ({ ...s, n: dims.all.filter((v) => Math.abs(v / s.f - 1) <= 0.015).length }))
+      .sort((p, q) => q.n - p.n);
+    if (tally[0].n >= 5 && tally[0].n >= 3 * (tally[1]?.n || 0)) {
+      const s = tally[0];
+      return { id: s.x.id, label: s.x.label, scale: s.f / planDpi, how: 'dimensions', dims: { votes: s.n, of: dims.of, fpi: +s.f.toFixed(3) } };
+    }
+  }
   // no dimension strings to read (drawn as strokes): the door tags, each in
   // the swing of the door it names, against the swing's radius
   const tags = doorTags(ev.texts);
@@ -178,8 +192,11 @@ export function detectSheetScale(ev, planDpi) {
     const k0 = noted ? noted.scale : 4 / planDpi;
     const arcs = readSwings(ev, k0).map((a) => ({ c: { x: a.c.x / k0, y: a.c.y / k0 }, r: a.r / k0, p0: { x: a.p0.x / k0, y: a.p0.y / k0 }, p3: { x: a.p3.x / k0, y: a.p3.y / k0 } }));
     const doors = doorTagScale(tags, arcs, planDpi);
-    // a swing's radius reads to about 1%: a note within 3% stands
-    if (doors && doors.votes >= 5 && doors.votes >= 0.6 * doors.of) return measuredScale(noted, fpi, doors, planDpi, 'doors', 0.03, 0.015);
+    // a swing's radius reads to about 1%, but a CAD door block draws its
+    // swing at the clear opening, a leaf's thickness (1 3/8"–1 3/4") short of
+    // the tagged size: up to 7% on a 2'-0" door. The doors overrule a note
+    // only past that (a sheet plotted to fit the paper is off by far more).
+    if (doors && doors.votes >= 5 && doors.votes >= 0.6 * doors.of) return measuredScale(noted, fpi, doors, planDpi, 'doors', 0.08, 0.015);
   }
   return noted;
 }

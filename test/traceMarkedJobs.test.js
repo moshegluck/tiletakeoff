@@ -5,6 +5,7 @@ import { cadText, markGlyphs } from '../src/lib/pdfVectors.js';
 import { arcsFromDashes, isDoorSwing } from '../src/engine/trace/arcs.js';
 import { runTrace } from '../src/engine/trace/index.js';
 import { roomTypeOf } from '../src/engine/trace/analyze.js';
+import { joinWalls, bridgeOpenings } from '../src/engine/trace/graph.js';
 
 // Regressions from Moshe's marked jobs (454 Saddle River Rd, the Herzka
 // residence, Promenade at Middletown): AutoCAD sheets whose SHX text is
@@ -174,4 +175,73 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(res.flags.filter((f) => f.severity === 'error')).toEqual([]);
     expect(res.flags.some((f) => f.kind === 'frame')).toBe(true);
   });
+
+  it("a doorway framed at both jambs on the door layer is a door, even beside another door's jamb (Carlton Rd's vanity rooms)", () => {
+    // the vanity under the bath: the bath's door above (y = 0), the linen
+    // closet's door on the right (x = 6.56), and the way out below (y = 3): a
+    // pocket door, only its frame drawn at each jamb, a dashed line across.
+    // Its right jamb is the closet door's jamb too.
+    const t = 4 * IN;
+    const walls = [
+      { a: { x: 0, y: 3 }, b: { x: 3.31, y: 3 }, t }, { a: { x: 6.56, y: 3 }, b: { x: 8.06, y: 3 }, t },
+      { a: { x: 0, y: 0 }, b: { x: 3.33, y: 0 }, t }, { a: { x: 6.56, y: 0 }, b: { x: 8.06, y: 0 }, t },
+      { a: { x: 8.06, y: 0 }, b: { x: 8.06, y: 3 }, t },
+    ];
+    const arcs = [{ c: { x: 6.22, y: 0.5 }, r: 2, sweepDeg: 90, p0: { x: 6.22, y: 2.5 }, p3: { x: 4.22, y: 0.5 } }];   // the closet's door
+    const square = (x0, x1, y0, y1) => [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]
+      .map(([ax, ay, bx, by]) => ({ a: { x: ax, y: ay }, b: { x: bx, y: by }, kind: 'door' }));
+    const frames = [...square(3.31, 3.47, 3 - t / 2, 3 + t / 2), ...square(5.97, 6.14, 3 - t / 2, 3 + t / 2),
+      ...square(3.33, 3.5, -t / 2, t / 2), ...square(5.83, 6.0, -t / 2, t / 2)];
+    const run = (hints) => {
+      const j = joinWalls(walls.map((w) => ({ ...w, kind: 'wall' })));
+      return bridgeOpenings(j.segs, j.ends, arcs, {}, [], hints);
+    };
+    const across = (os) => os.find((o) => Math.abs(o.a.y - 3) < 0.05 && Math.abs(o.b.y - 3) < 0.05);
+    const out = run(frames);
+    expect(across(out)).toBeTruthy();
+    expect(across(out).width).toBeCloseTo(6.56 - 3.31, 1);
+    // two doors' frames one above the other are no doorway between them (through the vanity)
+    expect(out.some((o) => Math.abs(o.a.x - o.b.x) < 0.1 && o.a.x < 4)).toBe(false);
+    // nothing drawn at its jambs: an inferred gap at the closet door's jamb stays open, as before
+    expect(across(run([]))).toBeFalsy();
+  });
+
+  it("a wall's heavy faces pair before a heavy face and the hairline beside it (22 Rita's baths)", () => {
+    // a sheet drawn with pen weights: 10.5" exterior walls and 3.5" partitions,
+    // all heavy. One partition's far face is drawn in two pieces; a hairline
+    // (the tub's apron) runs 10.4" off its near face the whole length — longer
+    // than either piece, and a typical thickness on this sheet
+    const HAIR = 0.6 / 36, t = 3.5 * IN, T = 10.4 * IN;
+    const lines = [
+      hline(0, 0, 30), hline(T, T, 30 - T), hline(20, 0, 30), hline(20 - T, T, 30 - T),
+      vline(0, 0, 20), vline(T, T, 20 - T), vline(30, 0, 20), vline(30 - T, T, 20 - T),
+      vline(10, T, 20 - T), vline(10 + t, T, 9.5), vline(10 + t, 9.8, 20 - T),
+      vline(10 - T, T + 0.2, 20 - T - 0.2, HAIR),
+      hline(5, 20, 30 - T), hline(5 + t, 20, 30 - T),
+    ];
+    const { bodies } = pairWalls(lines);
+    const near = (x) => bodies.filter((b) => Math.abs(b.a.x - x) < 0.05 && Math.abs(b.b.x - x) < 0.05);
+    // the partition: 3.5" thick wherever its far face is drawn
+    const part = near(10 + t / 2);
+    expect(part.length).toBeGreaterThanOrEqual(2);
+    expect(part.every((b) => Math.abs(b.t - t) < 0.01)).toBe(true);
+    expect(part.reduce((a, b) => a + Math.abs(b.b.y - b.a.y), 0)).toBeGreaterThan(20 - 2 * T - 1);
+    // and no 10" wall made of its face and the tub
+    expect(near(10 - T / 2).length).toBe(0);
+  });
+
+  it("the paper between the sheet's border and the building is no room, joined to it or not (22 Rita)", () => {
+    // a 40' x 30' house on a 100' x 80' sheet; its border drawn as a wall
+    // would be, and a grid line drawn heavy runs from the house to the border
+    const T = 0.5, b = (x1, y1, x2, y2, t = T) => ({ a: { x: x1, y: y1 }, b: { x: x2, y: y2 }, t });
+    const bodies = [
+      b(1, 1, 99, 1), b(99, 1, 99, 79), b(99, 79, 1, 79), b(1, 79, 1, 1),            // the border
+      b(30, 20, 70, 20), b(70, 20, 70, 50), b(70, 50, 30, 50), b(30, 50, 30, 20),   // the house
+      b(1, 35, 30, 35, 0.3),                                                          // the grid line
+    ];
+    const res = runTrace({ bodies, texts: [{ str: 'LIVING ROOM', x: 50, y: 35 }], sheet: { x0: 0, y0: 0, x1: 100, y1: 80 } });
+    expect(res.rooms.map((r) => r.name)).toEqual(['LIVING ROOM']);
+    expect(res.rooms[0].area).toBeCloseTo((40 - T) * (30 - T), 0);
+  });
 });
+

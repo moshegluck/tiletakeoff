@@ -55,8 +55,13 @@ TileTakeoff works the other way round:
     floor stops at the inner face). On a sheet with pen weights a brick wall may share its face line
     with a wall built against it (both faces in a wall pen); they merge into one. `dropCasework`: a strip
     faced by a hairline lying face to face along a wall (toilet tank, vanity, counter) is not wall.
+    On a sheet with pen weights a pair with both faces in a wall pen is taken before a heavy face paired
+    with a hairline (22 Rita: a bath partition's far face drawn in two pieces lost to the tub apron 10"
+    off, the longer run); the mixed pair is the fallback (a wall drawn heavy outside, light inside).
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
-    gap inside the wall's thickness → a window (closes the room, stays in wall LF).
+    gap inside the wall's thickness → a window (closes the room, stays in wall LF). A gap ≤ 8' with
+    door-layer drawing at both jambs as deep as the wall (`framed`: a pocket door, a cased opening —
+    no swing, a dashed line across) is a doorway, also at a jamb another door already uses (Carlton Rd).
   - `graph.js` joins corners/tees, closes drafting gaps, drops detached scraps (fixtures) — but not a
     pier between windows (a short piece, longer than thick, whose free end faces a kept wall's end in line
     across a window-wide gap at the same thickness: Promenade's corner piers),
@@ -76,7 +81,8 @@ TileTakeoff works the other way round:
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
     holes, labels → names/types, door-in-context checks, scale check from door swings, room edges snap
     to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face),
-    sheet-border / title-block removal (by page extent), the sheet's other views set aside (linework apart
+    sheet-border / title-block removal (by page extent; a face whose edge runs along the page's edge
+    is the paper around the building even when a grid line joins the border to it), the sheet's other views set aside (linework apart
     from the building with a view's own title or scale note under it — `sheetScale.otherViews`; or far
     from it with no room name in it: Herzka's sill details), view titles never name rooms, all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
@@ -96,18 +102,23 @@ TileTakeoff works the other way round:
     view's number bubble is no part of it; "SCALE:" + its value as two texts; AutoCAD SHX's flattened
     stacked fractions, `SCALE:  "=1'-0"14"=1'-0"` = 1/4"), and the note printed with the plan's title
     ("BASEMENT PLAN", not "SEE … PLAN" / details / sections) wins over the sheet's commonest note (its
-    details'). `dimScale.js` then measures the sheet against its own dimension strings: each one's value
+    details') — of all plan titles, the one closest to its note for the title's size (a larger
+    title-block repeat far from any note loses: 6 Rose Hill), a floor plan's before a foundation plan's. `dimScale.js` then measures the sheet against its own dimension strings: each one's value
     / its span between the extension lines crossing its dimension line on either side of the text
     (texts carry `rot`: 0 across, 90 up the sheet); with ≥ 5 votes and ≥ 40% agreeing, the dimensions
     confirm the note (`dims`) or overrule it (`how: 'dimensions'`, `note` = what it said; a plot at no
-    standard scale gets id null, label `1" = 5.53' (measured)`). Herzka: 1/4" confirmed by 61–81
+    standard scale gets id null, label `1" = 5.53' (measured)`). With no note and the votes too noisy to
+    agree, the standard scale ≥ 5 votes land on (within 1.5%, 3× any other) is the scale (10 Monroe,
+    13 Arlington). Herzka: 1/4" confirmed by 61–81
     dimensions a floor. With no dimension text (drawn as strokes), the door tags do it (`doorTags` /
     `doorTagScale`): a "3'0" X 6'8"" tag stands in its door's swing, and the swing's radius is that leaf
-    — ≥ 5 agreeing votes confirm the note (within 3%) or overrule it (`how: 'doors'`). Saddle A-103:
+    — ≥ 5 agreeing votes confirm the note (within 8%: a CAD door block draws its swing a leaf's
+    thickness short — 3 Houston, 4 Howard read 3.86 ft/in on 1/4") or overrule it (`how: 'doors'`). Saddle A-103:
     note 1/4", 10 / 10 tags say 5.53 ft/in. `planEvidence.detectSheetScale` does all three.
     Room names (`analyze.js` `isLabel`): framing / beam callouts (LVL, HEADER, W18x71, 2x10 @ 16" O.C.),
     construction notes (… ABOVE, TO BE, SEE), door tags (3'0" X 6'8"), stair notes (UP 22R), window /
-    equipment codes and CAD attribute dumps never name a room.
+    equipment codes ("2959 CA.-2", "4121 AWNG.", "DH (2) 3753"), finish code strings ("DE-2 PL-1 TI-2"),
+    framing tags (F.J.-1, FB.1) and CAD attribute dumps never name a room.
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
     used) — shown in the Trace panel. `runTrace` traces the sheet as drawn, then tries other readings
@@ -132,6 +143,11 @@ TileTakeoff works the other way round:
   into regions; a region is right when traced floor = marked floor within max(1 SF, 1%). Marked areas
   drawn over each other (a shower floor / mikvah pool over the room's floor) count once.
   `--key-scale` uses the estimator's calibration (tells a wrong scale from wrong geometry).
+  It also reports `scope` regions (the trace runs past the marked edge across open floor — part of a
+  room tiled, the estimator's choice) beside `geo`, the regions the drawing bounds; marked slivers
+  under 5 SF (a curb, a niche, a stray click) aren't scored. The 2024 marked
+  jobs in Moshe's Drive are listed in `samples/marked-jobs.json` (Drive ids, pages to skip);
+  `scripts/markedManifest.mjs <folder> manifest.json` builds the manifest from the downloaded PDFs.
   The trace never reads annotations as drawing (`pdfVectors.js`: annotationMode DISABLE); AutoCAD's
   invisible "AutoCAD SHX Text" annotations are read as the sheet's words (room names, dims), their
   control codes decoded (`cadText`: %%u underline drops out, %%d °); the strokes inside an SHX text's
@@ -139,6 +155,7 @@ TileTakeoff works the other way round:
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
+    A wall-type layer (A-WALL TYPE, A-WALLTYPE, A-Wall_Type) holds the tags naming each wall's type → ignore.
     A window-layer run ≥ 8 ft is a glass wall (`glass`: an interior glazed partition, a storefront) —
     a wall candidate whose two light faces may pair (Saddle A-103's lecture room / open-to-assembly).
     Names in the drafter's language count (Saddle River's dims are on "Размеры"; French A-N-ENV-MUR =
@@ -206,7 +223,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 430 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 439 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -252,6 +269,18 @@ TileTakeoff works the other way round:
   within 3%, 11 silent (Promenade's INDOOR ACTIVITY 1,002 / 1,015; Saddle's LECTURE ROOM 01 1,029 / 1,031).
   Layered wall faces at doors + stair runs off the floor: 73 / 190 right (38.4%), 123 within 3%, 14 silent.
   Patriot's audited key: NEW PLAY AREA 432.5 → 414.0 (the existing stair's bottom 7 treads come off it).
+- Moshe's 2024 marked jobs (Oct 19 2026; 28 jobs / 71 floor-plan sheets / 1,263 marked areas ≥ 5 SF from
+  his Google Drive, `samples/marked-jobs.json`; houses, 2–3 family, multifamily, a school, a shul, a
+  nursing facility). Baseline: 386 right (30.6%), 622 within 3%, 102 silent with the estimator's
+  scale; 290 / 1,010 right on the 57 sheets whose scale the trace read, 76 silent. Now: 435 right
+  (34.4%), 698 within 3%, 80 silent; own scale 355 / 1,040 right on 59 sheets, 58 silent. What moved
+  it: the plan title nearest its note, floor plan before foundation plan, dimensions alone with no
+  note, door ruler only past 8% (Houston p2 0 → 6, Howard p3 7 → 13, Rose Hill p2 0 → 3, Monroe /
+  Arlington traced at all); framed doorways (Carlton p3 3 → 6); heavy faces paired first (22 Rita
+  p1 0 → 9, p3 2 → 11); window / finish codes out of the room names; the paper around the building
+  no room.
+  12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
+  3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
@@ -280,6 +309,14 @@ TileTakeoff works the other way round:
 - Shower floor tile isn't a material pick yet (quantity list says NA; the proposal prices it EA);
   accent / feature walls (tub BW, 30% waste), pattern labor lines (checkerboard) and tiled base aren't
   modelled. Three+ wall tiles in one room each price the whole wall (flagged).
+- Marked-jobs failure classes still open: (1) the nursing facility at 3/32" with 45° wings
+  (03-15-24 p2/p4/p6) traces as ~1,000 fragments; (2) "every pen can draw a wall" wins its score on
+  sheets where it does worse (Howard p2, Keter p1, Mikva: furniture and window glass close into named
+  pieces) — `readingScore` needs a better tell; (3) open plans merged (a foyer into the dining room,
+  a kitchen into the family room) and doors without swings left open; (4) estimators' kitchens stop
+  at the base cabinets (Marked Plans (1): 62 SF marked vs 86 SF room, five units) — ask Moshe whether
+  the cabinet footprint comes off a kitchen floor before modelling it; (5) the `scope` test (open
+  floor along the marked edge) catches few cases — plans are dense with lines.
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road

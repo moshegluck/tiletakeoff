@@ -92,17 +92,23 @@ export function planTitles(texts) {
   });
 }
 
+/** A floor plan's title (FLOOR PLAN, BASEMENT, LEVEL 2) before any other plan's; a foundation plan last. */
+const planTier = (str) => (/\bFOUNDATION\b/i.test(str) ? 2 : /\b(FLOOR|BASEMENT|CELLAR|LEVEL|STORY|STOREY|UNIT|FINISH)\b/i.test(str) ? 0 : 1);
+
 /**
- * The floor plan's scale. The note nearest the plan's title wins (the
- * largest title when there are several, a title-block repeat being smaller);
+ * The floor plan's scale. The note printed with the plan's title wins: of
+ * every plan title and the note nearest it, the pair closest together for
+ * the title's size (the view's own note sits right under its title; the
+ * title block repeats the title, often larger, far from any view's note),
+ * a floor plan's title before another plan's (a foundation plan beside it);
  * else the note most of the sheet's notes agree on.
- * @returns {{ id: string, how: 'title'|'common', title?: string, notes: number } | null}
+ * @returns {{ id: string, how: 'title'|'common', title?: string, at?: {x:number,y:number}, notes: number } | null}
  */
 export function planScale(texts) {
   const notes = scaleNotes(texts);
   if (!notes.length) return null;
-  const titles = planTitles(texts).sort((a, b) => (b.h || 0) - (a.h || 0));
-  for (const ti of titles) {
+  let pick = null;
+  for (const ti of planTitles(texts)) {
     const h = ti.h || 10;
     let best = null, bd = Infinity;
     for (const n of notes) {
@@ -110,8 +116,11 @@ export function planScale(texts) {
       if (d < bd) { bd = d; best = n; }
     }
     // a view's scale is printed with its title: under it or beside it
-    if (best && bd <= Math.max(h * 14, 400)) return { id: best.id, how: 'title', title: norm(ti.str), notes: notes.length };
+    if (!best || bd > Math.max(h * 14, 400)) continue;
+    const rel = bd / Math.max(h, 1), tier = planTier(ti.str);
+    if (!pick || tier < pick.tier || (tier === pick.tier && (rel < pick.rel - 1e-9 || (Math.abs(rel - pick.rel) < 1e-9 && h > pick.h)))) pick = { id: best.id, title: norm(ti.str), rel, h, tier, at: { x: ti.x, y: ti.y } };
   }
+  if (pick) return { id: pick.id, how: 'title', title: pick.title, at: pick.at, notes: notes.length };
   const count = new Map();
   for (const n of notes) count.set(n.id, (count.get(n.id) || 0) + 1);
   const [id] = [...count].sort((a, b) => b[1] - a[1])[0];
@@ -131,7 +140,7 @@ export function otherViews(texts) {
   const plan = planScale(texts);
   let planNote = null;
   if (plan?.how === 'title') {
-    const ti = planTitles(texts).find((t) => norm(t.str) === plan.title);
+    const ti = plan.at;
     if (ti) planNote = notes.reduce((b, n) => (!b || Math.hypot(n.x - ti.x, n.y - ti.y) < Math.hypot(b.x - ti.x, b.y - ti.y) ? n : b), null);
   }
   const out = notes.filter((n) => n !== planNote && !(plan?.how === 'common' && n.id === plan.id)).map((n) => ({ x: n.x, y: n.y, str: n.str }));
