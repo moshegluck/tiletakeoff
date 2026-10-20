@@ -2,8 +2,10 @@
 // analyze.js — turn the traced graph into a takeoff.
 //
 // Rooms are faces of the wall graph. Each room's floor polygon is the
-// centerline loop pulled in by half of each wall's thickness (doors:
-// to the centre of the opening by default, where the threshold sits).
+// centerline loop pulled in by half of each wall's thickness — across a
+// doorway too: the floor stops at the wall line, as Moshe's estimators
+// measure it (1,263 marked areas: median edge offset 0.00"); the doorway's
+// own strip is the threshold (floorAtDoor 'center' runs it to the door's centre).
 // Wall linear footage walks that same loop, net of openings, plus the
 // "in and out" of any partition that dead-ends inside the room.
 // Everything that doesn't add up becomes a located flag.
@@ -466,7 +468,7 @@ export function analyzeGraph(g, ctx = {}) {
     let area = parts.reduce((s, p) => s + signedArea(p.poly), 0) + holes.reduce((s, p) => s + signedArea(p.poly), 0);
     const centerArea = f.area - (f.holes || []).reduce((s, o) => s + Math.abs(o.area), 0) - holeCenterArea;
     // the area to the wall faces across every doorway — how a plan's room tag
-    // measures it (the tile takeoff runs the floor to the door's centre)
+    // measures it (= area, unless the floor runs to the door's centre)
     let areaFaces = area;
     if (opt.floorAtDoor !== 'face' && ringLoops.some((r) => r.l.some((h) => isDoorway(h.e)))) {
       const faceDist = (h) => (isDoorway(h.e) ? (h.e.t || 0) / 2 : distFor(h));

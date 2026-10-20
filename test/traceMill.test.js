@@ -163,15 +163,19 @@ describe('trace — the sheet checks the trace', () => {
     expect(f.at).toEqual({ x: 6, y: 5 });
   });
 
-  it("a room tag is compared at the wall faces (the tile floor runs to the door's centre); beyond 3% it's flagged", () => {
-    // 12x10 room with a 3' doorway in its south wall; the floor runs to the door's centre
+  it("a room tag is compared at the wall faces; beyond 3% it's flagged", () => {
+    // 12x10 room with a 3' doorway in its south wall; the floor stops at the wall line across it
     const lines = heavy(wallsToLines(box(W, H, t), [{ axis: 'h', c: H, s: 4, w: 3, t }], W, H));
     lines.push(...flatArc({ x: 4, y: H - t / 2 }, 3, -Math.PI / 2));
     const res = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: `${Math.round(area)} SF`, x: 6, y: 5 }] });
     const r = res.rooms[0];
-    expect(r.area).toBeCloseTo(area + 3 * t / 2, 1);   // the takeoff: to the door's centre
+    expect(r.area).toBeCloseTo(area, 1);               // the takeoff: to the faces, as the estimators measure
     expect(r.areaFaces).toBeCloseTo(area, 1);          // the tag: to the faces
     expect(r.areaCheck).toBe('match');
+    // to the door's centre when asked (the Trace panel's "Floor at doors")
+    const centre = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: `${Math.round(area)} SF`, x: 6, y: 5 }], options: { floorAtDoor: 'center' } });
+    expect(centre.rooms[0].area).toBeCloseTo(area + 3 * t / 2, 1);
+    expect(centre.rooms[0].areaCheck).toBe('match');
     // 4% off is no longer let through
     const off = runTrace({ lines, arcs: arcsFromPolylines(lines).filter(isDoorSwing), texts: [{ str: `${Math.round(area * 1.04)} SF`, x: 6, y: 5 }] });
     expect(off.rooms[0].areaCheck).toBe('off');

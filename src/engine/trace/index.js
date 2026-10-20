@@ -20,7 +20,7 @@ import { leafLines } from './arcs.js';
 export { parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf };
 export { arcFromBezier } from './arcs.js';
 
-export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor: 'center' };
+export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor: 'face' };
 
 /**
  * @param {object} input

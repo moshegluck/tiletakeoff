@@ -77,7 +77,10 @@ TileTakeoff works the other way round:
     matches when its `closed` end lands across most of the gap (short jamb returns). A ray may land on
     a wall end it misses by ≤ max(0.3', t) only with a swing and only when clearly nearer than any
     wall it meets; that end becomes the door's jamb.
-  - `analyze.js` rooms (offset to finished faces; floor to door centre by default), wall LF
+  - `analyze.js` rooms (offset to finished faces; across a doorway the floor stops at the wall line —
+    `floorAtDoor: 'face'`, how Moshe's estimators measure: on 1,263 marked areas the trace sat a median
+    ¼" per edge outside them with floors to the door centre and 0.00" at the face; the doorway is the
+    threshold, a marble saddle in 3D; 'center' is the Trace panel's other choice), wall LF
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
     holes, labels → names/types, door-in-context checks, scale check from door swings, room edges snap
     to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face),
@@ -133,8 +136,8 @@ TileTakeoff works the other way round:
     may draw a wall — 22 Rita p2, 19 Virginia, 4 Howard p2 keep the drawing as drawn).
   - Plan check (`analyze.js` `printedAreas` / `checkPrintedAreas`): room tags that print an area
     ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (within
-    `AREA_TOL` 3% / 2 SF, compared at the wall faces: `room.areaFaces`, since a tag stops at the wall
-    line across a doorway while the tile floor runs to the door's centre) or an `area_check` flag at
+    `AREA_TOL` 3% / 2 SF, compared at the wall faces: `room.areaFaces`, the same as `area` unless the
+    floor is set to run to the door's centre) or an `area_check` flag at
     the tag with both numbers (several tags in one room = rooms merged).
     `res.verify` = { tags, matched, off, unplaced }.
 - `scripts/bench.mjs manifest.json [--json out] [--baseline base]` — the accuracy benchmark: per sheet,
@@ -146,7 +149,8 @@ TileTakeoff works the other way round:
   Tiled Bathroom", "Vanity Floor", "Shower Floor", "Floor Deduction"…; /Contents "A = 41 sf"; /IC the
   finish colour; /Measure the calibration), polylines (fully tiled wall LF) and counts.
   `benchScore.mjs` `scoreMarked` joins marked areas and traced rooms that overlap (> half of either)
-  into regions; a region is right when traced floor = marked floor within max(1 SF, 1%). Marked areas
+  into regions; a region is right when traced floor = marked floor within max(1 SF, 1%) (a marked area
+  drawn through a door between two of its rooms takes in the doorway strip). Marked areas
   drawn over each other (a shower floor / mikvah pool over the room's floor) count once.
   `--key-scale` uses the estimator's calibration (tells a wrong scale from wrong geometry).
   It also reports `scope` regions (the trace runs past the marked edge across open floor — part of a
@@ -243,7 +247,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 451 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 452 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -300,10 +304,13 @@ TileTakeoff works the other way round:
   p1 0 → 9, p3 2 → 11); window / finish codes out of the room names; the paper around the building
   no room. Then finish / title-block text out of the room names and doubtful pieces counted against a
   reading, casework / text layers in plain words: 454 right (35.9%), 713 within 3%, 74 silent; own
-  scale 372 / 1,040, 57 silent.
+  scale 372 / 1,040, 57 silent. Then floors stopping at the wall line across doorways (the trace sat a
+  median ¼" per edge outside every estimator's rooms; at the face, 0.00"): 540 right (42.8%), 704
+  within 3%, 66 silent; own scale 462 / 1,040 (44.4%), 593 within 3%, 49 silent.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
-- Sample sheet: 7 rooms, 1,045.4 SF vector (bench 7/7; the bath's pony wall is off its floor);
+- Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
+  the door centre; bench 7/7 against the key reworked to the faces; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
 - 10k-line sheet traces in ~0.5 s (spatial indexes everywhere).

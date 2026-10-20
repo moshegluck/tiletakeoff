@@ -50,16 +50,17 @@ describe('raster (scanned plan) fallback', () => {
     const { res } = traceScan({});
     expect(res.rooms.length).toBe(7);
     expect(res.flags.filter((f) => f.severity === 'error')).toEqual([]);
-    expect(res.totals.floorSf).toBeGreaterThan(1040);
-    expect(res.totals.floorSf).toBeLessThan(1054);
+    // the vector sheet's key, floors stopping at the wall face across each doorway: 1,034.1 SF
+    expect(res.totals.floorSf).toBeGreaterThan(1027);
+    expect(res.totals.floorSf).toBeLessThan(1041);
   });
 
   it('straightens a crooked, dusty scan', () => {
     const { res, stats } = traceScan({ deg: 0.8, noise: 0.0015 });
     expect(Math.abs(stats.skewDeg - 0.8)).toBeLessThan(0.08);
     expect(res.rooms.length).toBe(7);
-    expect(res.totals.floorSf).toBeGreaterThan(1038);
-    expect(res.totals.floorSf).toBeLessThan(1056);
+    expect(res.totals.floorSf).toBeGreaterThan(1026);
+    expect(res.totals.floorSf).toBeLessThan(1044);
   });
 
   it('estimates zero skew on a square plan', () => {
