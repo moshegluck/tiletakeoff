@@ -391,6 +391,26 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
     }
     return offs.length >= 2;
   };
+  // a dashed line drawn along the gap (the header or soffit over an alcove's
+  // mouth, a vanity recess open to the bedroom): the drawing closes the space
+  // there — the floor changes at it — though no wall stands in it
+  const dashedAcross = (p, q, t) => {
+    const W = dist(p, q);
+    if (!drawn.length || W < 1e-6) return false;
+    const u = norm(sub(q, p)), n = perp(u), band = (t || 0.4) / 2 + 2 / 12;
+    const ivs = [];
+    for (const i of drawnIdx.query(Math.min(p.x, q.x) - band, Math.min(p.y, q.y) - band, Math.max(p.x, q.x) + band, Math.max(p.y, q.y) + band)) {
+      const l = drawn[i];
+      if (!l.dashed || Math.abs(dot(norm(sub(l.b, l.a)), u)) < Math.cos(3 * DEG)) continue;
+      if (Math.abs((dot(sub(l.a, p), n) + dot(sub(l.b, p), n)) / 2) > band) continue;
+      const s0 = Math.max(0, Math.min(dot(sub(l.a, p), u), dot(sub(l.b, p), u))), s1 = Math.min(W, Math.max(dot(sub(l.a, p), u), dot(sub(l.b, p), u)));
+      if (s1 > s0) ivs.push([s0, s1]);
+    }
+    ivs.sort((x, y) => x[0] - y[0]);
+    let cov = 0, end = 0;
+    for (const [s0, s1] of ivs) { if (s1 <= end) continue; cov += s1 - Math.max(s0, end); end = s1; }
+    return cov >= 0.7 * W;
+  };
   const isWindow = (c) => !c.arcs.length && ((winHints.length > 0
     && hintCoverage(c.jambs[0], c.jambs[1], winHints, windowIdx, reachOf(c.t)) >= 0.6
     && hintCoverage(c.jambs[0], c.jambs[1], doorHints, doorIdx, reachOf(c.t)) < 0.3)
@@ -665,6 +685,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
     openings.push({
       id: uid('o'), a: { ...c.a }, b: { ...c.b }, t: c.t, kind: 'opening', openingType: kind,
       width, arcs: c.arcs, conf: nArc ? 0.95 : (c.width <= 4 ? 0.7 : 0.5), via: c.type, hint: !!c.hint,
+      across: kind === 'opening' && dashedAcross(c.jambs[0], c.jambs[1], c.t),
       jambs: c.jambs.map((p) => ({ ...p })),
     });
   }

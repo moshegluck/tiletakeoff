@@ -8,6 +8,8 @@ describe('CAD layer names', () => {
     expect(['A-Door', 'A-DOOR-FRAM', 'I-DOOR'].map(k)).toEqual(['door', 'door', 'door']);
     expect(['A-Glaz', 'A-GLAZ-SILL', 'NEWWINDOWS', 'WINDOWS', 'A-WIND'].map(k)).toEqual(['window', 'window', 'window', 'window', 'window']);
     expect(['A - DOORS_WINDOWS GRAY', 'A-OPENINGS'].map(k)).toEqual(['opening', 'opening']);
+    // the architect's cased openings: the dashed header across a vanity recess (3 Houston's "A-Wall-Open")
+    expect(['A-Wall-Open', 'A-WALL-OPNG'].map(k)).toEqual(['opening', 'opening']);
     expect(['door', 'window', 'opening'].every(isOpeningLayer)).toBe(true);
   });
 

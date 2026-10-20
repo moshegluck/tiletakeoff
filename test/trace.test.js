@@ -2,12 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { runTrace, parseScaleNote, parseDoorSchedule, eraseFromBodies } from '../src/engine/trace/index.js';
 import { arcFromBezier, isDoorSwing } from '../src/engine/trace/arcs.js';
 import { mergeCollinear, pairWalls } from '../src/engine/trace/walls.js';
-import { buildHousePlan } from './fixtures/planFactory.js';
+import { buildHousePlan, wallsToLines } from './fixtures/planFactory.js';
 
 const IN = 1 / 12;
 const EXT = 8 * IN, INT = 4.5 * IN;
 const room = (res, name) => res.rooms.find((r) => r.name === name);
 const errors = (res) => res.flags.filter((f) => f.severity === 'error');
+const inside = (p, poly) => {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+  }
+  return c;
+};
 
 function trace(opts = {}, mutate) {
   const plan = buildHousePlan(opts);
@@ -127,6 +135,27 @@ describe('trace — failure modes become located flags, not silent garbage', () 
 });
 
 describe('trace — review regressions', () => {
+  it('a vanity recess open to the bedroom under a dashed header line is an area of its own (3 Houston, 4 Howard)', () => {
+    // a 12x15 bedroom; at its foot a 5x3 vanity recess beside the bath, open to the bedroom over the
+    // 2'-9" between the bath wall's stub and the exterior wall, a dashed header line drawn across it
+    const walls = [
+      { x1: 0, y1: 0, x2: 12, y2: 0, t: EXT }, { x1: 0, y1: 15, x2: 12, y2: 15, t: EXT },
+      { x1: 0, y1: 0, x2: 0, y2: 15, t: EXT }, { x1: 12, y1: 0, x2: 12, y2: 15, t: EXT },
+      { x1: 3, y1: 12, x2: 12, y2: 12, t: INT, capA: 0 }, { x1: 5, y1: 12, x2: 5, y2: 15, t: INT },
+    ];
+    const lines = wallsToLines(walls, [], 12, 15);
+    const dashes = [];
+    for (let x = EXT / 2; x + 0.35 <= 3; x += 0.5) dashes.push({ a: { x, y: 12 - INT / 2 }, b: { x: x + 0.35, y: 12 - INT / 2 } });
+    const texts = [{ str: 'BEDROOM', x: 6, y: 6 }, { str: 'BATH', x: 8.5, y: 13.5 }];
+    const at = (res, x, y) => res.rooms.find((r) => r.poly && inside({ x, y }, r.poly));
+    const open = runTrace({ lines, texts });
+    expect(at(open, 2.5, 13.5)?.name).toBe('BEDROOM');          // nothing drawn across: a nook of the bedroom
+    const closed = runTrace({ lines: lines.concat(dashes), texts });
+    const vanity = at(closed, 2.5, 13.5);
+    expect(vanity.name).not.toBe('BEDROOM');
+    expect(vanity.area).toBeCloseTo((5 - EXT / 2 - INT / 2) * (3 - EXT / 2 - INT / 2), 0);
+  });
+
   const box = (x0, y0, x1, y1, t) => [
     { a: { x: x0, y: y0 }, b: { x: x1, y: y0 }, t }, { a: { x: x1, y: y0 }, b: { x: x1, y: y1 }, t },
     { a: { x: x1, y: y1 }, b: { x: x0, y: y1 }, t }, { a: { x: x0, y: y1 }, b: { x: x0, y: y0 }, t },

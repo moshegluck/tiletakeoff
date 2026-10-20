@@ -154,7 +154,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
         const fillOnly = paintOp === OPS.fill || paintOp === OPS.eoFill;
         walkPath(data, m, wpx, lines, curves, paintOp !== OPS.stroke && paintOp !== OPS.closeStroke);
         const col = fillOnly ? fc : sc;
-        for (let k = l0; k < lines.length; k++) lines[k].col = col;
+        for (let k = l0; k < lines.length; k++) { lines[k].col = col; lines[k].pid = painted; }
         for (let k = c0; k < curves.length; k++) curves[k].col = col;
         const layer = layerNow();
         if (layer !== null) {

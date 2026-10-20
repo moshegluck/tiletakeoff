@@ -38,7 +38,8 @@ export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor
  */
 /** Ends of the inferred openings that close off an unnamed alcove (see runTrace). */
 function alcoveMouths(res) {
-  const inferred = (o) => o.openingType === 'opening' && !o.arcs.length && !o.hint;
+  // (a dashed line drawn across the mouth — the soffit over a vanity recess — says the floor changes there)
+  const inferred = (o) => o.openingType === 'opening' && !o.arcs.length && !o.hint && !o.across;
   const named = new Set(res.rooms.filter((r) => r.labels.length).map((r) => r.id));
   const out = [];
   for (const r of res.rooms) {

@@ -28,7 +28,8 @@ const RULES = [
   // tags and labels are text, not the door / window drawn in the wall
   // (a wall-type layer holds the tags and patterns that name each wall's type)
   ['ignore', /\b(labels?|tags?|text|txt|symbols?|symb|notes?)\b|\bwall ?types?\b/],
-  ['opening', /\b(doors?|drs?)\b.*(\w*windows?|glaz\w*)|(\w*windows?|glaz\w*)\b.*\bdoors?\b|\bopenings?\b/],
+  // (A-Wall-Open, A-WALL-OPNG: the architect's cased openings, drawn as the dashed header across the gap)
+  ['opening', /\b(doors?|drs?)\b.*(\w*windows?|glaz\w*)|(\w*windows?|glaz\w*)\b.*\bdoors?\b|\b(openings?|open|opng|opngs)\b/],
   ['door', /\b(\w*doors?|dr|drs|doorswings?)\b/],
   ['window', /\b(glaz\w*|\w*windows?|wind|wndw|win|sash\w*|storefront|curtain ?wall)\b/],
   // the same words in the drafter's language (Russian, French, German, Spanish, Italian, Polish)
