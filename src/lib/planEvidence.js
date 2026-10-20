@@ -97,7 +97,23 @@ function readSwings(ev, k, region = null) {
     const arc = arcFromBezier(c.pieces.map((pc) => ({ p0: P(pc.p0), p1: P(pc.p1), p2: P(pc.p2), p3: P(pc.p3) })));
     if (isDoorSwing(arc)) swings.push(arc); else if (arc) short.push(arc);
   }
-  for (const arc of [...arcsFromPolylines(sheetLines), ...arcsFromDashes(sheetLines)]) {
+  const found = [...arcsFromPolylines(sheetLines), ...arcsFromDashes(sheetLines)];
+  // an SHX text's box is square to the sheet: a door tag written along the
+  // leaf takes in the dashes of the swing beside it. Read the dashes again
+  // with its strokes; a swing found only then is added (no letter is a
+  // door-sized arc), and one found only in part (under 60°) gives way to it;
+  // a whole one stands as it was read
+  const glyphs = ev.lines.filter((l) => l.glyph && inRegion(l.a, region));
+  if (glyphs.length) {
+    const same = (p, q) => Math.hypot(p.c.x - q.c.x, p.c.y - q.c.y) < 0.5 && Math.abs(p.r - q.r) < 0.15 * q.r;
+    for (const arc of arcsFromDashes(sheetLines.concat(glyphs.map((l) => ({ a: P(l.a), b: P(l.b) }))))) {
+      if (swings.some((q) => same(arc, q))) continue;
+      const k = found.findIndex((q) => same(arc, q));
+      if (k < 0) found.push(arc);
+      else if (found[k].sweepDeg < 60 && arc.sweepDeg > found[k].sweepDeg + 15) found[k] = arc;
+    }
+  }
+  for (const arc of found) {
     if (isDoorSwing(arc)) swings.push(arc); else short.push(arc);
   }
   // which way each door closes (from its drawn leaf); doors drawn part open

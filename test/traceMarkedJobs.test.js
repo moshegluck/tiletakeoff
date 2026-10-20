@@ -264,6 +264,40 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(tie).toBeTruthy();
   });
 
+  it("a door tag written along its leaf doesn't hide the swing's dashes (22 Rita's WC)", () => {
+    // a 2'0" swing plotted dashed (6° dashes, 4° gaps) about a hinge at
+    // (100, 100) px; the SHX door tag "2'0" X 6'8"" written along the leaf
+    // has a box square to the sheet, and the dashes from 25° to 85° lie in it
+    const k = 1 / 36, r = 72, lines = [];
+    for (let a0 = 0; a0 < 90; a0 += 10) {
+      const at = (deg) => ({ x: 100 + r * Math.cos((deg * Math.PI) / 180), y: 100 - r * Math.sin((deg * Math.PI) / 180) });
+      const glyph = a0 >= 25 && a0 <= 85;
+      lines.push({ a: at(a0), b: at(a0 + 3), w: 0.24, ...(glyph ? { glyph } : {}) }, { a: at(a0 + 3), b: at(a0 + 6), w: 0.24, ...(glyph ? { glyph } : {}) });
+    }
+    const { arcs } = evidenceToFeet({ lines, curves: [], texts: [] }, k, null);
+    const swing = arcs.find((a) => Math.hypot(a.c.x - 100 * k, a.c.y - 100 * k) < 0.2);
+    expect(swing).toBeTruthy();
+    expect(swing.r).toBeCloseTo(2, 1);
+  });
+
+  it("a wall built in layers shares the face line between them: one wall, both layers thick (Bais Rochel's lunchroom)", () => {
+    // a sheet with pen weights: a 30' x 20' room of 6" walls; its west wall is
+    // an 8" block wall with a 6" lining against it — three heavy face lines,
+    // the middle one the face of both. The lining took it alone and the
+    // block wall was lost, leaving the lunchroom open past the lining's end
+    const t = 6 * IN, B = 8 * IN, Lg = 6 * IN;
+    const lines = [
+      hline(0, 0, 30), hline(t, B + Lg, 30 - t), hline(20, 0, 30), hline(20 - t, B + Lg, 30 - t),
+      vline(30, 0, 20), vline(30 - t, t, 20 - t),
+      vline(0, 0, 20), vline(B, t, 20 - t), vline(B + Lg, t, 20 - t),
+    ];
+    const { bodies } = pairWalls(lines);
+    const west = bodies.filter((b) => Math.abs(b.a.x - b.b.x) < 0.01 && Math.max(b.a.x, b.b.x) < 2 && Math.abs(b.b.y - b.a.y) > 10);
+    expect(west.length).toBe(1);
+    expect(west[0].t).toBeCloseTo(B + Lg, 2);
+    expect(west[0].a.x).toBeCloseTo((B + Lg) / 2, 2);
+  });
+
   it("the paper between the sheet's border and the building is no room, joined to it or not (22 Rita)", () => {
     // a 40' x 30' house on a 100' x 80' sheet; its border drawn as a wall
     // would be, and a grid line drawn heavy runs from the house to the border

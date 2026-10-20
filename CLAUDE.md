@@ -60,6 +60,10 @@ TileTakeoff works the other way round:
     On a sheet with pen weights a pair with both faces in a wall pen is taken before a heavy face paired
     with a hairline (22 Rita: a bath partition's far face drawn in two pieces lost to the tub apron 10"
     off, the longer run); the mixed pair is the fallback (a wall drawn heavy outside, light inside).
+    A wall built in layers (an 8" block wall and a 6" lining, three heavy face lines) shares the line
+    between them: on a sheet with pen weights each face line serves one wall on each side
+    (`layerFaces`), while the two together are no thicker than `maxT`; `mergeLayers` makes them one
+    wall (Bais Rochel's lunchroom leaked past the lining's end with the block wall lost).
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
     gap inside the wall's thickness → a window (closes the room, stays in wall LF). A gap ≤ 8' with
     door-layer drawing at both jambs as deep as the wall (`framed`: a pocket door, a cased opening —
@@ -99,7 +103,9 @@ TileTakeoff works the other way round:
     chains of straight pieces (`arcsFromPolylines`), and from swings plotted dashed (`arcsFromDashes`:
     dashes that carry on from one another across their gaps, least-squares circle — Saddle River); `readLeaves` reads each swing's drawn leaf
     (the edge closest to the radius: open end → `closed` = the other end) and keeps part-open (25–55°)
-    swings only with their leaf. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
+    swings only with their leaf. An SHX door tag written along the leaf has a box square to the sheet
+    that takes in the swing's dashes (`glyph`): the dashes are read again with its strokes, and a swing
+    found only then is added (one found in part, under 60°, gives way to it) — 22 Rita's WC door. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
     lighter than the sheet's wall pen) are never wall faces; `runTrace` also cuts every body along a door's closed leaf (hinge → `closed`):
     a threshold or leaf drawn across a doorway is no wall.
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
@@ -260,7 +266,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 456 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 458 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -324,7 +330,10 @@ TileTakeoff works the other way round:
   and a dashed line across an inferred mouth keeps the alcove pass from merging it): 564 right (44.7%),
   727 within 3%, 66 silent; own scale 487 / 1,040 (46.8%), 619 within 3%, 49 silent. Then clip paths,
   the pen of the stretch a pair uses and steps at corners (all from the nursing facility): 595 right
-  (47.1%), 777 within 3%, 68 silent; own scale 520 / 1,040 (50.0%), 666 within 3%, 50 silent.
+  (47.1%), 777 within 3%, 68 silent; own scale 520 / 1,040 (50.0%), 666 within 3%, 50 silent. Then
+  layered walls sharing their middle face and swings hidden in door-tag boxes: 624 right (49.4%), 797
+  within 3%, 65 silent; own scale 544 / 1,040 (52.3%), 693 within 3%, 52 silent (22 Rita p1 10 → 15,
+  p3 13 → 18, Bais Rochel p2 19 → 25, 4 Howard p2 14 → 18). Phase 2 / Skver trace in ~70 s (were 38 s).
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
