@@ -26,7 +26,7 @@ export function score(res, answers) {
   for (const [r, as] of byRoom) {
     const want = as.reduce((s, a) => s + a.sf, 0);
     // a printed tag measures to the wall faces across doorways; a hand-audited
-    // room is the takeoff's own floor (to the door's centre)
+    // room is the takeoff's own floor
     const got = as[0].src === 'printed' ? (r.areaFaces ?? r.area) : r.area;
     const d = Math.abs(got - want);
     const zones = as.length > 1 && r.printedParts && r.areaCheck === 'match';
@@ -140,6 +140,9 @@ export function openEdge(ks, rs, lines, step = 0.25) {
 export function scoreMarked(res, items, grid = 0.25, lines = null) {
   const out = { answers: 0, right: 0, close: 0, merged: 0, missing: 0, split: 0, silent: 0, wrong: [], keySf: 0, gotSf: 0, regions: 0 };
   out.scope = 0; out.geo = { answers: 0, right: 0, close: 0, silent: 0 };
+  // every region, right or wrong: what was marked, what was traced, the traced rooms' perimeter
+  // (an error / perimeter is the edge offset that would explain it)
+  out.all = [];
   const idx = lines ? lineIndex(lines) : null;
   const boxes = res.rooms.map((r) => {
     const xs = r.poly.map((p) => p.x), ys = r.poly.map((p) => p.y);
@@ -187,8 +190,16 @@ export function scoreMarked(res, items, grid = 0.25, lines = null) {
     const label = ks.map((it) => `${it.subject || 'area'} ${it.sf}`).join(' + ').slice(0, 90);
     const geo = (k) => { out.geo.answers += n; if (k === 'right') out.geo.right += n; if (k === 'right' || k === 'close') out.geo.close += n; if (k === 'silent') out.geo.silent += n; };
     if (!rs.length) { out.missing += n; geo('wrong'); out.wrong.push({ name: label, sf: +want.toFixed(1), at: ks[0].at, why: 'no traced room', flagged: false }); continue; }
-    const got = rs.reduce((a, r) => a + r.area, 0);
+    // a floor that stops at the wall line across each doorway: a marked area
+    // drawn through a door between two of its rooms takes in the doorway too
+    const inRegion = new Set(rs.map((r) => r.id));
+    const strips = res.options?.floorAtDoor === 'face'
+      ? (res.openings || []).filter((o) => o.openingType !== 'window' && o.rooms?.every((id) => id && inRegion.has(id))).reduce((a, o) => a + (o.width || 0) * (o.t || 0), 0)
+      : 0;
+    const got = rs.reduce((a, r) => a + r.area, 0) + strips;
     out.gotSf += got;
+    const perim = rs.reduce((a, r) => a + r.poly.reduce((s, p, i) => s + Math.hypot(r.poly[(i + 1) % r.poly.length].x - p.x, r.poly[(i + 1) % r.poly.length].y - p.y), 0), 0);
+    out.all.push({ n, want: +want.toFixed(2), got: +got.toFixed(2), gotFaces: +rs.reduce((a, r) => a + (r.areaFaces ?? r.area), 0).toFixed(2), perim: +perim.toFixed(2), rooms: rs.length, names: rs.map((r) => r.name).join(' + ').slice(0, 60), flagged: rs.some((r) => r.status !== 'ok'), at: ks[0].at, subj: ks.map((k) => k.subject).join(' + ').slice(0, 60) });
     if (rs.length > 1) out.split += n;
     const d = Math.abs(got - want), flagged = rs.some((r) => r.status !== 'ok');
     const names = rs.map((r) => r.name).join(' + ').slice(0, 60);

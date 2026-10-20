@@ -64,6 +64,22 @@ describe('marked plans (an estimator\'s takeoff on the architect\'s drawing)', (
     expect(s.silent).toBe(2);   // C is 11% off and carries no flag
   });
 
+  it('floors stop at the wall line across a doorway; a marked area drawn through the door takes in the doorway', () => {
+    const sq = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+    // a bath (A) and its closet (B) behind a 5" wall with a 3' door; the estimator marked both as one
+    const t = 5 / 12;
+    const res = {
+      options: { floorAtDoor: 'face' },
+      rooms: [{ id: 'A', name: 'BATH', poly: sq(0, 0, 8, 10), area: 80, status: 'ok' }, { id: 'B', name: 'CL', poly: sq(8 + t, 0, 12, 10), area: 10 * (4 - t), status: 'ok' }],
+      openings: [{ openingType: 'door', rooms: ['A', 'B'], width: 3, t }],
+    };
+    const s = scoreMarked(res, [{ subject: 'Bath', sf: 80 + 10 * (4 - t) + 3 * t, poly: sq(0, 0, 12, 10) }]);
+    expect(s.right).toBe(1);
+    // floors to the door's centre already hold the doorway: nothing is added
+    const centre = scoreMarked({ ...res, options: { floorAtDoor: 'center' } }, [{ subject: 'Bath', sf: 80 + 10 * (4 - t), poly: sq(0, 0, 12, 10) }]);
+    expect(centre.right).toBe(1);
+  });
+
   it("a shower floor drawn over the room's floor counts once (Saddle River's mikvah pools)", () => {
     const sq = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
     const res = { rooms: [{ id: 'A', name: 'MIKVAH', poly: sq(0, 0, 16, 24), area: 384, status: 'ok' }] };

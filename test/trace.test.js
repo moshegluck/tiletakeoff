@@ -40,10 +40,10 @@ describe('trace — messy plan (doubled traces, hatch, gaps, overshoot, furnitur
     expect(errors(res)).toEqual([]);
   });
 
-  it('kitchen floor = finished faces, to the centre of each opening', () => {
-    // 11.479 × 15.479 inside faces + half-wall strip under the 8' cased opening and the 5' opening
-    const inside = (12 - EXT / 2 - INT / 2) * (16 - EXT / 2 - INT / 2);
-    const expected = inside + 8 * (INT / 2) + 5 * (INT / 2);
+  it('kitchen floor = finished faces, stopping at the wall\'s face across each opening', () => {
+    // 11.479 × 15.479 inside faces; the floor stops at the wall line across the 8' cased opening
+    // and the 5' opening, as the estimators' marked takeoffs do
+    const expected = (12 - EXT / 2 - INT / 2) * (16 - EXT / 2 - INT / 2);
     // doubled traces are drawn 0.2" off on purpose; merging them may move a face ≤ 1/8"
     // 1/8" on a 15½' side is 0.16 sf
     expect(Math.abs(room(res, 'KITCHEN').area - expected)).toBeLessThan(0.16);

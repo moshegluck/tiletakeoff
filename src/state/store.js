@@ -60,7 +60,7 @@ function blankProject() {
 export function defaultTrace() {
   return {
     result: null,
-    settings: { ceilingHeight: 8, doorHeight: 6 + 8 / 12, floorAtDoor: 'center', maxOpening: 16, defaultWallIn: 4.5 },
+    settings: { ceilingHeight: 8, doorHeight: 6 + 8 / 12, floorAtDoor: 'face', maxOpening: 16, defaultWallIn: 4.5 },
     manual: [], removed: [], edits: [], region: null, source: null, committedAt: null,
   };
 }
