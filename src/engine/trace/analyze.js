@@ -83,7 +83,7 @@ function isLabel(str) {
   const s = (str || '').trim();
   if (s.length < 2 || !/[a-z].*[a-z]/i.test(s)) return false;
   if (DIM_RE.test(s) || AREA_RE.test(s) || NOISE_RE.test(s) || LEGEND_WORD_RE.test(s)) return false;
-  if (/=|scale/i.test(s)) return false;
+  if (/=|scale/i.test(s) || DRAFT_ABBR_RE.test(s)) return false;
   if (STRUCT_RE.test(s) || NOTE_RE.test(s) || TAG_RE.test(s) || ADDRESS_RE.test(s)) return false;
   if (WINDOW_RE.test(s) && WINDOW_TYPE_RE.test(s) && roomTypeOf(s) === 'room') return false;
   // a phrase broken off mid-way ("& PLUMBING", "DOOR TAG &") belongs to a note
@@ -101,6 +101,8 @@ function isLabel(str) {
   if (VIEW_RE.test(s)) return false;
   return true;
 }
+// a drafting abbreviation alone (TYP. A, MIN, SIM., N.T.S.) qualifies a note or a detail; it names nothing
+const DRAFT_ABBR_RE = /^(TYP(ICAL)?|MIN|MAX|SIM|N\.?T\.?S|EQ|CLR|N\.?I\.?C|A\.?F\.?F|U\.?N\.?O|ALT|OPT|REF|CONT|DIA|O\.?C)\.?(\s*[A-Z0-9]{1,2}(\s*\/\s*[A-Z0-9]{1,2})?\.?)?$/i;
 const VIEW_RE = /\b(DETAILS?|SECTIONS?|ELEVATIONS?|WALL\s+TYPES?|LEGEND|SCHEDULE|AXONOMETRIC|ISOMETRIC)\b/i;
 
 /** Offset a face loop toward its left face (the room). dists[k] per half-edge. */

@@ -116,8 +116,8 @@ describe('which words name rooms', () => {
     const notes = ['PL-2 - PL-3', '- ST-1', 'HIGH CEILING: PA-2, DROP: PA-1', 'ALL EXTERIOR DOORS: DO-1', 'FU-2 UNDER', 'COUNTER',
       'CLEAR MIRROR', 'UP TO CEILING', 'LINEAR DRAIN', '& PLUMBING', 'DOOR TAG &', 'MLDG TAG', 'FINISH', 'GEN.', 'SPECIFIED', 'W ALLS',
       'SEAL', '412 N. MAIN STREET. SUITE 301', 'MONROE NY 10950', 'INFO@EXAMPLE.COM', 'EPDM ROOFING PITCH', 'OPTIONAL DOOR',
-      'ANWG. 4121', 'Porcelain Tile', 'Bi 7 ,', '„O-LX.O-£', 'H I', '42" WALL'];
-    const name = (texts) => runTrace({ bodies: box, texts: texts.map((str, i) => ({ str, x: 1 + 0.6 * i, y: 2 + (i % 8) })) }).rooms[0].name;
+      'ANWG. 4121', 'Porcelain Tile', 'Bi 7 ,', '„O-LX.O-£', 'H I', '42" WALL', 'MIN', 'TYP. A', 'TYP. A/B', 'SIM.', 'N.T.S.'];
+    const name = (texts) => runTrace({ bodies: box, texts: texts.map((str, i) => ({ str, x: 1 + 0.5 * i, y: 2 + (i % 8) })) }).rooms[0].name;
     expect(name(notes)).toBe('Space 1');
     expect(name([...notes, 'ROOM #7 ADA'])).toBe('ROOM #7 ADA');
     // a room's own name with a finish word in it still names it; an abbreviation with stops does

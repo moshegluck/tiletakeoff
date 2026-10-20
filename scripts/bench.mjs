@@ -1,7 +1,7 @@
 // ============================================================
 // bench.mjs — score the trace against answer keys.
 //
-//   node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json]
+//   node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json] [--key-scale] [--options '{"maxOpening":12}']
 //
 // manifest: { "sheets": [ {
 //   "name": "Mill 2 A101", "pdf": "/path/plan.pdf", "page": 16,
@@ -38,6 +38,8 @@ const RENDER_SCALE = 2, PLAN_DPI = 72 * RENDER_SCALE;
 const args = process.argv.slice(2);
 const opt = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : null; };
 const manifestPath = args.find((a) => a.endsWith('.json') && args[args.indexOf(a) - 1] !== '--json' && args[args.indexOf(a) - 1] !== '--baseline');
+// --options '{"maxOpening":12}': trace with these engine options (tuning; a reading's own option turns that reading off)
+const traceOptions = opt('options') ? JSON.parse(opt('options')) : undefined;
 if (!manifestPath) { console.error('usage: node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json]'); process.exit(2); }
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
@@ -66,7 +68,7 @@ for (const sh of manifest.sheets) {
   if (!sc) { console.log(`── ${sh.name}: no scale on the sheet — skipped`); continue; }
   const input = evidenceToFeet(ev, sc.scale, null);
   const t0 = Date.now();
-  const res = runTrace({ ...input, sheet: { x0: 0, y0: 0, x1: ev.width * sc.scale, y1: ev.height * sc.scale } });
+  const res = runTrace({ ...input, options: traceOptions, sheet: { x0: 0, y0: 0, x1: ev.width * sc.scale, y1: ev.height * sc.scale } });
   const ms = Date.now() - t0;
   const answers = [];
   if (sh.printed) for (const t of printedAreas(input.texts)) answers.push({ name: `${t.sf} SF tag`, at: { x: t.x, y: t.y }, sf: t.sf, src: 'printed' });

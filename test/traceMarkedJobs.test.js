@@ -230,6 +230,40 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(near(10 - T / 2).length).toBe(0);
   });
 
+  it("a thick wall's face lying along a long hairline (a grid line run through it) is still a wall pen there (the nursing facility's stair shaft)", () => {
+    // a sheet with pen weights: a 40' x 30' building of 6" walls; its west
+    // side is an 18" masonry wall whose outer face a 90' grid line (a
+    // hairline) runs straight along — merged into one run, mostly hairline
+    const HAIR = 0.48 / 36, T = 18 * IN, t = 6 * IN;
+    const lines = [
+      hline(0, 0, 40), hline(t, T, 40 - t), hline(30, 0, 40), hline(30 - t, T, 40 - t),
+      vline(40, 0, 30), vline(40 - t, t, 30 - t),
+      vline(0, 0, 30), vline(T, t, 30 - t),
+      vline(0, -30, 60, HAIR),
+    ];
+    const { bodies } = pairWalls(lines);
+    const west = bodies.filter((b) => Math.abs(b.a.x - T / 2) < 0.05 && Math.abs(b.b.x - T / 2) < 0.05);
+    expect(west.length).toBe(1);
+    expect(west[0].t).toBeCloseTo(T, 2);
+  });
+
+  it("a storefront running on from a thick wall cut back at the building's corner meets it (the nursing facility's corridor end)", () => {
+    // an 18" wall drawn on 1' past the corner it turns with a 14" wall; the
+    // storefront (7", along the 18" wall's outer half) carries on from where
+    // the 18" wall was drawn to end — too far off the 14" wall to meet it
+    const segs = [
+      { a: { x: 0, y: 0 }, b: { x: 20, y: 0 }, t: 1.5 },
+      { a: { x: 19, y: 10 }, b: { x: 19, y: 0.6 }, t: 14 * IN },
+      { a: { x: 20.4, y: -0.5 }, b: { x: 30, y: -0.5 }, t: 7 * IN },
+    ];
+    const { segs: out } = joinWalls(segs);
+    // the corner closed at (19, 0)…
+    expect(out[0].b.x).toBeCloseTo(19, 6);
+    // …and the storefront's end is tied to it, not left open
+    const tie = out.slice(3).find((s) => [s.a, s.b].some((p) => Math.hypot(p.x - 20.4, p.y + 0.5) < 1e-6) && [s.a, s.b].some((p) => Math.hypot(p.x - 19, p.y) < 1e-6));
+    expect(tie).toBeTruthy();
+  });
+
   it("the paper between the sheet's border and the building is no room, joined to it or not (22 Rita)", () => {
     // a 40' x 30' house on a 100' x 80' sheet; its border drawn as a wall
     // would be, and a grid line drawn heavy runs from the house to the border
