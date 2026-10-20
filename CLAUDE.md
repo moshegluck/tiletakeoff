@@ -71,6 +71,8 @@ TileTakeoff works the other way round:
     different crossing wall (an offset cross) run through — up to a thick wall's thickness between the
     crossing walls' faces when they come from opposite sides; an end on a wall right by that wall's end snaps to it.
     A corner whose own wall carries on behind a scrap is still a plain L (a closet door bridges from it).
+    An opening with a dashed line drawn across ≥ 70% of it (`across`: the header over a recess's mouth) is
+    no inferred nook mouth: `runTrace`'s alcove pass leaves it closed (the vanity area is its own floor).
     An inferred opening (no swing, no door drawing) never crosses one already placed; a door the
     sheet draws stands (Patriot's bifold closet front). A swing matches a door when it hinges at one
     jamb and, when its leaf says where it closes (`closed`), closes on that doorway's line; it also
@@ -168,6 +170,7 @@ TileTakeoff works the other way round:
     A wall-type layer (A-WALL TYPE, A-WALLTYPE, A-Wall_Type) holds the tags naming each wall's type → ignore.
     A window-layer run ≥ 8 ft is a glass wall (`glass`: an interior glazed partition, a storefront) —
     a wall candidate whose two light faces may pair (Saddle A-103's lecture room / open-to-assembly).
+    Cased openings: A-Wall-Open / A-WALL-OPNG → opening (the dashed header drawn across a vanity recess).
     Names in the drafter's language count (Saddle River's dims are on "Размеры"; French A-N-ENV-MUR =
     walls, -FEN = windows, -MOB = furniture) and AIA shorthand (A-FIX., A-SHBD, Q-CASE, A-COLS,
     A-FLOR, floor PAT outlines, NOT IN SCOPE → ignore), and the same in plain words (Counter,
@@ -247,7 +250,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 452 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 453 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -306,7 +309,10 @@ TileTakeoff works the other way round:
   reading, casework / text layers in plain words: 454 right (35.9%), 713 within 3%, 74 silent; own
   scale 372 / 1,040, 57 silent. Then floors stopping at the wall line across doorways (the trace sat a
   median ¼" per edge outside every estimator's rooms; at the face, 0.00"): 540 right (42.8%), 704
-  within 3%, 66 silent; own scale 462 / 1,040 (44.4%), 593 within 3%, 49 silent.
+  within 3%, 66 silent; own scale 462 / 1,040 (44.4%), 593 within 3%, 49 silent. Then vanity recesses
+  (a lavatory in a recess open to the bedroom under a dashed header — "A-Wall-Open" is an opening layer,
+  and a dashed line across an inferred mouth keeps the alcove pass from merging it): 564 right (44.7%),
+  727 within 3%, 66 silent; own scale 487 / 1,040 (46.8%), 619 within 3%, 49 silent.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
