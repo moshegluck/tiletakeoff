@@ -311,5 +311,38 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(res.rooms.map((r) => r.name)).toEqual(['LIVING ROOM']);
     expect(res.rooms[0].area).toBeCloseTo((40 - T) * (30 - T), 0);
   });
-});
 
+  it("a door frame's jamb block drawn across a wall's end holds no corner: the doorway bridges (the nursing facility's toilets)", () => {
+    // a toilet's west wall (x = 0) with its door at the north corner: the north
+    // wall runs east from y = 0; the west wall starts at the bottom jamb, where
+    // the door frame is drawn as a block 6" across the wall, 9" deep
+    const walls = [
+      { a: { x: 0, y: 3.4 }, b: { x: 0, y: 20 }, t: 0.36 },
+      { a: { x: -0.15, y: 0 }, b: { x: 10, y: 0 }, t: 0.35 },
+      { a: { x: -0.25, y: 3 }, b: { x: 0.25, y: 3 }, t: 0.78 },
+    ].map((w) => ({ ...w, kind: 'wall' }));
+    const j = joinWalls(walls);
+    // the jamb's wall end is free for the doorway (the block didn't take it into a corner)
+    expect(j.ends.find((e) => e.bi === 0 && e.w === 0).joined).toBe(false);
+    const arcs = [{ c: { x: 0.2, y: 0.4 }, r: 3, sweepDeg: 90, p0: { x: 3.2, y: 0.4 }, p3: { x: 0.2, y: 3.4 }, closed: { x: -0.2, y: 3.4 } }];
+    const out = bridgeOpenings(j.segs, j.ends, arcs);
+    expect(out.some((o) => Math.abs(o.a.x) < 0.1 && Math.abs(o.b.x) < 0.1 && Math.abs(Math.abs(o.a.y - o.b.y) - 3) < 0.5)).toBe(true);
+  });
+
+  it("a window between a 20\" masonry wall and only its 4\" inner layer runs on the masonry wall's line, stepped at the thin jamb (Bais Rochel's classrooms)", () => {
+    // both walls' room faces at y = 0.835; the window's sash drawn across on the window layer
+    const T = 1.67, t = 0.34;
+    const walls = [
+      { a: { x: 12, y: 0 }, b: { x: 22, y: 0 }, t: T },
+      { a: { x: -10, y: (T - t) / 2 }, b: { x: 0, y: (T - t) / 2 }, t },
+    ].map((w) => ({ ...w, kind: 'wall' }));
+    const j = joinWalls(walls);
+    const sash = [-0.1, 0.1].map((y) => ({ a: { x: 0, y }, b: { x: 12, y }, kind: 'window' }));
+    const [o] = bridgeOpenings(j.segs, j.ends, [], {}, [], sash);
+    expect(o.openingType).toBe('window');
+    expect([o.a.y, o.b.y].map((y) => +y.toFixed(3))).toEqual([0, 0]);
+    expect(o.t).toBeCloseTo(T, 6);
+    expect(o.step.a).toEqual({ x: 0, y: (T - t) / 2 });
+    expect(o.step.b.y).toBeCloseTo(0, 6);
+  });
+});

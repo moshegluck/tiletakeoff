@@ -127,6 +127,12 @@ describe('which words name rooms', () => {
     // a note with "W/ " in it is a note (34 Ellish's attic stair); a W/D closet is a laundry
     expect(name(['PULL DOWN ATTIC STAIR W/ R-38 INSULATED COVER.'])).toBe('Space 1');
     expect(name(['W/D'])).toBe('W/D');
+    // a sentence is a note, room words and all (Riverglen, 22 Rita, Keter, the nursing facility)
+    for (const note of ['SOUND ATTENUATING BLANKET IN BATHROOM AND LAUNDRY ROOMS', '1 HR FIRE RATED CEILING (UNDERSIDE OF STAIRS ALSO) UL DES. NO L-512',
+      'FLOOR DRAIN AT PORCH', 'PROPOSED MULTI FAMILY DWELLINGS FOR:', 'TYP. HANDICAP BATHROOM REQUIREMENT', 'The mechanical and electrical engineers',
+      'POST OFFICE FACADE AWNING']) expect(name([note])).toBe('Space 1');
+    // …a long name is not
+    for (const room of ['MEMORY CARE FAMILY LOUNGE', 'DAY SPACE/ SHORT TERM DINING', 'MASTER WALK IN CLOSET', 'EQUIPMENT/ ELECTRICAL/ SHAFT SPACE']) expect(name([room])).toBe(room);
   });
 });
 

@@ -203,6 +203,17 @@ export function joinWalls(inSegs, options = {}, log = []) {
       }
     }
   }
+  // a piece the joins shrank to nothing (a door frame's jamb block drawn
+  // across a wall's end: the wall cornered onto it, a tee met it from the
+  // other side) holds no end — the wall stops there, open for its doorway
+  // (the nursing facility's toilet doors) — unless a real wall meets it there
+  const held = (e) => [...near(e.p, opt.snapTol)].map((j) => segs[j]).concat(extra)
+    .some((s) => s !== segs[e.bi] && dist(s.a, s.b) > opt.snapTol && touches(e.p, s, opt.snapTol));
+  for (const e of ends) {
+    if (!e.joined || e.with == null || dist(segs[e.with].a, segs[e.with].b) > opt.snapTol || dist(segs[e.bi].a, segs[e.bi].b) <= opt.snapTol || held(e)) continue;
+    e.joined = e.corner = false;
+    e.with = undefined;
+  }
   return { segs: segs.concat(extra), ends, extra };
 }
 
@@ -686,8 +697,24 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
     const kind = nArc >= 2 ? 'double_door' : nArc === 1 ? 'door' : isWindow(c) ? 'window' : 'opening';
     let width = c.width;
     if (nArc === 1) width = refineWidth(c.width, c.arcs[0].r);
+    // jambs of different walls sharing one face (a 20" masonry wall on one
+    // side, only its 4" inner layer read on the other — Bais Rochel's
+    // classroom windows): the opening runs on the thick wall's line, a step
+    // at the thin jamb, not slanted from centreline to centreline
+    let a = { ...c.a }, b = { ...c.b }, t = c.t, step = null;
+    if (c.type === 'collinear' && c.e2 && Math.abs(c.e1.t - c.e2.t) > 2 / 12) {
+      const [T, S] = c.e1.t > c.e2.t ? [c.e1, c.e2] : [c.e2, c.e1];
+      const n = perp(T.dir);
+      const lat = dot(sub(S.p, T.p), n), half = (T.t - S.t) / 2;
+      if (Math.abs(lat) > 0.1 && Math.abs(Math.abs(lat) - half) < 1.5 / 12) {
+        const P = add(T.p, mul(T.dir, dot(sub(S.p, T.p), T.dir)));
+        if (T === c.e1) b = P; else a = P;
+        t = T.t;
+        step = { a: { ...S.p }, b: { ...P }, t: S.t };
+      }
+    }
     openings.push({
-      id: uid('o'), a: { ...c.a }, b: { ...c.b }, t: c.t, kind: 'opening', openingType: kind,
+      id: uid('o'), a, b, t, kind: 'opening', openingType: kind, ...(step ? { step } : {}),
       width, arcs: c.arcs, conf: nArc ? 0.95 : (c.width <= 4 ? 0.7 : 0.5), via: c.type, hint: !!c.hint,
       across: kind === 'opening' && dashedAcross(c.jambs[0], c.jambs[1], c.t),
       jambs: c.jambs.map((p) => ({ ...p })),

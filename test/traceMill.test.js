@@ -133,6 +133,10 @@ describe('trace — an old mill (line weights, flattened swings, thick brick, hi
     // a basement wall: outer face hidden (dashed), inner face solid, 28" apart
     const p2 = pairWalls([hline(0, 0, 20, { w: 1 }), ...dashes(-28 * IN, 0, 20, 1)]);
     expect(p2.bodies.some((b) => Math.abs(b.t - 28 * IN) < 0.05)).toBe(true);
+    // …but a girder drawn dashed 1'-5" into the room off a 4½" wall is no hidden face of the
+    // wall: the wall's room face already pairs with the face behind it (19 Ecbo's bath)
+    const p3 = pairWalls([hline(0, 0, 20, { w: 1 }), hline(4.5 * IN, 0, 20, { w: 1 }), ...dashes(4.5 * IN + 17 * IN, 0, 20, 1)]);
+    expect(p3.bodies.map((b) => +b.t.toFixed(3))).toEqual([+(4.5 * IN).toFixed(3)]);
   });
 
   it('a thin line in an annotation colour (a blue dimension string) is never a wall face', () => {
@@ -471,6 +475,18 @@ describe('trace — measured to the 1% (the accuracy benchmark\'s cases)', () =>
     expect(res.rooms[0].area).toBeCloseTo(want, 1);
     const off = runTrace({ lines, options: { faceSnap: false } });
     expect(off.rooms[0].area - want).toBeGreaterThan(0.3);
+  });
+
+  it('two heavy lines a hair apart at a face: the room stops at the one on its side (the nursing facility)', () => {
+    // a stroke and its poché's edge, both in the wall pen, 0.6" apart at each face: the model
+    // pairs the inner ones; the estimators measure to where the wall's drawing ends
+    const W = 8, t = 5 * IN, g = 0.6 * IN;
+    const lines = heavy(wallsToLines(box(W, W, t), [], W, W));
+    const f = t / 2;
+    const HEAVY_W = lines[0].w;
+    lines.push(hline(f + g, f, W - f, { w: HEAVY_W }), hline(W - f - g, f, W - f, { w: HEAVY_W }), vline(f + g, f, W - f, { w: HEAVY_W }), vline(W - f - g, f, W - f, { w: HEAVY_W }));
+    const res = runTrace({ lines });
+    expect(res.rooms[0].area).toBeCloseTo((W - t - 2 * g) * (W - t - 2 * g), 1);
   });
 
   it('a strip faced by a hairline lying along a wall is casework (a toilet tank), not wall', () => {
