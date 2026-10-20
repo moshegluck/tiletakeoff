@@ -41,8 +41,8 @@ function endsOf(segs) {
   const ends = [];
   segs.forEach((s, bi) => {
     const d = norm(sub(s.b, s.a));
-    ends.push({ bi, w: 0, get p() { return segs[bi].a; }, set p(v) { segs[bi].a = v; }, dir: mul(d, -1), t: s.t, joined: false });
-    ends.push({ bi, w: 1, get p() { return segs[bi].b; }, set p(v) { segs[bi].b = v; }, dir: d, t: s.t, joined: false });
+    ends.push({ bi, w: 0, get p() { return segs[bi].a; }, set p(v) { segs[bi].a = v; }, p0: { ...s.a }, dir: mul(d, -1), t: s.t, joined: false });
+    ends.push({ bi, w: 1, get p() { return segs[bi].b; }, set p(v) { segs[bi].b = v; }, p0: { ...s.b }, dir: d, t: s.t, joined: false });
   });
   return ends;
 }
@@ -100,6 +100,7 @@ export function joinWalls(inSegs, options = {}, log = []) {
     c.e1.p = { ...c.X }; c.e2.p = { ...c.X };
     c.e1.joined = c.e2.joined = true;
     c.e1.with = c.e2.bi; c.e2.with = c.e1.bi;
+    c.e1.corner = c.e2.corner = true;
     if (moved > opt.snapTol) log.push({ kind: 'corner', at: { ...c.X }, note: `Corner closed (${(moved * 12).toFixed(1)}" extended)` });
   }
 
@@ -182,15 +183,18 @@ export function joinWalls(inSegs, options = {}, log = []) {
   }
   // ---- steps: a wall that changes thickness (a recess, a thickened stretch,
   // a furring layer that stops) — two ends meeting head-on, side by side
-  // within their thicknesses: the face steps there, it doesn't open ----
+  // within their thicknesses: the face steps there, it doesn't open. An end
+  // already drawn into a corner counts where it was drawn (a storefront
+  // running on from a thick wall that turns the corner of the building) ----
   for (let i = 0; i < ends.length; i++) {
     const e1 = ends[i]; if (e1.joined) continue;
     for (const bj of near(e1.p, maxT + opt.snapTol)) {
       if (bj === e1.bi) continue;
       for (const e2 of endByBody(bj)) {
-        if (e2.joined || e1.joined) continue;
+        // (a corner end only where the corner cut it back: the wall was drawn on past it)
+        if ((e2.joined && (!e2.corner || dot(sub(e2.p0, e2.p), e2.dir) <= opt.snapTol)) || e1.joined) continue;
         if (dot(e1.dir, e2.dir) > -0.985) continue;
-        const v = sub(e2.p, e1.p);
+        const v = sub(e2.joined ? e2.p0 : e2.p, e1.p);
         const gap = dot(v, e1.dir), lateral = Math.abs(cross(e1.dir, v));
         if (gap > opt.draftGap || gap < -Math.max(e1.t, e2.t) || lateral > (e1.t + e2.t) / 2 || lateral < 1e-6) continue;
         extra.push({ a: { ...e1.p }, b: { ...e2.p }, t: Math.min(e1.t, e2.t), conf: 0.6, kind: 'wall', src: 'repair' });

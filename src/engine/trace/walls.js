@@ -217,21 +217,28 @@ function addInterval(cov, a, b) {
 function penOn(l, o0, o1, u) {
   if (!l.pens) return l.w;
   const span = (pc) => [Math.min(dot(pc.a, u), dot(pc.b, u)), Math.max(dot(pc.a, u), dot(pc.b, u))];
+  // the heaviest pen drawing at least half as much of these stretches as the most-used one
+  const penOf = (ivs) => {
+    const mass = new Map();
+    for (const pc of l.pens) {
+      const [s0, s1] = span(pc);
+      for (const [a, b] of ivs) {
+        const ov = Math.min(b, s1) - Math.max(a, s0);
+        if (ov > 0) mass.set(pc.w, (mass.get(pc.w) || 0) + ov);
+      }
+    }
+    if (!mass.size) return 0;
+    const most = Math.max(...mass.values());
+    return Math.max(...[...mass].filter(([, L]) => L >= most * 0.5).map(([pw]) => pw));
+  };
   let h0 = Infinity, h1 = -Infinity;
   for (const pc of l.pens) if (pc.w >= l.w) { const [s0, s1] = span(pc); h0 = Math.min(h0, s0); h1 = Math.max(h1, s1); }
   const past = [[o0, Math.min(o1, h0)], [Math.max(o0, h1), o1]].filter(([a, b]) => b - a > 0);
-  if (past.reduce((acc, [a, b]) => acc + b - a, 0) < 0.5 * (o1 - o0)) return l.w;
-  const mass = new Map();
-  for (const pc of l.pens) {
-    const [s0, s1] = span(pc);
-    for (const [a, b] of past) {
-      const ov = Math.min(b, s1) - Math.max(a, s0);
-      if (ov > 0) mass.set(pc.w, (mass.get(pc.w) || 0) + ov);
-    }
-  }
-  if (!mass.size) return l.w;
-  const most = Math.max(...mass.values());
-  return Math.max(...[...mass].filter(([, L]) => L >= most * 0.5).map(([pw]) => pw));
+  // within the run's own pen it is that pen — or a heavier one drawing this
+  // stretch: a grid or property line run on along a wall's face merges with
+  // it, and is mostly hairline, but where the pair stands it is the wall's pen
+  if (past.reduce((acc, [a, b]) => acc + b - a, 0) < 0.5 * (o1 - o0)) return Math.max(l.w, penOf([[o0, o1]]));
+  return penOf(past) || l.w;
 }
 
 /**

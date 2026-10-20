@@ -104,6 +104,8 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
   let lw = 1;
   let sc = '#000000', fc = '#000000';   // stroke / fill colour (dimensions are often plotted in colour)
   const stack = [];
+  // the clip in force: regions a mark must lie inside to be seen (null = the page)
+  let clip = null, clipNext = false;
   // marked content: the layer each path / text belongs to (name null = not a layer)
   /** @type {{ name: string|null, hidden: boolean }[]} */
   const mc = [];
@@ -119,13 +121,24 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
     const fn = ops.fnArray[i];
     const args = ops.argsArray[i];
     switch (fn) {
-      case OPS.save: stack.push([ctm, lw, sc, fc]); break;
-      case OPS.restore: if (stack.length) [ctm, lw, sc, fc] = stack.pop(); break;
+      case OPS.save: stack.push([ctm, lw, sc, fc, clip]); break;
+      case OPS.restore: if (stack.length) [ctm, lw, sc, fc, clip] = stack.pop(); break;
+      case OPS.clip: case OPS.eoClip: clipNext = true; break;
       case OPS.setStrokeRGBColor: sc = hexColor(args) ?? sc; break;
       case OPS.setFillRGBColor: fc = hexColor(args) ?? fc; break;
       case OPS.transform: ctm = mult(ctm, args); break;
-      case OPS.paintFormXObjectBegin: stack.push([ctm, lw, sc, fc]); if (Array.isArray(args?.[0]) || ArrayBuffer.isView(args?.[0])) ctm = mult(ctm, Array.from(args[0])); break;
-      case OPS.paintFormXObjectEnd: if (stack.length) [ctm, lw, sc, fc] = stack.pop(); break;
+      case OPS.paintFormXObjectBegin: {
+        stack.push([ctm, lw, sc, fc, clip]);
+        if (Array.isArray(args?.[0]) || ArrayBuffer.isView(args?.[0])) ctm = mult(ctm, Array.from(args[0]));
+        // a form draws only inside its box
+        const bb = args?.[1];
+        if (bb && bb.length >= 4 && [...bb].every(Number.isFinite)) {
+          const m = mult(vt, ctm);
+          clip = addClip(clip, [[apply(m, bb[0], bb[1]), apply(m, bb[2], bb[1]), apply(m, bb[2], bb[3]), apply(m, bb[0], bb[3])]]);
+        }
+        break;
+      }
+      case OPS.paintFormXObjectEnd: if (stack.length) [ctm, lw, sc, fc, clip] = stack.pop(); break;
       case OPS.setLineWidth: lw = args[0]; break;
       case OPS.beginMarkedContentProps: {
         const id = args?.[0] === 'OC' ? args?.[1]?.id : null;
@@ -142,17 +155,24 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
       }
       case OPS.constructPath: {
         const paintOp = args[0];
-        if (paintOp === OPS.endPath) { clipOnly++; break; } // clipping path, not drawn
-        if (hiddenDepth) break;                               // a layer that's switched off
         const data = Array.isArray(args[1]) ? args[1][0] : args[1];
-        if (!data) break;
         const m = mult(vt, ctm);
+        // a clipping path (W n): nothing drawn, but from here on only what lies inside it shows
+        if (clipNext && data) clip = addClip(clip, pathPolys(data, m));
+        clipNext = false;
+        if (paintOp === OPS.endPath) { clipOnly++; break; }
+        if (hiddenDepth) break;                               // a layer that's switched off
+        if (!data) break;
         const scaleK = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
         const wpx = Math.max(0, lw * scaleK);
         painted++;
         const l0 = lines.length, c0 = curves.length;
         const fillOnly = paintOp === OPS.fill || paintOp === OPS.eoFill;
-        walkPath(data, m, wpx, lines, curves, paintOp !== OPS.stroke && paintOp !== OPS.closeStroke);
+        const filled = paintOp !== OPS.stroke && paintOp !== OPS.closeStroke;
+        walkPath(data, m, wpx, lines, curves, filled);
+        // what a clip hides isn't drawing: a fill clipped to a wall's outline (Revit
+        // fills a rectangle through a 45° wall's clip) shows that outline, not the rectangle
+        if (clip) clipPainted(lines, curves, l0, c0, clip, filled ? pathPolys(data, m) : null, wpx);
         const col = fillOnly ? fc : sc;
         for (let k = l0; k < lines.length; k++) { lines[k].col = col; lines[k].pid = painted; }
         for (let k = c0; k < curves.length; k++) curves[k].col = col;
@@ -295,6 +315,139 @@ export function chromatic(hex) {
   if (!m) return false;
   const v = m.slice(1).map((x) => parseInt(x, 16));
   return Math.max(...v) - Math.min(...v) >= 48;
+}
+
+/** A path's outline in px: one polygon per subpath (a curve by points along it). */
+function pathPolys(d, m) {
+  const polys = [];
+  let cur = null;
+  const bez = (p0, p1, p2, p3, t) => {
+    const u = 1 - t;
+    return { x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x, y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y };
+  };
+  for (let i = 0; i < d.length;) {
+    const op = d[i++];
+    if (op === DRAW.moveTo) { cur = [apply(m, d[i++], d[i++])]; polys.push(cur); }
+    else if (op === DRAW.lineTo) { const p = apply(m, d[i++], d[i++]); if (cur) cur.push(p); else polys.push(cur = [p]); }
+    else if (op === DRAW.curveTo || op === DRAW.quadraticCurveTo) {
+      let p1, p2;
+      const q = apply(m, d[i++], d[i++]);
+      const p0 = cur ? cur[cur.length - 1] : q;
+      if (op === DRAW.curveTo) { p1 = q; p2 = apply(m, d[i++], d[i++]); }
+      const p3 = apply(m, d[i++], d[i++]);
+      if (op === DRAW.quadraticCurveTo) { p1 = { x: p0.x + (2 / 3) * (q.x - p0.x), y: p0.y + (2 / 3) * (q.y - p0.y) }; p2 = { x: p3.x + (2 / 3) * (q.x - p3.x), y: p3.y + (2 / 3) * (q.y - p3.y) }; }
+      if (!cur) polys.push(cur = [p0]);
+      for (const t of [0.25, 0.5, 0.75]) cur.push(bez(p0, p1, p2, p3, t));
+      cur.push(p3);
+    } else if (op === DRAW.closePath) { cur = null; }
+    else break;
+  }
+  return polys.filter((p) => p.length >= 3);
+}
+
+const CLIP_EPS = 0.5;   // px: a mark on the clip's edge (the fill and its clip drawn alike) shows
+const boxOfPolys = (polys) => {
+  const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  for (const P of polys) for (const p of P) { b.x0 = Math.min(b.x0, p.x); b.y0 = Math.min(b.y0, p.y); b.x1 = Math.max(b.x1, p.x); b.y1 = Math.max(b.y1, p.y); }
+  return b;
+};
+/** The clip after a new clipping path: both must hold (an empty path leaves it as it was). */
+function addClip(clip, polys) {
+  if (!polys.length) return clip;
+  return [...(clip || []), { polys, box: boxOfPolys(polys) }];
+}
+/** Inside a region (even-odd), or within `eps` of its outline. */
+function inRegion(p, r, eps) {
+  if (p.x < r.box.x0 - eps || p.x > r.box.x1 + eps || p.y < r.box.y0 - eps || p.y > r.box.y1 + eps) return false;
+  let c = false;
+  for (const P of r.polys) {
+    for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+      const a = P[i], b = P[j];
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+    }
+  }
+  return c || (eps > 0 && nearEdge(p, r, eps));
+}
+/** The stretches [t0, t1] of a → b inside every region (`eps` grows each; negative: strictly inside). */
+function segInside(a, b, regions, eps) {
+  const ts = [0, 1];
+  const ex = Math.max(eps, 0);
+  for (const r of regions) {
+    if (Math.max(a.x, b.x) < r.box.x0 - ex || Math.min(a.x, b.x) > r.box.x1 + ex || Math.max(a.y, b.y) < r.box.y0 - ex || Math.min(a.y, b.y) > r.box.y1 + ex) return [];
+    for (const P of r.polys) {
+      for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+        const p = P[j], q = P[i];
+        const rx = b.x - a.x, ry = b.y - a.y, sx = q.x - p.x, sy = q.y - p.y;
+        const den = rx * sy - ry * sx;
+        if (Math.abs(den) < 1e-12) continue;
+        const t = ((p.x - a.x) * sy - (p.y - a.y) * sx) / den, u = ((p.x - a.x) * ry - (p.y - a.y) * rx) / den;
+        if (t > 0 && t < 1 && u >= 0 && u <= 1) ts.push(t);
+      }
+    }
+  }
+  ts.sort((x, y) => x - y);
+  const L = Math.hypot(b.x - a.x, b.y - a.y);
+  const out = [];
+  for (let k = 0; k + 1 < ts.length; k++) {
+    const t0 = ts[k], t1 = ts[k + 1];
+    if ((t1 - t0) * L < 1e-6) continue;
+    const tm = (t0 + t1) / 2, m = { x: a.x + (b.x - a.x) * tm, y: a.y + (b.y - a.y) * tm };
+    const ok = regions.every((r) => (eps >= 0 ? inRegion(m, r, eps) : inRegion(m, r, 0) && !nearEdge(m, r, -eps)));
+    if (!ok) continue;
+    if (out.length && Math.abs(out[out.length - 1][1] - t0) < 1e-9) out[out.length - 1][1] = t1;
+    else out.push([t0, t1]);
+  }
+  return out;
+}
+function nearEdge(p, r, eps) {
+  for (const P of r.polys) {
+    for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+      const a = P[j], b = P[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+      const t = L2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2)) : 0;
+      if (Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y) <= eps) return true;
+    }
+  }
+  return false;
+}
+/**
+ * Keep only what shows of the marks a path just added (lines[l0..], curves[c0..]):
+ * each line cut to its stretches inside the clip, a curve run dropped when it
+ * lies wholly outside. A fill (`fill` = its outline) also shows the clip's own
+ * edges where they cross its inside — the visible outline is fill ∩ clip.
+ */
+function clipPainted(lines, curves, l0, c0, clip, fill, w) {
+  const added = lines.splice(l0);
+  for (const l of added) {
+    const keep = segInside(l.a, l.b, clip, CLIP_EPS);
+    if (keep.length === 1 && keep[0][0] === 0 && keep[0][1] === 1) { lines.push(l); continue; }
+    for (const [t0, t1] of keep) {
+      const at = (t) => ({ x: l.a.x + (l.b.x - l.a.x) * t, y: l.a.y + (l.b.y - l.a.y) * t });
+      lines.push({ ...l, a: at(t0), b: at(t1) });
+    }
+  }
+  if (fill && added.length) {
+    const proto = added[0];
+    const fr = [{ polys: fill, box: boxOfPolys(fill) }];
+    clip.forEach((r, ri) => {
+      const others = clip.filter((_, k) => k !== ri);
+      for (const P of r.polys) {
+        for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+          const a = P[j], b = P[i];
+          // strictly inside the fill (an edge the fill draws itself is there already), inside the other clips
+          for (const [t0, t1] of segInside(a, b, fr, -CLIP_EPS)) {
+            const at = (t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+            const p = at(t0), q = at(t1);
+            if (others.length && !segInside(p, q, others, CLIP_EPS).length) continue;
+            lines.push({ ...proto, a: p, b: q, w });
+          }
+        }
+      }
+    });
+  }
+  for (let k = curves.length - 1; k >= c0; k--) {
+    const ps = curves[k].pieces;
+    if (!ps.some((pc) => clip.every((r) => inRegion(pc.p0, r, CLIP_EPS)) || clip.every((r) => inRegion(pc.p3, r, CLIP_EPS)))) curves.splice(k, 1);
+  }
 }
 
 function walkPath(d, m, w, lines, curves, filled) {

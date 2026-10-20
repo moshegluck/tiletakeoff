@@ -41,7 +41,9 @@ TileTakeoff works the other way round:
     (`chromatic`, read in `pdfVectors.js`) is never a face; a merged run carries the pen most of it is
     drawn with, but a pair is judged by the pen along the stretch it uses (`penOn`): a face running
     on past its heavy pen as a hairline (into a vanity) is a hairline there; a lighter stretch between
-    heavier ones is still the wall; dashed runs (4+ even pieces) are `dashed` — never a wall, except as the hidden outer
+    heavier ones is still the wall; a heavier pen drawing the stretch itself counts (a 79' grid line run
+    straight along a stair shaft's 18" face made the merged run a hairline — the nursing facility's
+    corridor leaked out past it); dashed runs (4+ even pieces) are `dashed` — never a wall, except as the hidden outer
     face of a thick wall. Thick masonry 16"–36" when the faces run on 8'+ (or its piers between
     window bays add up), both in a wall pen, nothing inside. Bodies overlapping in thickness (nested,
     or sharing most of the thinner one — layer lines paired across each other) over most of both
@@ -70,6 +72,8 @@ TileTakeoff works the other way round:
     tee met just past the other wall's end extends that wall; collinear pieces that each turn into a
     different crossing wall (an offset cross) run through — up to a thick wall's thickness between the
     crossing walls' faces when they come from opposite sides; an end on a wall right by that wall's end snaps to it.
+    A step (two ends head-on, side by side within their thicknesses) also meets an end a corner cut
+    back, where it was drawn (a storefront running on from the 18" wall that turns the building's corner).
     A corner whose own wall carries on behind a scrap is still a plain L (a closet door bridges from it).
     An opening with a dashed line drawn across ≥ 70% of it (`across`: the header over a recess's mouth) is
     no inferred nook mouth: `runTrace`'s alcove pass leaves it closed (the vanity area is its own floor).
@@ -126,7 +130,8 @@ TileTakeoff works the other way round:
     framing tags (F.J.-1, FB.1) and CAD attribute dumps never name a room; nor do a finish plan's callouts
     and legend ("PL-2 - PL-3", "HIGH CEILING: PA-2", "FU-2 UNDER COUNTER", CLEAR MIRROR, UP TO CEILING,
     LINEAR DRAIN, "& PLUMBING", material names), the title block (SEAL, DESCRIPTION, an address, e-mail,
-    phone), roof / gypsum notes, OPTIONAL DOOR, or garbled text with no 3-letter word (a type's
+    phone), roof / gypsum notes, OPTIONAL DOOR, a drafting abbreviation alone (TYP. A, MIN, SIM.,
+    N.T.S.), or garbled text with no 3-letter word (a type's
     abbreviation — WC, CL — or one with stops — P.R. — still names its room).
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
@@ -142,7 +147,8 @@ TileTakeoff works the other way round:
     floor is set to run to the door's centre) or an `area_check` flag at
     the tag with both numbers (several tags in one room = rooms merged).
     `res.verify` = { tags, matched, off, unplaced }.
-- `scripts/bench.mjs manifest.json [--json out] [--baseline base]` — the accuracy benchmark: per sheet,
+- `scripts/bench.mjs manifest.json [--json out] [--baseline base] [--options '{"maxOpening":12}']` — the
+  accuracy benchmark (`--options`: trace with these engine options, for tuning): per sheet,
   answers (printed tags and/or hand-audited rooms) right within 1%, within 3%, merged, missing, and
   SILENT (wrong beyond 3% with no flag — must stay 0). `samples/bench.json` = the sample sheet's
   answer key worked by hand. Client PDFs stay outside the repo; their manifest points at them.
@@ -177,7 +183,11 @@ TileTakeoff works the other way round:
     A-KITCHEN, A-FXTR-PLUM, A-Closet Shelves, ADA - FLOOR SPACE, INSULATION, FOOTINGS, DTEXT, PRESNOTE,
     TITLEBLOCK, SIGN-SEAL → ignore; 36 Ellish's "Counter" paired with a wall face into a 27" wall;
     DoorSwing → door).
-- `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list)
+- `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list). Clip paths
+  count: only what shows is drawing (each line cut to the clip in force, a form to its box). Revit fills a
+  wall's cut by clipping to the wall's outline and filling a rectangle through it — on a 45° wall the
+  rectangle's edges were phantom horizontals / verticals pairing into walls across rooms; a clipped fill
+  now gives the clip's edges (fill ∩ clip). The nursing facility (03-15-24) 48 → 78 right, p2 48 s → 10 s.
 - `src/lib/rasterWalls.js` scanned plans: blob filter, auto-deskew, H/V stroke detection
 - `src/lib/planEvidence.js`, `traceClient.js`, `traceWorker.js` read plan → feet → solve in a Worker
 - `src/components/TracePanel.jsx` Trace tab (scale pickup, verdict, flags, rooms, fix tools)
@@ -250,7 +260,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 453 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 456 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -312,7 +322,9 @@ TileTakeoff works the other way round:
   within 3%, 66 silent; own scale 462 / 1,040 (44.4%), 593 within 3%, 49 silent. Then vanity recesses
   (a lavatory in a recess open to the bedroom under a dashed header — "A-Wall-Open" is an opening layer,
   and a dashed line across an inferred mouth keeps the alcove pass from merging it): 564 right (44.7%),
-  727 within 3%, 66 silent; own scale 487 / 1,040 (46.8%), 619 within 3%, 49 silent.
+  727 within 3%, 66 silent; own scale 487 / 1,040 (46.8%), 619 within 3%, 49 silent. Then clip paths,
+  the pen of the stretch a pair uses and steps at corners (all from the nursing facility): 595 right
+  (47.1%), 777 within 3%, 68 silent; own scale 520 / 1,040 (50.0%), 666 within 3%, 50 silent.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
