@@ -37,6 +37,7 @@ export const WALL_DEFAULTS = {
   windowBays: true,         // a thick wall runs on across its window bays (solid below the sill)
   casework: true,           // a hairline-faced strip against a wall is casework, not wall
   shareThickFaces: true,    // a brick wall may share its face with a wall built against it
+  layerFaces: true,         // a face line between two layers of a wall (pen weights) serves a wall on each side
 };
 
 /** Normalize raw lines to { a, b, w, th, u, n, rho, s0, s1, len }. */
@@ -249,7 +250,7 @@ export function pairWalls(rawLines, options = {}) {
   const opt = { ...WALL_DEFAULTS, ...options };
   const lines = mergeCollinear(rawLines, opt).map((l, i) => {
     const d = sub(l.b, l.a), L = len(d), u = norm(d);
-    return { ...l, id: i, len: L, u, th: lineAngle(l.a, l.b), cov: [], tcov: [] };
+    return { ...l, id: i, len: L, u, th: lineAngle(l.a, l.b), cov: [], tcov: [], scov: { 1: [], '-1': [] }, scovT: { 1: [], '-1': [] } };
   });
 
   const idx = new GridIndex(Math.max(2, opt.maxT * 4));
@@ -512,10 +513,18 @@ export function pairWalls(rawLines, options = {}) {
     // other. Only on a sheet drawn with pen weights, where a counter's or a
     // bench's line (a hairline) can't be a masonry face.
     const share = c.thick && heavyW > 0 && opt.shareThickFaces !== false && !light(c.wi, opt.hairlineRatio) && !light(c.wj, opt.hairlineRatio);
-    const covL = share ? l.tcov : l.cov;
+    // …and a wall built in layers (a block wall and a lining against it, each
+    // drawn with its own faces in a wall pen) shares the line between them:
+    // each face line serves one wall on each side of it, as long as the two
+    // together are still a wall's thickness; mergeLayers makes them one wall
+    const sideOf = (x, y) => (dot(sub(y.a, x.a), perp(x.u)) + dot(sub(y.b, x.a), perp(x.u)) > 0 ? 1 : -1);
+    const sl = sideOf(l, m), sm = sideOf(m, l);
+    const layer = !share && heavyW > 0 && opt.layerFaces !== false && !light(c.wi, opt.hairlineRatio) && !light(c.wj, opt.hairlineRatio);
+    const layerCov = (x, sd) => x.scov[sd].concat(x.scovT[-sd].filter(([, , tt]) => tt + c.d > opt.maxT).map(([a, b]) => [a, b])).sort((p, q) => p[0] - q[0]);
+    const covL = share ? l.tcov : layer ? layerCov(l, sl) : l.cov;
     // m's coverage is stored along m.u; rebuild the points and project onto u.
     const mPerp = dot(m.a, perp(m.u));
-    const covMProj = (share ? m.tcov : m.cov).map(([a, b]) => {
+    const covMProj = (share ? m.tcov : layer ? layerCov(m, sm) : m.cov).map(([a, b]) => {
       const pa = { x: m.u.x * a + perp(m.u).x * mPerp, y: m.u.y * a + perp(m.u).y * mPerp };
       const pb = { x: m.u.x * b + perp(m.u).x * mPerp, y: m.u.y * b + perp(m.u).y * mPerp };
       const x0 = dot(pa, u), x1 = dot(pb, u);
@@ -545,10 +554,12 @@ export function pairWalls(rawLines, options = {}) {
       const lightFace = heavyW > 0 && [[l, c.wi], [m, c.wj]].some(([x, w]) => !x.wl && (w || 0) < heavyW * opt.hairlineRatio);
       bodies.push({ a: A, b: B, t: c.d, conf, w: Math.max(c.wi, c.wj), wmin: Math.min(c.wi, c.wj), typical: c.typical, src: 'paired', ...(c.thick ? { faces: [c.i, c.j] } : {}), ...(lightFace ? { lightFace: true } : {}) });
       addInterval(l.cov, a, b);
+      addInterval(l.scov[sl], a, b); l.scovT[sl].push([a, b, c.d]);
       if (c.thick) addInterval(l.tcov, a, b);
       // store m coverage in m's own param
       const ma = sOf(m, f0), mb = sOf(m, f1);
       addInterval(m.cov, Math.min(ma, mb), Math.max(ma, mb));
+      addInterval(m.scov[sm], Math.min(ma, mb), Math.max(ma, mb)); m.scovT[sm].push([Math.min(ma, mb), Math.max(ma, mb), c.d]);
       if (c.thick) addInterval(m.tcov, Math.min(ma, mb), Math.max(ma, mb));
     }
   }
