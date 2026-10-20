@@ -11,6 +11,7 @@ import { parseScaleNote } from '../engine/trace/analyze.js';
 import { planScale } from '../engine/trace/sheetScale.js';
 import { dimensionScale, doorTags, doorTagScale } from '../engine/trace/dimScale.js';
 import { findStairs } from '../engine/trace/stairs.js';
+import { storefronts } from '../engine/trace/glass.js';
 import { wallCandidates, labelCandidates, hasWallLayers, classifyLayer, isOpeningLayer } from '../engine/trace/layers.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from '../engine/units.js';
 import { chromatic } from './pdfVectors.js';
@@ -158,6 +159,16 @@ export function evidenceToFeet(ev, scale, region = null) {
     const kind = c.layer != null ? classifyLayer(c.layer) : null;
     if (!isOpeningLayer(kind) || !inRegion(c.pieces[0].p0, region)) continue;
     for (const pc of c.pieces) hints.push({ a: P(pc.p0), b: P(pc.p3), kind });
+  }
+  // a storefront: glazing runs and the doors between them, wider than any
+  // opening — each run of glass is wall. Only where the window layer holds
+  // windows: one with more linework than the walls (Windinh's A-GLAZ-FRM, 83k
+  // lines against 1.6k) is the drafter's catch-all
+  const nWin = layered ? drawn.reduce((n, l) => n + (classifyLayer(l.layer) === 'window' ? 1 : 0), 0) : 0;
+  if (nWin && nWin <= drawn.reduce((n, l) => n + (classifyLayer(l.layer) === 'wall' ? 1 : 0), 0)) {
+    const win = drawn.filter((l) => classifyLayer(l.layer) === 'window').map((l) => ({ a: P(l.a), b: P(l.b) }));
+    const wallLines = drawn.filter((l) => classifyLayer(l.layer) === 'wall').map((l) => ({ a: P(l.a), b: P(l.b) }));
+    bodies.push(...storefronts(win, hints.filter((h) => h.kind !== 'window'), wallLines));
   }
   const inR = ev.texts.filter((t) => inRegion(t, region));
   const texts = inR.map((t) => ({ str: t.str, ...P(t), ...(t.h ? { h: t.h * k } : {}) }));

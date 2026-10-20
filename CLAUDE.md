@@ -108,6 +108,15 @@ TileTakeoff works the other way round:
     found only then is added (one found in part, under 60°, gives way to it) — 22 Rita's WC door. `leafLines`: the leaf's lines (hinge → open end, radius long, drawn
     lighter than the sheet's wall pen) are never wall faces; `runTrace` also cuts every body along a door's closed leaf (hinge → `closed`):
     a threshold or leaf drawn across a doorway is no wall.
+  - `glass.js` `storefronts`: a lobby's or vestibule's front — glazing on the window layer between
+    mullions, door pairs in it, 20–30 ft between the wall stubs at its ends (far past any opening
+    bridged; the glazing 2" deep, too thin to pair). Glazing runs chained across mullions and across
+    doorways (door-layer drawing in the gap, no wall face along it — a pier), the doors at either end
+    in its span; a chain ≥ 16 ft with wall drawing at both ends is a glass wall: each glazing run a thin
+    wall body (`evidenceToFeet`), the doors between bridged as doors. Ordinary windows stay windows;
+    skylight glazing drawn overhead (no wall at its ends) is no front; a window layer holding more
+    linework than the walls (Windinh's A-GLAZ-FRM catch-all) is not read this way. Bais Rochel's
+    lobby 1,103 / 1,104, vestibules 750 / 729, 647 / 630.
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
@@ -266,7 +275,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 458 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 462 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -334,6 +343,8 @@ TileTakeoff works the other way round:
   layered walls sharing their middle face and swings hidden in door-tag boxes: 624 right (49.4%), 797
   within 3%, 65 silent; own scale 544 / 1,040 (52.3%), 693 within 3%, 52 silent (22 Rita p1 10 → 15,
   p3 13 → 18, Bais Rochel p2 19 → 25, 4 Howard p2 14 → 18). Phase 2 / Skver trace in ~70 s (were 38 s).
+  Then storefronts as glass walls: 632 right (50.0%), 805 within 3%, 65 silent; own scale 552 / 1,040
+  (53.1%), 701 within 3%, 52 silent (Bais Rochel p2–p5 +8).
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
@@ -371,10 +382,10 @@ TileTakeoff works the other way round:
   at the base cabinets (Marked Plans (1): 62 SF marked vs 86 SF room, five units) — ask Moshe whether
   the cabinet footprint comes off a kitchen floor before modelling it — 36 Ellish's estimator kept the
   counters in, 10 Monroe p2's stopped at one; (5) the `scope` test (open floor along the marked edge)
-  catches few cases — plans are dense with lines; (6) a short wall drawn only as a hatch fill on layer
-  "0" (no face lines on a wall layer) is no wall on a layered sheet: Bais Rochel p1's 6,009 SF
-  lunchroom leaks past the kitchen door beside one (also its 1,388 / 1,329 SF storage and kitchen) —
-  a filled wall-shaped strip between two wall ends should read as wall.
+  catches few cases — plans are dense with lines; (6) walls drawn only as hatch / concrete stipple
+  (no paired faces): Bais Rochel p1's 1,388 SF room still leaks (its 6,009 SF lunchroom traces since
+  layered walls share their middle face) — a filled wall-shaped strip between two wall ends should
+  read as wall.
 - Next real step: more of Moshe's PDFs (other sheets of the Patriot set trace but untuned).
 
 ## Rules of the road
