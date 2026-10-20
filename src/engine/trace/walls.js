@@ -332,6 +332,18 @@ export function pairWalls(rawLines, options = {}) {
     let cov = 0, end = -Infinity;
     for (const [a0, a1] of ivs) { if (a1 <= end) continue; cov += a1 - Math.max(a0, end); end = a1; }
     if (cov > 0.5 * c.overlap) c.dead = true;
+    // a dashed line is the hidden face of a thick wall whose solid face is
+    // drawn alone (a foundation wall's outer face below grade) — not a beam
+    // or girder drawn dashed in the room beside a wall already paired on its
+    // other side (19 Ecbo: a flush girder 1'-5" off the bath's wall)
+    const dl = lines[c.i].dashed ? lines[c.i] : lines[c.j].dashed ? lines[c.j] : null;
+    if (dl && !c.dead) {
+      const sl = dl === lines[c.i] ? lines[c.j] : lines[c.i];
+      const sideOf = (q) => Math.sign(dot(sub(q.a, sl.a), perp(sl.u)) + dot(sub(q.b, sl.a), perp(sl.u)));
+      const toDash = sideOf(dl);
+      const behind = partners[sl.id].filter((p) => sideOf(lines[p.j]) === -toDash).reduce((acc, p) => acc + p.o1 - p.o0, 0);
+      if (behind > 0.5 * c.overlap) c.dead = true;
+    }
   }
   for (let k = cands.length - 1; k >= 0; k--) if (cands[k].dead) cands.splice(k, 1);
 

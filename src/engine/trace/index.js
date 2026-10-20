@@ -163,10 +163,12 @@ function traceReading(input = {}) {
     // 3. bridge doors & openings so rooms can close
     const openings = bridgeOpenings(segs, ends, arcs, o2, lg, input.hints || [], paired.lines || []);
     // 4. planar graph, cleaned
-    const g0 = buildGraph(segs.concat(openings), o2, lg);
+    // (an opening run on a thick wall's line closes to its thin jamb with a step)
+    const steps = openings.filter((o) => o.step).map((o) => ({ ...o.step, kind: 'wall', conf: 0.6, src: 'repair' }));
+    const g0 = buildGraph(segs.concat(openings, steps), o2, lg);
     const g = pruneGraph(g0, o2, lg);
     // 5. faces → rooms, LF, flags
-    const res = analyzeGraph(g, { texts: input.labels || texts, allTexts: texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [], drawn: input.lines || [], wallPen: paired.stats?.heavyW || 0 });
+    const res = analyzeGraph(g, { texts: input.labels || texts, allTexts: texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [], drawn: input.lines || [], hints: input.hints || [], wallPen: paired.stats?.heavyW || 0 });
     return { g, res };
   };
   let { g, res } = solve([], log);

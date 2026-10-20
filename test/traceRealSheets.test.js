@@ -263,7 +263,16 @@ describe('trace — real CAD sheets', () => {
     expect(win.openings.map((o) => o.openingType)).toEqual(['window']);
     const full = 2 * (W - EXT) + 2 * (H - EXT);
     expect(win.rooms[0].wallLf).toBeCloseTo(full, 1);
-    expect(win.rooms[0].area).toBeCloseTo((W - EXT) * (H - EXT), 1);
+    // nothing drawn across it at the face: the floor runs into the recess to the
+    // first sash line (EXT/4 in from the face), as the estimators take it
+    expect(win.rooms[0].area).toBeCloseTo((W - EXT) * (H - EXT) + 3 * EXT / 4, 2);
+    // a sill line at the face (a house's window): the floor stops at the face
+    const sill = runTrace({ lines, hints: [...sash, { a: { x: 4, y: H - EXT / 2 }, b: { x: 7, y: H - EXT / 2 }, kind: 'window' }] });
+    expect(sill.rooms[0].area).toBeCloseTo((W - EXT) * (H - EXT), 2);
+    // …or a line across it a little into the room from the face the model took (a wall drawn in
+    // layers, Marked Plans (1)): the opening is closed there, no recess
+    const lining = runTrace({ lines, hints: [...sash, { a: { x: 4, y: H - EXT / 2 - 2 * IN }, b: { x: 7, y: H - EXT / 2 - 2 * IN }, kind: 'window' }] });
+    expect(lining.rooms[0].area).toBeCloseTo((W - EXT) * (H - EXT), 2);
     // the same gap drawn on the door layer is a doorway: off the wall LF
     const door = runTrace({ lines, hints: sash.map((h) => ({ ...h, kind: 'door' })) });
     expect(door.openings.map((o) => o.openingType)).toEqual(['opening']);

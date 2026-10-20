@@ -12,6 +12,7 @@
 // ============================================================
 
 import { otherViews } from './sheetScale.js';
+import { leakPoints } from './leaks.js';
 import {
   sub, add, mul, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex, segIntersect, lineIntersect,
 } from './vec.js';
@@ -88,6 +89,12 @@ function isLabel(str) {
   if (WINDOW_RE.test(s) && WINDOW_TYPE_RE.test(s) && roomTypeOf(s) === 'room') return false;
   // a phrase broken off mid-way ("& PLUMBING", "DOOR TAG &") belongs to a note
   if (/^[&+,]|[&+,]$/.test(s)) return false;
+  // …and a sentence is a note, however many room words it holds ("SOUND
+  // ATTENUATING BLANKET IN BATHROOM AND LAUNDRY ROOMS", "1 HR FIRE RATED
+  // CEILING (UNDERSIDE OF STAIRS ALSO)", "FLOOR DRAIN AT PORCH", "The
+  // mechanical and electrical engineers"); a long name has no such words
+  // ("MEMORY CARE FAMILY LOUNGE", "DAY SPACE/ SHORT TERM DINING")
+  if ((s.match(/[a-z]{2,}/gi) || []).length >= 4 && SENTENCE_RE.test(s.replace(/\bWALK[\s-]+IN\b/gi, 'WIC'))) return false;
   const tokens = s.split(/\s+/).filter((t) => !CODE_JOIN_RE.test(t));
   // (a code whose letters name a room — WC-1, CL-2, BR-2 — still names it)
   const named = roomTypeOf(s) !== 'room';
@@ -101,6 +108,7 @@ function isLabel(str) {
   if (VIEW_RE.test(s)) return false;
   return true;
 }
+const SENTENCE_RE = /\b(THE|THEIR|THIS|THESE|THAT|SHALL|WILL|MUST|ARE|IS|BE|PER|AT|IN|ON|WITH|FROM|INTO|ONTO|BY|OF|PROPOSED|REQUIREMENTS?|RATED|ATTENUATING|FACADE|AWNING)\b|:$/i;
 // a drafting abbreviation alone (TYP. A, MIN, SIM., N.T.S.) qualifies a note or a detail; it names nothing
 const DRAFT_ABBR_RE = /^(TYP(ICAL)?|MIN|MAX|SIM|N\.?T\.?S|EQ|CLR|N\.?I\.?C|A\.?F\.?F|U\.?N\.?O|ALT|OPT|REF|CONT|DIA|O\.?C)\.?(\s*[A-Z0-9]{1,2}(\s*\/\s*[A-Z0-9]{1,2})?\.?)?$/i;
 const VIEW_RE = /\b(DETAILS?|SECTIONS?|ELEVATIONS?|WALL\s+TYPES?|LEGEND|SCHEDULE|AXONOMETRIC|ISOMETRIC)\b/i;
@@ -367,13 +375,26 @@ export function analyzeGraph(g, ctx = {}) {
     }
     return best;
   };
+  const leaking = [];
   for (const t of labelItems) {
     const f = faceAt(t);
     if (f) (f.labels ||= []).push(t);
-    else if (roomTypeOf(t.str) !== 'room') {
-      // a room name with no closed room around it = the walls leak
-      flag('error', 'room_not_closed', t, `"${t.str.trim()}" is not inside a closed room — its walls don't close (gap, missing wall, or an opening the trace couldn't bridge)`);
-    }
+    else if (roomTypeOf(t.str) !== 'room') leaking.push(t);
+  }
+  // a room name with no closed room around it = the walls leak: say where
+  // (the open wall end the way out of the room squeezes past, and the gap)
+  if (leaking.length) {
+    const at = [...new Set(g.edges.flatMap((e) => [e.u, e.v]))].map((n) => nodes[n]);
+    const leaks = leaking.length <= 40 ? leakPoints(g.edges.map((e) => ({ a: nodes[e.u], b: nodes[e.v] })), at, leaking) : leaking.map(() => null);
+    leaking.forEach((t, i) => {
+      const lk = leaks[i];
+      const name = `"${t.str.trim()}"`;
+      if (!lk) flag('error', 'room_not_closed', t, `${name} is not inside a closed room — its walls don't close (gap, missing wall, or an opening the trace couldn't bridge)`);
+      else {
+        const more = lk.gaps.length > 1 ? ` (and ${lk.gaps.length - 1} more, marked)` : '';
+        flag('error', 'room_not_closed', lk.at, `${name} is not inside a closed room — it leaks through the ${fmtIn(lk.gap)} gap here${more}: a door the trace couldn't bridge, a window it didn't read, or a missing wall piece. Closing it closes the room.`, { label: { x: t.x, y: t.y }, gap: lk.gap, gaps: lk.gaps });
+      }
+    });
   }
 
   // ---- rooms ----
@@ -436,14 +457,54 @@ export function analyzeGraph(g, ctx = {}) {
       const cur = byDepth.get(key) || { o: 0, cover: 0, n: 0 };
       byDepth.set(key, { o: (cur.o * cur.n + o) / (cur.n + 1), cover: cur.cover + cover, n: cur.n + 1 });
     }
-    let best = base, bestD = Infinity;
-    for (const { o, cover } of byDepth.values()) if (cover >= 0.5 * L && Math.abs(o - base) < bestD && o > 0) { best = o; bestD = Math.abs(o - base); }
+    // (two heavy lines a hair apart — a stroke and its fill's edge, the
+    // nursing facility's walls: the face is the one on the room's side, where
+    // the wall's drawing ends as seen from the room)
+    let best = base, found = false;
+    for (const { o, cover } of byDepth.values()) if (cover >= 0.5 * L && o > 0 && (!found || o > best)) { best = o; found = true; }
     return best;
+  };
+  // a window: the floor runs to the first line drawn across it from the
+  // room — a sill or frame line at the face (a house's window: the floor
+  // stops at the face), or the frame set back in a deep wall with nothing
+  // drawn at the face (Bais Rochel's classrooms, the nursing facility: the
+  // estimators take the recess to the frame)
+  const glazing = (ctx.drawn || []).concat((ctx.hints || []).filter((x) => x.kind === 'window'));
+  const glazingIdx = new GridIndex(4);
+  glazing.forEach((l, i) => glazingIdx.insert(i, Math.min(l.a.x, l.b.x), Math.min(l.a.y, l.b.y), Math.max(l.a.x, l.b.x), Math.max(l.a.y, l.b.y)));
+  const recess = (h, base) => {
+    const p = nodes[h.from], q = nodes[h.to], L = dist(p, q);
+    if (L < 1 || !glazing.length) return null;
+    const u = norm(sub(q, p)), n = perp(u), win = 1.5 / 12;
+    const byDepth = new Map();
+    for (const i of glazingIdx.query(Math.min(p.x, q.x) - 2, Math.min(p.y, q.y) - 2, Math.max(p.x, q.x) + 2, Math.max(p.y, q.y) + 2)) {
+      const l = glazing[i];
+      if (dist(l.a, l.b) < 1e-6 || Math.abs(cross(u, norm(sub(l.b, l.a)))) > 0.02) continue;
+      const o = (dot(sub(l.a, p), n) + dot(sub(l.b, p), n)) / 2;
+      // (as deep as 2 ft from the face: the wall model may hold only its inner layer)
+      if (o > base + 0.5 || o < base - 2) continue;
+      const s0 = dot(sub(l.a, p), u), s1 = dot(sub(l.b, p), u);
+      const cover = Math.min(L, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1));
+      if (cover <= 0) continue;
+      const key = Math.round(o * 48);   // ¼" bins
+      const cur = byDepth.get(key) || { o: -Infinity, cover: 0 };
+      byDepth.set(key, { o: Math.max(cur.o, o), cover: cur.cover + cover });
+    }
+    // (a line across it at the face, or on the room's side of the face the
+    // wall model took — a wall drawn in layers: the opening is closed there)
+    let first = null;
+    for (const { o, cover } of byDepth.values()) if (cover >= 0.5 * L && (first === null || o > first)) first = o;
+    return first !== null && first < base - win ? first : null;
   };
   const distFor = (h) => {
     const e = h.e;
     if (isDoorway(e)) return opt.floorAtDoor === 'face' ? (e.t || 0) / 2 : 0;
-    return furred(h, onFace(h, (e.t || 0) / 2));
+    const base = (e.t || 0) / 2;
+    if (e.kind === 'opening' && e.opening?.openingType === 'window') {
+      const r = recess(h, base);
+      if (r !== null) return r;
+    }
+    return furred(h, onFace(h, base));
   };
   const rooms = [];
   const voids = [];
@@ -681,8 +742,10 @@ export function analyzeGraph(g, ctx = {}) {
   // attach flags to rooms
   for (const fl of flags) {
     if (fl.roomId) continue;
-    if (!fl.at) continue;
-    const r = rooms.find((rr) => pointInPoly(fl.at, rr.centerPoly));
+    // (a leak's flag sits on its gap, on the wall of some other room: it goes by its name)
+    const p = fl.label || fl.at;
+    if (!p) continue;
+    const r = rooms.find((rr) => pointInPoly(p, rr.centerPoly));
     if (r) fl.roomId = r.id;
   }
   for (const fl of flags) if (fl.roomId) rooms.find((r) => r.id === fl.roomId)?.flags.push(fl.id);

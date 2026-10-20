@@ -44,7 +44,8 @@ TileTakeoff works the other way round:
     heavier ones is still the wall; a heavier pen drawing the stretch itself counts (a 79' grid line run
     straight along a stair shaft's 18" face made the merged run a hairline — the nursing facility's
     corridor leaked out past it); dashed runs (4+ even pieces) are `dashed` — never a wall, except as the hidden outer
-    face of a thick wall. Thick masonry 16"–36" when the faces run on 8'+ (or its piers between
+    face of a thick wall whose solid face is drawn alone (not a girder drawn dashed in a room beside a wall
+    already paired on its other side — 19 Ecbo's bath, 0 → 3 right). Thick masonry 16"–36" when the faces run on 8'+ (or its piers between
     window bays add up), both in a wall pen, nothing inside. Bodies overlapping in thickness (nested,
     or sharing most of the thinner one — layer lines paired across each other) over most of both
     lengths are one wall at any length (`mergeLayers`; a door's 6" jamb drawn on two layers); a copy of
@@ -79,6 +80,12 @@ TileTakeoff works the other way round:
     A step (two ends head-on, side by side within their thicknesses) also meets an end a corner cut
     back, where it was drawn (a storefront running on from the 18" wall that turns the building's corner).
     A corner whose own wall carries on behind a scrap is still a plain L (a closet door bridges from it).
+    An end held only by a piece the joins shrank to nothing (a door frame's jamb block drawn across the
+    wall's end, tiny frame returns) stays free, so its doorway bridges (the nursing facility's toilets and
+    double doors, 19 Ecbo's entry) — unless a real wall meets it there. An opening between jambs of
+    different walls sharing one room face (a 20" masonry wall on one side, only its 4" inner layer read on
+    the other) runs on the thick wall's line with a short `step` wall at the thin jamb, not slanted from
+    centreline to centreline (Bais Rochel's classroom windows).
     An opening with a dashed line drawn across ≥ 70% of it (`across`: the header over a recess's mouth) is
     no inferred nook mouth: `runTrace`'s alcove pass leaves it closed (the vanity area is its own floor).
     An inferred opening (no swing, no door drawing) never crosses one already placed; a door the
@@ -90,10 +97,17 @@ TileTakeoff works the other way round:
   - `analyze.js` rooms (offset to finished faces; across a doorway the floor stops at the wall line —
     `floorAtDoor: 'face'`, how Moshe's estimators measure: on 1,263 marked areas the trace sat a median
     ¼" per edge outside them with floors to the door centre and 0.00" at the face; the doorway is the
-    threshold, a marble saddle in 3D; 'center' is the Trace panel's other choice), wall LF
+    threshold, a marble saddle in 3D; 'center' is the Trace panel's other choice); at a window the floor
+    runs to the first line drawn across it from the room (`recess`, window-layer hints included, up to 2 ft
+    in — the wall model may hold only the inner layer): a sill /
+    frame line at the face stops it there (houses: 166 of 258 window edges marked at the face), a frame set
+    back in a deep wall with nothing at the face lets it into the recess (Bais Rochel's classrooms +5–7",
+    p3 21 → 33 right; the nursing facility), wall LF
     net of openings incl. dead-end partitions (2·L − Σhost t − attaches·t + free ends·t),
     holes, labels → names/types, door-in-context checks, scale check from door swings, room edges snap
-    to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face),
+    to the heavy face line within 1½" (`faceSnap`; a gypsum line drawn a hair inside isn't the face; of two
+    heavy lines a hair apart — a stroke and its poché's edge, 0.6" on the nursing facility — the one on the
+    room's side, where the wall's drawing ends as seen from the room: p5 26 → 30 right),
     sheet-border / title-block removal (by page extent; a face whose edge runs along the page's edge
     is the paper around the building even when a grid line joins the border to it), the sheet's other views set aside (linework apart
     from the building with a view's own title or scale note under it — `sheetScale.otherViews`; or far
@@ -117,6 +131,15 @@ TileTakeoff works the other way round:
     skylight glazing drawn overhead (no wall at its ends) is no front; a window layer holding more
     linework than the walls (Windinh's A-GLAZ-FRM catch-all) is not read this way. Bais Rochel's
     lobby 1,103 / 1,104, vestibules 750 / 729, 647 / 630.
+  - `leaks.js` `leakPoints`: a room name in no closed room is flagged at its gap, not at the name. Every
+    gap the walls leave (from a wall node — an open end, a corner — going on from its wall within 20°, to
+    the nearest wall that way, ≤ 20 ft, nothing in it, the space opening out past it) is a candidate; a
+    walk on a raster of the traced walls from the name to the open sheet closes the last gap it leaves by
+    (the outermost: a vestibule's mouth is no leak when its door is) and walks again until the room is
+    shut in, then keeps only the gaps it takes. The `room_not_closed` flag sits on the first (`label` =
+    the name, `gap`, `gaps`; drawn dashed red); it still attaches to rooms by its name. Neutral on the
+    bench; on the marked jobs it located 33 of 95 (the rest: decks / patios outside the walls, notes);
+    the gaps it found are the work list for bridging (unbridged doors with swings, an 18' garage door).
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
@@ -146,7 +169,9 @@ TileTakeoff works the other way round:
     and legend ("PL-2 - PL-3", "HIGH CEILING: PA-2", "FU-2 UNDER COUNTER", CLEAR MIRROR, UP TO CEILING,
     LINEAR DRAIN, "& PLUMBING", material names), the title block (SEAL, DESCRIPTION, an address, e-mail,
     phone), roof / gypsum notes, OPTIONAL DOOR, a drafting abbreviation alone (TYP. A, MIN, SIM.,
-    N.T.S.), or garbled text with no 3-letter word (a type's
+    N.T.S.), a sentence of 4+ words ("SOUND ATTENUATING BLANKET IN BATHROOM AND LAUNDRY ROOMS", "1 HR FIRE
+    RATED CEILING (UNDERSIDE OF STAIRS…)", "FLOOR DRAIN AT PORCH", "PROPOSED … FOR:" — `SENTENCE_RE`; a long
+    name has no such words: MEMORY CARE FAMILY LOUNGE), or garbled text with no 3-letter word (a type's
     abbreviation — WC, CL — or one with stops — P.R. — still names its room).
   - `survey.js` `describeSheet()`: what the trace read off the sheet, in words (building type, phase
     legend, pens, annotation / dashed / hatch set aside, wall thicknesses, doors, plan check, reading
@@ -275,7 +300,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 462 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 470 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -345,6 +370,10 @@ TileTakeoff works the other way round:
   p3 13 → 18, Bais Rochel p2 19 → 25, 4 Howard p2 14 → 18). Phase 2 / Skver trace in ~70 s (were 38 s).
   Then storefronts as glass walls: 632 right (50.0%), 805 within 3%, 65 silent; own scale 552 / 1,040
   (53.1%), 701 within 3%, 52 silent (Bais Rochel p2–p5 +8).
+  Then (the leak locator pointing at what to fix) jamb blocks, girders drawn dashed, windows into their
+  recess, the face line on the room's side and stepped window openings: 681 right (53.9%), 819 within 3%,
+  65 silent; own scale 596 / 1,040 (57.3%), 709 within 3%, 52 silent (Bais Rochel p2 26 → 37, p3 21 → 33, p5 19 → 27; the nursing
+  facility p2 8 → 13, p5 26 → 30; 19 Ecbo 0 → 3).
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to

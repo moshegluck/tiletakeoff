@@ -694,6 +694,12 @@ export function drawTrace(ctx, rc) {
       ctx.fillStyle = '#fff'; ctx.font = '700 11px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(txt, x, y + 0.5);
     };
+    // a leak's gaps: where to close the room
+    ctx.setLineDash([6, 4]); ctx.strokeStyle = TR.error; ctx.lineWidth = 2;
+    for (const f of res.flags) {
+      for (const gp of f.gaps || []) { const a = S(gp.at), b = S(gp.to); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+    }
+    ctx.setLineDash([]);
     for (const g of clusterPins(pins, 20)) {
       pin(g.x, g.y, TR[g.severity] || TR.review, g.items.length > 1 ? String(g.items.length) : '!', false);
     }
