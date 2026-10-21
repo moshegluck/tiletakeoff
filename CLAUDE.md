@@ -386,7 +386,10 @@ TileTakeoff works the other way round:
 
 ## Known gaps / next
 - Scans: only horizontal/vertical walls; diagonal walls on scans get flagged.
-- AI room naming (`Name rooms with AI`) runs on the same model chain as AI Detect; untested live.
+- AI live run (2026-10-21, `scripts/ai-live.mjs`, claude-opus-5-5, all HTTP 200): Name rooms with AI on the
+  scan named all 6 traced rooms right in 5 s (HALL has no room there: the scan trace merges it into LIVING,
+  220 SF — a trace gap, not the AI's); AI Detect on the vector sheet found the 7 rooms, 1,033.3 SF vs the
+  trace's 1,034.0, each within 1.5 SF, outlines on the rooms (17 s).
 - Supabase: Vercel's VITE_SUPABASE_URL now names the live project (qgvloanrqzuciuhpepjy; fixed
   2026-10-18, the build no longer warns). The build / client / API fallbacks stay as a guard.
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
@@ -403,7 +406,9 @@ TileTakeoff works the other way round:
   and Check the trace with AI (the vector sheet) live: the app in headless Chromium, the route in-process
   with no sign-in; request summaries, answers and screenshots in `dir`.
 - Sliding doors drawn as parallel panels in a gap can read as a window on unlayered sheets.
-- The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
+- The AI check (`mode: 'review'`) live on the vector sheet (28 s): one finding, the planted 5' kitchen ↔ bath
+  cased opening (`false_opening`, 0.5), the other 6 rooms OK — no false alarms. It sits beside the trace's own
+  door-in-context flag on that opening (two cards, one spot). Only run on the sample sheet so far.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
 - Three+ wall tiles in one room each price the whole wall unless the extra ones are set as accent
