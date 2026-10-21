@@ -238,7 +238,10 @@ TileTakeoff works the other way round:
 - `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry).
   The default mode is **AI Detect** (`DetectModal.jsx`): room outlines read off the plan, reviewed by
   the user before they're added — a separate, opt-in tool, not the Trace pipeline. Model choice:
-  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored).
+  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored). Its review checks each outline
+  against the area the PDF page prints inside it (`detectMap.printedCheck`, the trace's `AREA_TOL`):
+  `plan ✓`, `plan 720 SF` (off), `N rooms` (one outline over several tags); a room the plan disagrees
+  with starts unticked, and Add waits for the check.
 - `src/engine/zones.js` floor design zones (border bands follow the walls, traced inlays); the
   field = room − holes − bands − inlays. Drawn in 2D (`drawZones`), 3D (`houseModel.zoneSurfaces`)
   and priced in `estimate.js`.
@@ -389,7 +392,12 @@ TileTakeoff works the other way round:
 - AI live run (2026-10-21, `scripts/ai-live.mjs`, claude-opus-5-5, all HTTP 200): Name rooms with AI on the
   scan named all 6 traced rooms right in 5 s (HALL has no room there: the scan trace merges it into LIVING,
   220 SF — a trace gap, not the AI's); AI Detect on the vector sheet found the 7 rooms, 1,033.3 SF vs the
-  trace's 1,034.0, each within 1.5 SF, outlines on the rooms (17 s).
+  trace's 1,034.0, each within 1.5 SF, outlines on the rooms (17 s). On a real sheet it is no takeoff:
+  Moshe's live AI Detect of Mill 2 A101 (rev 8, whole page, 57 rooms) had 0 of 23 named spaces within 1%
+  of the printed area and 1 within 3% (LOUNGE 1,003 / 1,623, MEETING 528 / 720, LOUNGE/GAMING 1,098 /
+  1,457, ELEVATOR 298 / 204, MECH 129 / 40), and they went into the marked-up export unflagged; the trace
+  of the same sheet: 48 / 55 right, 0 silent (STAIR A + the 310 SF trash room of rev 8 not closed, the
+  lounges merged, CORRIDOR 576 / 713). Hence the plan check in its review.
 - Supabase: Vercel's VITE_SUPABASE_URL now names the live project (qgvloanrqzuciuhpepjy; fixed
   2026-10-18, the build no longer warns). The build / client / API fallbacks stay as a guard.
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).

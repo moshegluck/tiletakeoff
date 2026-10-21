@@ -9,7 +9,8 @@
 // sizes the AI read (e.g. 12'-6" × 10'-0") give one. Pure; no DOM.
 // ============================================================
 
-import { polygonArea, bounds, rectPoly } from './geometry.js';
+import { polygonArea, bounds, rectPoly, pointInPolygon } from './geometry.js';
+import { printedAreas, AREA_TOL } from './trace/analyze.js';
 import { cleanPolygon, selfIntersects } from './zones.js';
 import { ARCH_SCALES, archFeetPerPaperInch } from './units.js';
 
@@ -163,6 +164,28 @@ export function detectionToRoom(d, map, feetPerModelPx) {
     shape: traced && points.length > 4 ? 'polygon' : 'rect',
     confidence: d.confidence, dimText: d.dimText || '', labelMismatch,
   };
+}
+
+/**
+ * Detected rooms against the areas the plan prints inside them ("720 SF"),
+ * the check the trace makes (`AREA_TOL`, at least 2 SF). An AI outline is an
+ * estimate, so a room the plan disagrees with is never added silently: one
+ * tag in it → 'match' or 'off'; two or more → 'merged' (one outline over
+ * several rooms); none → null (nothing to check).
+ * @param {{points: import('./types.js').Point[], areaSf: number}[]} rooms  feet
+ * @param {{str: string, x: number, y: number}[]} texts  the sheet's words, plan px
+ * @param {number} feetPerPx
+ * @returns {({check: 'match'|'off'|'merged', printed: number[]} | null)[]}
+ */
+export function printedCheck(rooms, texts, feetPerPx) {
+  const tags = printedAreas(texts).map((t) => ({ sf: t.sf, x: t.x * feetPerPx, y: t.y * feetPerPx }));
+  return rooms.map((r) => {
+    const printed = tags.filter((t) => pointInPolygon(t.x, t.y, r.points)).map((t) => t.sf);
+    if (!printed.length) return null;
+    if (printed.length > 1) return { check: 'merged', printed };
+    const want = printed[0];
+    return { check: Math.abs(r.areaSf - want) <= Math.max(2, want * AREA_TOL) ? 'match' : 'off', printed };
+  });
 }
 
 /**
