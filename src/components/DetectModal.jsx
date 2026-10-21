@@ -6,7 +6,7 @@ import { capturePlan } from '../lib/planCapture.js';
 import { openPlanFile } from '../lib/planLoad.js';
 import {
   detectionToRoom, detectionOutlinePx, inferScale, overlapsExisting,
-  visiblePlanRegion, snapToPreset,
+  visiblePlanRegion, snapToPreset, printedCheck,
 } from '../engine/detectMap.js';
 import { formatLength, formatArea, ARCH_SCALES } from '../engine/units.js';
 import ScaleControl from './ScaleControl.jsx';
@@ -57,13 +57,14 @@ export default function DetectModal({ onClose }) {
   const [elapsed, setElapsed] = useState(0);
   const [hover, setHover] = useState(-1);
   const [useLabelScale, setUseLabelScale] = useState(false);
+  const [sheetTexts, setSheetTexts] = useState(null);   // the PDF page's words (plan px), for its printed areas
 
   // Capture what Claude will read whenever the plan or the choice changes.
   const pdfPage = s.pdfPage, planImage = s.planImage;
   useEffect(() => {
     if (!hasPlan) return undefined;
     let dead = false;
-    setCap(null); setCapErr('');
+    setCap(null); setCapErr(''); setSheetTexts(null);
     capturePlan(useStore.getState(), mode === 'view' ? viewRegion : null)
       .then((c) => { if (dead) URL.revokeObjectURL(c.url); else setCap(c); })
       .catch((e) => { if (!dead) setCapErr(e.message || 'Could not prepare the plan.'); });
@@ -136,7 +137,24 @@ export default function DetectModal({ onClose }) {
   }, [dets, cap, fpp, s.rooms]);
   const outlines = useMemo(() => (dets ? dets.map((d) => detectionOutlinePx(d).pts) : []), [dets]);
 
-  const isKept = (i) => keep[i] ?? !(rooms?.[i]?.dup);
+  // The areas the plan prints in its rooms are the answer key: read the page's
+  // words once the rooms are back (an image plan has none to read).
+  const hasPdf = !!s.pdfDoc;
+  useEffect(() => {
+    if (phase !== 'review' || !hasPdf || sheetTexts) return undefined;
+    let dead = false;
+    import('../lib/traceClient.js').then((m) => m.readPlan(useStore.getState()))
+      .then(({ evidence }) => { if (!dead) setSheetTexts(evidence.texts || []); })
+      .catch(() => { if (!dead) setSheetTexts([]); });
+    return () => { dead = true; };
+  }, [phase, hasPdf, sheetTexts]);
+  const checking = phase === 'review' && hasPdf && !sheetTexts;
+  const checks = useMemo(() => (rooms && sheetTexts ? printedCheck(rooms, sheetTexts, fpp) : null), [rooms, sheetTexts, fpp]);
+  const disagrees = (i) => checks?.[i]?.check === 'off' || checks?.[i]?.check === 'merged';
+  const offCount = checks ? checks.filter((c) => c && c.check !== 'match').length : 0;
+
+  // a room already drawn, or one the plan's printed area disagrees with, starts unticked
+  const isKept = (i) => keep[i] ?? !(rooms?.[i]?.dup || disagrees(i));
   const toggle = (i) => setKeep((k) => ({ ...k, [i]: !isKept(i) }));
   const setAll = (v) => setKeep(Object.fromEntries((dets || []).map((_, i) => [i, v])));
   const keptCount = rooms ? rooms.filter((_, i) => isKept(i)).length : 0;
@@ -254,8 +272,13 @@ export default function DetectModal({ onClose }) {
                     </div>
                   )}
                   {warn && <div className="note">⚠ {warn}</div>}
+                  {offCount > 0 && (
+                    <div className="det-scale warn">
+                      <span>{offCount} of {rooms.length} rooms disagree with the area the plan prints in them (more than 3%), so they start unticked. AI outlines are an estimate; <b>Trace plan</b> builds the rooms from the walls.</span>
+                    </div>
+                  )}
                   <div className="det-head">
-                    <span>{dets.length} room{dets.length === 1 ? '' : 's'} found · tap to include or skip</span>
+                    <span>{dets.length} room{dets.length === 1 ? '' : 's'} found · {checking ? 'checking the plan’s printed areas…' : 'tap to include or skip'}</span>
                     <span><button onClick={() => setAll(true)}>All</button> · <button onClick={() => setAll(false)}>None</button></span>
                   </div>
                   {rooms.map((r, i) => {
@@ -271,7 +294,14 @@ export default function DetectModal({ onClose }) {
                         </span>
                         {r.dup && <span className="conf" title="A room is already drawn here">drawn</span>}
                         {r.labelMismatch && <span className="conf lo" title={`Printed size: ${r.dimText}`}>≠ {r.dimText || 'label'}</span>}
-                        {!r.dup && !r.labelMismatch && (
+                        {checks?.[i]?.check === 'match' && <span className="conf hi" title={`The plan prints ${checks[i].printed[0]} SF in this room; the outline agrees`}>plan ✓</span>}
+                        {checks?.[i]?.check === 'off' && (
+                          <span className="conf lo" title={`The plan prints ${checks[i].printed[0]} SF in this room; the AI outline is ${Math.round(r.areaSf)} SF`}>plan {checks[i].printed[0]} SF</span>
+                        )}
+                        {checks?.[i]?.check === 'merged' && (
+                          <span className="conf lo" title={`The plan prints ${checks[i].printed.length} areas inside this outline (${checks[i].printed.join(' + ')} SF): it covers more than one room`}>{checks[i].printed.length} rooms</span>
+                        )}
+                        {!r.dup && !r.labelMismatch && !checks?.[i] && (
                           <span className={'conf ' + (r.confidence >= 0.7 ? 'hi' : 'lo')}>{Math.round(r.confidence * 100)}%</span>
                         )}
                       </div>
@@ -298,7 +328,7 @@ export default function DetectModal({ onClose }) {
             </button>
           )}
           {phase === 'review' && (
-            <button className="tbtn primary" disabled={!rooms || !keptCount} onClick={commit}>
+            <button className="tbtn primary" disabled={!rooms || !keptCount || checking} onClick={commit}>
               Add {keptCount} room{keptCount === 1 ? '' : 's'}
             </button>
           )}

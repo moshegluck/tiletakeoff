@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { imageToModel, inferScale, squareUp, outlineOk, detectionToRoom, overlapsExisting, visiblePlanRegion, snapToPreset } from '../src/engine/detectMap.js';
+import { imageToModel, inferScale, squareUp, outlineOk, detectionToRoom, overlapsExisting, visiblePlanRegion, snapToPreset, printedCheck } from '../src/engine/detectMap.js';
 import { rectPoly, polygonArea } from '../src/engine/geometry.js';
 
 // A detection image cropped from the underlay at (1000, 400), rendered at
@@ -107,5 +107,32 @@ describe('detectMap: snapToPreset', () => {
     expect(r.feetPerModelPx).toBeCloseTo(4 / 144, 12);
     expect(snapToPreset((4 / 144) * 1.2, 144).id).toBeNull();
     expect(snapToPreset(0.03, 0)).toEqual({ feetPerModelPx: 0.03, id: null, label: null });
+  });
+});
+
+describe('detectMap: printedCheck', () => {
+  // Mill 2 A101 (1/8"): AI Detect cut MEETING ROOM short at 528 SF where the plan prints 720 SF,
+  // and the marked-up export carried it as takeoff with no flag.
+  const room = (x, y, w, h) => { const points = rectPoly(x, y, w, h); return { points, areaSf: polygonArea(points) }; };
+  const PX = 1 / 9;   // ft per plan px (1/8" on a 72-dpi underlay)
+  const tag = (sf, xFt, yFt) => ({ str: `${sf} SF`, x: xFt / PX, y: yFt / PX });
+  it('checks each room against the area the plan prints inside it', () => {
+    // a 580 SF room outlined right; MEETING ROOM outlined 24 × 22 = 528 SF over a 720 SF tag;
+    // one outline over LOUNGE / GAMING and LOUNGE
+    const rooms = [room(0, 0, 29, 20), room(30, 0, 24, 22), room(80, 0, 40, 20)];
+    const texts = [tag(580, 12, 10), { str: 'MEETING ROOM', x: 42 / PX, y: 8 / PX }, tag(720, 42, 12), tag(1457, 90, 10), tag(1623, 110, 10)];
+    expect(printedCheck(rooms, texts, PX)).toEqual([
+      { check: 'match', printed: [580] },
+      { check: 'off', printed: [720] },
+      { check: 'merged', printed: [1457, 1623] },
+    ]);
+  });
+  it('allows 3% or 2 SF, and leaves rooms with no printed area unchecked', () => {
+    const texts = [tag(100, 5, 5), tag(40, 25, 3)];
+    expect(printedCheck([room(0, 0, 10, 10.29)], texts, PX)[0].check).toBe('match');   // 102.9 SF: 2.9%
+    expect(printedCheck([room(0, 0, 10, 10.4)], texts, PX)[0].check).toBe('off');      // 104 SF: 4%
+    expect(printedCheck([room(20, 0, 10, 4.19)], texts, PX)[0].check).toBe('match');   // 41.9 SF: 2 SF on a closet
+    expect(printedCheck([room(20, 0, 10, 12.9)], texts, PX)[0]).toEqual({ check: 'off', printed: [40] });  // MECH 129 vs 40
+    expect(printedCheck([room(50, 50, 10, 10)], texts, PX)[0]).toBeNull();
   });
 });
