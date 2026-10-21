@@ -397,7 +397,11 @@ TileTakeoff works the other way round:
   lounge). Next: a plan-check repair pass (try closing a gap / dropping an
   inferred opening where tags disagree, keep it only if more printed areas agree), an envelope rule,
   and an AI reading pass (building type, legend, outside / in scope) — the AI may name and classify,
-  never supply geometry. No Anthropic key in this container: AI modes are mock-tested.
+  never supply geometry. AI keys: Vercel has `ANTHROPIC_API_KEY` (live site, sign-in required); the cloud
+  environment has `TT_ANTHROPIC_KEY` as an environment variable (a network secret never reaches
+  api.anthropic.com). `node scripts/ai-live.mjs --out dir` runs AI Detect, Name rooms with AI (the scan)
+  and Check the trace with AI (the vector sheet) live: the app in headless Chromium, the route in-process
+  with no sign-in; request summaries, answers and screenshots in `dir`.
 - Sliding doors drawn as parallel panels in a gap can read as a window on unlayered sheets.
 - The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
