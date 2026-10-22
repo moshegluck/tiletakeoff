@@ -247,7 +247,10 @@ TileTakeoff works the other way round:
 - `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry).
   The default mode is **AI Detect** (`DetectModal.jsx`): room outlines read off the plan, reviewed by
   the user before they're added — a separate, opt-in tool, not the Trace pipeline. Model choice:
-  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored).
+  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored). Its review checks each outline
+  against the area the PDF page prints inside it (`detectMap.printedCheck`, the trace's `AREA_TOL`):
+  `plan ✓`, `plan 720 SF` (off), `N rooms` (one outline over several tags); a room the plan disagrees
+  with starts unticked, and Add waits for the check.
 - `src/engine/zones.js` floor design zones (border bands follow the walls, traced inlays); the
   field = room − holes − bands − inlays. Drawn in 2D (`drawZones`), 3D (`houseModel.zoneSurfaces`)
   and priced in `estimate.js`.
@@ -402,7 +405,15 @@ TileTakeoff works the other way round:
 
 ## Known gaps / next
 - Scans: only horizontal/vertical walls; diagonal walls on scans get flagged.
-- AI room naming (`Name rooms with AI`) runs on the same model chain as AI Detect; untested live.
+- AI live run (2026-10-21, `scripts/ai-live.mjs`, claude-opus-5-5, all HTTP 200): Name rooms with AI on the
+  scan named all 6 traced rooms right in 5 s (HALL has no room there: the scan trace merges it into LIVING,
+  220 SF — a trace gap, not the AI's); AI Detect on the vector sheet found the 7 rooms, 1,033.3 SF vs the
+  trace's 1,034.0, each within 1.5 SF, outlines on the rooms (17 s). On a real sheet it is no takeoff:
+  Moshe's live AI Detect of Mill 2 A101 (rev 8, whole page, 57 rooms) had 0 of 23 named spaces within 1%
+  of the printed area and 1 within 3% (LOUNGE 1,003 / 1,623, MEETING 528 / 720, LOUNGE/GAMING 1,098 /
+  1,457, ELEVATOR 298 / 204, MECH 129 / 40), and they went into the marked-up export unflagged; the trace
+  of the same sheet: 48 / 55 right, 0 silent (STAIR A + the 310 SF trash room of rev 8 not closed, the
+  lounges merged, CORRIDOR 576 / 713). Hence the plan check in its review.
 - Supabase: Vercel's VITE_SUPABASE_URL now names the live project (qgvloanrqzuciuhpepjy; fixed
   2026-10-18, the build no longer warns). The build / client / API fallbacks stay as a guard.
 - A furring face covering ≥ 50% of a room edge moves the whole edge (no partial step).
@@ -413,9 +424,15 @@ TileTakeoff works the other way round:
   lounge). Next: a plan-check repair pass (try closing a gap / dropping an
   inferred opening where tags disagree, keep it only if more printed areas agree), an envelope rule,
   and an AI reading pass (building type, legend, outside / in scope) — the AI may name and classify,
-  never supply geometry. No Anthropic key in this container: AI modes are mock-tested.
+  never supply geometry. AI keys: Vercel has `ANTHROPIC_API_KEY` (live site, sign-in required); the cloud
+  environment has `TT_ANTHROPIC_KEY` as an environment variable (a network secret never reaches
+  api.anthropic.com). `node scripts/ai-live.mjs --out dir` runs AI Detect, Name rooms with AI (the scan)
+  and Check the trace with AI (the vector sheet) live: the app in headless Chromium, the route in-process
+  with no sign-in; request summaries, answers and screenshots in `dir`.
 - Sliding doors drawn as parallel panels in a gap can read as a window on unlayered sheets.
-- The AI check (`mode: 'review'`) is tested with a mocked model only; first live run pending.
+- The AI check (`mode: 'review'`) live on the vector sheet (28 s): one finding, the planted 5' kitchen ↔ bath
+  cased opening (`false_opening`, 0.5), the other 6 rooms OK — no false alarms. It sits beside the trace's own
+  door-in-context flag on that opening (two cards, one spot). Only run on the sample sheet so far.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
 - Three+ wall tiles in one room each price the whole wall unless the extra ones are set as accent
