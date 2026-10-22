@@ -64,7 +64,10 @@ TileTakeoff works the other way round:
     A wall built in layers (an 8" block wall and a 6" lining, three heavy face lines) shares the line
     between them: on a sheet with pen weights each face line serves one wall on each side
     (`layerFaces`), while the two together are no thicker than `maxT`; `mergeLayers` makes them one
-    wall (Bais Rochel's lunchroom leaked past the lining's end with the block wall lost).
+    wall (Bais Rochel's lunchroom leaked past the lining's end with the block wall lost). A layer
+    under 3 ft (`minLayerLen`) on a face another wall already uses is no layer: a sink bowl drawn in the
+    wall pen 5½" off the sample's kitchen wall paired with its face and notched the floor (177.7 → 176.3;
+    the AI check caught it).
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
     gap inside the wall's thickness → a window (closes the room, stays in wall LF). A gap ≤ 8' with
     door-layer drawing at both jambs as deep as the wall (`framed`: a pocket door, a cased opening —
@@ -379,7 +382,7 @@ TileTakeoff works the other way round:
   facility p2 8 → 13, p5 26 → 30; 19 Ecbo 0 → 3).
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
-- Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
+- Sample sheet: 7 rooms, 1,033.8 SF vector with floors stopping at the wall line across doorways (1,045.4 to
   the door centre; bench 7/7 against the key reworked to the faces; the bath's pony wall is off its floor);
   1,046.5 SF from the crooked scan before that change; scale read
   off the sheet and confirmed by 5/5 door swings; the planted 5' bath opening is flagged.
@@ -409,14 +412,18 @@ TileTakeoff works the other way round:
   inferred opening where tags disagree, keep it only if more printed areas agree), an envelope rule,
   and an AI reading pass (building type, legend, outside / in scope) — the AI may name and classify,
   never supply geometry. AI keys: Vercel has `ANTHROPIC_API_KEY` (live site, sign-in required); the cloud
-  environment has `TT_ANTHROPIC_KEY` as an environment variable (a network secret never reaches
-  api.anthropic.com). `node scripts/ai-live.mjs --out dir` runs AI Detect, Name rooms with AI (the scan)
+  environment has `TILETAKEOFF_ANTHROPIC_KEY` as an environment variable (was `TT_ANTHROPIC_KEY`; both are
+  read; a network secret never reaches api.anthropic.com). `node scripts/ai-live.mjs --out dir` runs AI Detect, Name rooms with AI (the scan)
   and Check the trace with AI (the vector sheet) live: the app in headless Chromium, the route in-process
   with no sign-in; request summaries, answers and screenshots in `dir`.
 - Sliding doors drawn as parallel panels in a gap can read as a window on unlayered sheets.
 - The AI check (`mode: 'review'`) live on the vector sheet (28 s): one finding, the planted 5' kitchen ↔ bath
   cased opening (`false_opening`, 0.5), the other 6 rooms OK — no false alarms. It sits beside the trace's own
   door-in-context flag on that opening (two cards, one spot). Only run on the sample sheet so far.
+  Second run (2026-10-22, 16 s): three findings — the planted opening again; the kitchen notched at the sink
+  (`outline_off`, 0.35: right — a regression from the layered-wall rule, fixed); the bath "cut along a tile
+  grid line" (`false_wall`, 0.75: wrong — that is the drawn 4½" pony wall, which lies under the 12" tile grid
+  line at x = 6'). Naming (5 s) and AI Detect (14 s, 1,033.3 SF) as before.
 - iPhone once read 0 texts off a sheet; op-list text is now a fallback and the read error is
   shown in the Trace panel. Root cause unconfirmed.
 - Three+ wall tiles in one room each price the whole wall unless the extra ones are set as accent

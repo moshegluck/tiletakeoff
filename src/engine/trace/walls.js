@@ -38,6 +38,7 @@ export const WALL_DEFAULTS = {
   casework: true,           // a hairline-faced strip against a wall is casework, not wall
   shareThickFaces: true,    // a brick wall may share its face with a wall built against it
   layerFaces: true,         // a face line between two layers of a wall (pen weights) serves a wall on each side
+  minLayerLen: 3,           // ft: a layer that only pairs with a face another wall already uses runs a door's width at least
 };
 
 /** Normalize raw lines to { a, b, w, th, u, n, rho, s0, s1, len }. */
@@ -546,10 +547,21 @@ export function pairWalls(rawLines, options = {}) {
     const covLProj = covL.slice();
     let parts = subtractIntervals(c.o0, c.o1, covLProj);
     parts = parts.flatMap(([a, b]) => subtractIntervals(a, b, covMProj));
+    // a stretch whose face already serves a wall on its other side is a layer
+    // built against that wall; a fixture drawn in the wall pen a few inches
+    // off a wall (a sink bowl's back edge 5½" off the kitchen wall) is not one
+    const project = (x) => x.cov.map(([a0, b0]) => {
+      const xPerp = dot(x.a, perp(x.u));
+      const at = (sv) => dot({ x: x.u.x * sv + perp(x.u).x * xPerp, y: x.u.y * sv + perp(x.u).y * xPerp }, u);
+      return [Math.min(at(a0), at(b0)), Math.max(at(a0), at(b0))];
+    });
+    const usedL = layer ? project(l) : [], usedM = layer ? project(m) : [];
+    const onUsedFace = (a, b) => [...usedL, ...usedM].some(([p0, p1]) => Math.min(b, p1) - Math.max(a, p0) > 0.05);
     for (const [a, b] of parts) {
       // a wall runs most of its thickness at least (two parallel hatch strokes
       // a foot apart are not a 12" wall five inches long)
       if (b - a < Math.max(opt.minBodyLen, c.d * 0.6)) continue;
+      if (layer && b - a < opt.minLayerLen && onUsedFace(a, b)) continue;
       const pL0 = { x: u.x * a + perp(u).x * lPerp, y: u.y * a + perp(u).y * lPerp };
       const pL1 = { x: u.x * b + perp(u).x * lPerp, y: u.y * b + perp(u).y * lPerp };
       // foot on m's line
