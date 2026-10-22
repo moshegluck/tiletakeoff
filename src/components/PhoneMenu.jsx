@@ -47,7 +47,6 @@ export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, on
         {cloudEnabled && (s.authUser ? (
           <div className="pm-group">
             <div className="pm-who"><Icon d={I.user} /><span>{s.authUser.email}</span></div>
-            {item('folder', 'Your projects', () => window.dispatchEvent(new Event('tt:projects')))}
             {item('out', 'Sign out', () => { if (confirm(`Sign out of ${s.authUser.email}?`)) signOut(); })}
           </div>
         ) : (
@@ -56,7 +55,8 @@ export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, on
           </div>
         ))}
         <div className="pm-group">
-          {item('file', s.planImage ? 'Open another plan (PDF or image)' : 'Open a plan (PDF or image)', onOpenPlan)}
+          {item('folder', 'Projects', () => window.dispatchEvent(new Event('tt:projects')))}
+          {item('file', s.planImage ? 'Open another plan — a new project' : 'Open a plan (PDF or image)', onOpenPlan)}
           {item('lib', 'Tile library', onLibrary)}
           {item('trace', 'Trace the plan', () => window.dispatchEvent(new CustomEvent('tt:panel', { detail: 'trace' })))}
           {item('ai', 'AI room detection', onDetect)}
@@ -76,7 +76,7 @@ export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, on
           </label>
         </div>
         <div className="pm-group">
-          {item('plus', 'New takeoff', () => { if (confirm('Start a new takeoff? This one stays saved.')) s.newProject(); })}
+          {item('plus', 'New project', () => { s.newProject(); window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'New project started — the last one is in Projects.', ok: true } })); })}
           {item('home', 'Home page', onHome)}
         </div>
         <button className="pm-close" onClick={onClose}>Close</button>

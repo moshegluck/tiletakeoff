@@ -5,7 +5,7 @@
 // (lib/planStore.js) and brought back on reload.
 // ============================================================
 
-import { useStore } from '../state/store.js';
+import { useStore, hasContent } from '../state/store.js';
 import { savePlan, getPlan, touchPlan } from './planStore.js';
 import { uploadPlanFile, downloadPlanFile } from './cloud.js';
 
@@ -45,10 +45,32 @@ const isPdf = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''
 const isImage = (f) => /^image\/(png|jpe?g|webp|gif)$/i.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name || '');
 
 /**
+ * Each plan is its own project. A plan file other than the one this project
+ * was opened on starts a new project (named after the file); the one on
+ * screen is kept, untouched, in Projects. The same file again (a plan that
+ * didn't come back, a fresh copy) stays in this project.
  * @param {File} file
- * @returns {Promise<{ kind: 'pdf', pages: number } | { kind: 'image' }>}
+ * @returns {Promise<boolean>} true when a new project was started
+ */
+export async function projectForPlan(file) {
+  const st = useStore.getState();
+  const name = String(file.name || '').replace(/\.[^.]+$/, '').trim() || 'Untitled Takeoff';
+  let current = st.planName || st.planFile?.name || null;
+  if (!current) current = (await getPlan(planKey(st)).catch(() => null))?.name || null;
+  if (current && current === file.name) return false;
+  if (hasContent(st)) { st.newProject({ name }); useStore.getState().setPlanName(file.name); return true; }
+  if (!st.name || st.name === 'Untitled Takeoff') st.setName(name);
+  st.setPlanName(file.name);
+  return false;
+}
+
+/**
+ * @param {File} file
+ * @returns {Promise<({ kind: 'pdf', pages: number } | { kind: 'image' }) & { newProject: boolean }>}
  */
 export async function openPlanFile(file) {
+  if (!isPdf(file) && !isImage(file)) throw new Error('Choose a PDF or an image (PNG / JPG).');
+  const newProject = await projectForPlan(file);
   const st = useStore.getState();
   if (isPdf(file)) {
     const { loadPdf, renderPage, PLAN_RENDER_WIDTH } = await import('./pdf.js');
@@ -59,8 +81,8 @@ export async function openPlanFile(file) {
     const out = await renderPage(doc, 1, PLAN_RENDER_WIDTH);
     st.setPlanImage(out.dataUrl, out.width, out.height);
     st.setPlanDpi(72 * out.renderScale);
-    remember(st, file, 'pdf');
-    return { kind: 'pdf', pages: numPages };
+    remember(useStore.getState(), file, 'pdf');
+    return { kind: 'pdf', pages: numPages, newProject };
   }
   if (isImage(file)) {
     const url = URL.createObjectURL(file);
@@ -73,8 +95,8 @@ export async function openPlanFile(file) {
     st.clearPdf();
     st.setPlanDpi(0);
     st.setPlanImage(url, w, h);
-    remember(st, file, 'image');
-    return { kind: 'image' };
+    remember(useStore.getState(), file, 'image');
+    return { kind: 'image', newProject };
   }
   throw new Error('Choose a PDF or an image (PNG / JPG).');
 }

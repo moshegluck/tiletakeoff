@@ -285,6 +285,18 @@ TileTakeoff works the other way round:
 - `src/state/pages.js` each plan page keeps its own takeoff: the store holds the page on screen
   (rooms / markups / trace / scale) and parks the others in `pageData[page]`; `switchPage()` swaps.
   The estimate, exports and cloud save use `wholeProject()` (every page).
+- `src/state/projects.js` each plan is its own project (Moshe went plan to plan and the last one's rooms,
+  scale and job stayed and its cloud file was overwritten). Every project on this device — signed in or
+  not — is kept: an index in localStorage (`tiletakeoff.projects.v1`: name, plan file, rooms, pages, last
+  change) and the takeoff in IndexedDB (planStore's store, key `project:<id>`, beside its plan file;
+  localStorage `tiletakeoff.p.<id>` without IndexedDB). `planLoad.js` `projectForPlan`: a plan file
+  other than the one the project was opened on (`planName`) starts a new project named after the file;
+  the same file again stays. Store: `newProject` / `openProject(id)` / `loadCloudDoc` keep the project on
+  screen first (`keepCurrent`, a pending cloud save included) and clear undo; `removeProject(id)` takes
+  its plan file too. A plan no project names is pruned to the newest 12; a project's plan stays with it.
+  A cloud id that arrives after the project left the screen goes to its library copy (AccountBar).
+  `ProjectsDrawer.jsx` (header Projects, phone menu): this device's projects + the account's not here
+  yet; the account's copy wins when it's newer. `test/projects.test.js`.
 - `src/engine/takeoffRules.js` Artistic's takeoff rules (from Moshe's `marked-plan-takeoff-artistic`
   skill), used by the estimate, room cards, marked PDF and quantity list: floor = room − shower
   footprints − 10 SF a tub; walls = full perimeter × tiled height − 14 SF a standard door (2 LF × 7',
@@ -340,7 +352,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 481 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 484 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
