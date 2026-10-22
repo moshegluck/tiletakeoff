@@ -512,10 +512,15 @@ export function pairWalls(rawLines, options = {}) {
 
   // the near edge of a small closed box standing off the face `wall`: both its
   // ends turn away from the wall, a box's depth at most, and a line parallel
-  // to it closes the box behind (a sink bowl, a toilet tank)
+  // to it closes the box behind (a sink bowl, a toilet tank). A fixture is a
+  // foot wide at least and stands along the wall's run, which carries on past
+  // it both ways: a box at the wall's end is its pilaster or a door's frame
   const tol = 2 * IN, D = opt.fixtureBox;
   const boxedOff = (x, wall) => {
-    if (!D || x.len > 2 * D) return false;
+    if (!D || x.len < 1 || x.len > 2 * D) return false;
+    const along = (p) => dot(p, x.u);
+    const [x0, x1] = [along(x.a), along(x.b)].sort((p, q) => p - q), [w0, w1] = [along(wall.a), along(wall.b)].sort((p, q) => p - q);
+    if (x0 - w0 < 1 || w1 - x1 < 1) return false;
     const n0 = perp(x.u), away = dot(sub(wall.a, x.a), n0) > 0 ? -1 : 1;
     const n = { x: n0.x * away, y: n0.y * away };
     const near = (p, r) => [...idx.query(p.x - r, p.y - r, p.x + r, p.y + r)].map((i) => lines[i]);

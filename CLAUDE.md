@@ -66,7 +66,9 @@ TileTakeoff works the other way round:
     (`layerFaces`), while the two together are no thicker than `maxT`; `mergeLayers` makes them one
     wall (Bais Rochel's lunchroom leaked past the lining's end with the block wall lost). A layer on a
     face another wall already uses is no layer when its other line is the near edge of a small closed box
-    (both ends turn away from the wall ≤ 4 ft and a parallel line closes it: `fixtureBox`): a sink bowl drawn
+    (both ends turn away from the wall ≤ 4 ft and a parallel line closes it: `fixtureBox`; a foot wide at least,
+    the wall's face running on ≥ 1 ft past it both ways — a box at a wall's end is a pilaster or a door frame,
+    the nursing facility's p6 needs one to close a room): a sink bowl drawn
     in the wall pen 5½" off the sample's kitchen wall paired with its face and notched the floor (177.7 →
     176.3; the AI check caught it). A plain 3 ft minimum lost Bais Rochel's short linings (ENTRY 369 → 374).
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
