@@ -298,6 +298,23 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(west[0].a.x).toBeCloseTo((B + Lg) / 2, 2);
   });
 
+  it("a sink bowl drawn in the wall pen a few inches off a wall is no layer of it (the sample sheet's kitchen, caught by the AI check)", () => {
+    // a 30' x 20' room of 6" walls; a 2' x 1'-4" sink bowl drawn heavy with
+    // its back edge 5½" off the north wall's inner face. That edge paired with
+    // the face as a "lining" and notched the kitchen floor (177.7 → 176.3 SF)
+    const t = 6 * IN, off = t + 5.5 * IN;
+    const lines = [
+      hline(0, 0, 30), hline(t, t, 30 - t), hline(20, 0, 30), hline(20 - t, t, 30 - t),
+      vline(0, 0, 20), vline(t, t, 20 - t), vline(30, 0, 20), vline(30 - t, t, 20 - t),
+      hline(off, 10, 12), hline(off + 16 * IN, 10, 12), vline(10, off, off + 16 * IN), vline(12, off, off + 16 * IN),
+    ];
+    // (the bowl's own outline pairs into a 16" scrap the graph drops as a fixture)
+    const { bodies } = pairWalls(lines);
+    const north = bodies.filter((b) => Math.abs(b.a.y - b.b.y) < 0.01 && Math.max(b.a.y, b.b.y) < off);
+    expect(north.length).toBe(1);
+    expect(north[0].t).toBeCloseTo(t, 2);
+  });
+
   it("the paper between the sheet's border and the building is no room, joined to it or not (22 Rita)", () => {
     // a 40' x 30' house on a 100' x 80' sheet; its border drawn as a wall
     // would be, and a grid line drawn heavy runs from the house to the border
