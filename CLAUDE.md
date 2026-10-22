@@ -382,7 +382,8 @@ TileTakeoff works the other way round:
   Then (the leak locator pointing at what to fix) jamb blocks, girders drawn dashed, windows into their
   recess, the face line on the room's side and stepped window openings: 681 right (53.9%), 819 within 3%,
   65 silent; own scale 596 / 1,040 (57.3%), 709 within 3%, 52 silent (Bais Rochel p2 26 → 37, p3 21 → 33, p5 19 → 27; the nursing
-  facility p2 8 → 13, p5 26 → 30; 19 Ecbo 0 → 3).
+  facility p2 8 → 13, p5 26 → 30; 19 Ecbo 0 → 3). Then fixture boxes kept out of wall layers (the sample's
+  sink, found by the live AI check): 682 right, 821 within 3%, 65 silent; own scale 597 / 1,040, 709, 52.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,033.8 SF vector with floors stopping at the wall line across doorways (1,045.4 to
