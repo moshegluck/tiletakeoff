@@ -263,6 +263,21 @@ describe('trace — what is drawing', () => {
     expect(out.lines.length).toBe(4);
     expect(out.lines.every((l) => l.a.y >= 50 / 36 - 1e-9)).toBe(true);
   });
+
+  it("a wall's poché painted as image strips is the wall's footprint (the Mill 2 apartment sheets)", async () => {
+    const { evidenceToFeet } = await import('../src/lib/planEvidence.js');
+    // at 1 px = 1/36 ft: four 6" strips (18 px) boxing a 10' x 8' bath; the image's unit
+    // square runs along u and v, either way round; a logo and a 3-px dot are no walls
+    const strip = (x, y, w, h) => ({ o: { x, y }, u: { x: w, y: 0 }, v: { x: 0, y: h } });
+    const images = [strip(0, 0, 378, 18), strip(0, 306, 378, 18), strip(0, 18, 18, 288), strip(360, 18, 18, 288),
+      strip(500, 0, 300, 300), strip(600, 600, 3, 3)];
+    const out = evidenceToFeet({ lines: [], curves: [], texts: [], images }, 1 / 36, null);
+    expect(out.bodies.map((b) => [+b.t.toFixed(3), +Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y).toFixed(2)]))
+      .toEqual([[0.5, 10.5], [0.5, 10.5], [0.5, 8], [0.5, 8]]);
+    expect(out.bodies[0].a).toEqual({ x: 0, y: 0.25 });
+    // a lone strip (a scale bar, a title band) is no evidence of walls
+    expect(evidenceToFeet({ lines: [], curves: [], texts: [], images: images.slice(0, 1) }, 1 / 36, null).bodies).toEqual([]);
+  });
 });
 
 describe('trace — bathrooms and closets of the mill units', () => {

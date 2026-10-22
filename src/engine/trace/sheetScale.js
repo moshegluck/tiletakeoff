@@ -150,3 +150,18 @@ export function otherViews(texts) {
   }
   return out;
 }
+
+const TRADE_VIEW = /\b(RCP|REFLECTED|CEILING|LIGHTING|ELECTRICAL|POWER|FURNITURE|FINISH|DEMO|DEMOLITION|MECHANICAL|PLUMBING|HVAC)\b/i;
+/**
+ * The titles of a sheet that draws the same floor again for other trades
+ * beside its floor plan (the Mill 2 apartment sheets: FLOOR PLAN, RCP +
+ * LIGHTING PLAN, FLOOR FINISH PLAN), each marked `trade` or not; [] unless
+ * the sheet has both a plain floor plan and such a copy.
+ */
+export function tradeViewTitles(texts) {
+  const titles = texts.map((t) => ({ x: t.x, y: t.y, str: norm(t.str) }))
+    .filter(({ str }) => str.length <= 60 && /\bPLAN\b/i.test(str) && !/\b(SEE|REFER|PER)\b/i.test(str))
+    .map((t) => ({ ...t, trade: TRADE_VIEW.test(t.str) }));
+  const plain = titles.some((t) => !t.trade && /\bFLOOR\s+PLAN\b/i.test(t.str));
+  return plain && titles.some((t) => t.trade) ? titles : [];
+}

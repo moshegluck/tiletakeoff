@@ -99,6 +99,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
   const ops = await page.getOperatorList({ annotationMode: 0 /* AnnotationMode.DISABLE */ });
   const lines = [];
   const curves = [];
+  const images = [];           // where each image is painted: its unit square's corner and axes, in px
   const opTexts = [];          // text read straight off the drawing operators (with its layer)
   let ctm = [1, 0, 0, 1, 0, 0];
   let lw = 1;
@@ -181,6 +182,14 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
           for (let k = l0; k < lines.length; k++) lines[k].layer = layer;
           for (let k = c0; k < curves.length; k++) curves[k].layer = layer;
         }
+        break;
+      }
+      // a wall's cut can be painted as an image (Revit / Vectorworks export the
+      // poché as raster strips): keep where each image lies
+      case OPS.paintImageXObject: case OPS.paintInlineImageXObject: case OPS.paintImageMaskXObject: {
+        if (hiddenDepth) break;
+        const m = mult(vt, ctm);
+        images.push({ o: { x: m[4], y: m[5] }, u: { x: m[0], y: m[1] }, v: { x: m[2], y: m[3] }, layer: layerNow() });
         break;
       }
       // ---- text, read off the operators (position + layer) ----
@@ -289,7 +298,7 @@ export async function extractPageVectors(page, renderScale, OPS, { maxOps = 2_00
   }
 
   return {
-    lines, curves, texts,
+    lines, curves, texts, images,
     width: Math.ceil(viewport.width), height: Math.ceil(viewport.height),
     stats: {
       ops: ops.fnArray.length, painted, clipOnly, lines: lines.length, curves: curves.length, texts: texts.length,
