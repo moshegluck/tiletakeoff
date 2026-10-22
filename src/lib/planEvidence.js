@@ -122,6 +122,28 @@ function readSwings(ev, k, region = null) {
 }
 
 /**
+ * A wall's cut painted as an image (Revit / Vectorworks export the poché as
+ * raster strips, the outlines as the thinnest pen): each strip's placement is
+ * the wall's footprint — a thin rectangle, 2"–24" across and at least three
+ * times as long — so it is a wall body, its geometry the PDF's own (where the
+ * image lies, not what its pixels show). Only on a sheet with several of them.
+ */
+function pocheStrips(images, k, region) {
+  const out = [];
+  for (const im of images) {
+    const lu = Math.hypot(im.u.x, im.u.y), lv = Math.hypot(im.v.x, im.v.y);
+    const [long, short] = lu >= lv ? [im.u, im.v] : [im.v, im.u];
+    const L = Math.max(lu, lv) * k, T = Math.min(lu, lv) * k;
+    if (T < 2 / 12 || T > 2 || L < 1 || L < 3 * T) continue;
+    const a = { x: im.o.x + short.x / 2, y: im.o.y + short.y / 2 };
+    const b = { x: a.x + long.x, y: a.y + long.y };
+    if (!inRegion(a, region) || !inRegion(b, region)) continue;
+    out.push({ a: { x: a.x * k, y: a.y * k }, b: { x: b.x * k, y: b.y * k }, t: T, conf: 0.75, src: 'poche' });
+  }
+  return out.length >= 4 ? out : [];
+}
+
+/**
  * px evidence → feet input for runTrace. region is a px rect {x0,y0,x1,y1} or null.
  * A CAD sheet that names its wall layers gives only those lines (and lines on
  * layers we can't name) to the wall finder, and only room-label text to room
@@ -147,6 +169,7 @@ export function evidenceToFeet(ev, scale, region = null) {
     }
   }
   const bodies = (ev.bodies || []).filter((b) => inRegion(b.a, region) && inRegion(b.b, region)).map((b) => ({ a: P(b.a), b: P(b.b), t: b.t * k, conf: 0.7, src: 'raster' }));
+  bodies.push(...pocheStrips(ev.images || [], k, region));
   const arcs = readSwings(ev, k, region);
   // door / window linework: where the sheet says a doorway or a window is
   // (kind: door | window | opening = a layer holding both)

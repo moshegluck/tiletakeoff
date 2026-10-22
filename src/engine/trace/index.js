@@ -91,6 +91,11 @@ const READINGS = [
  * may draw a wall).
  */
 export function readingScore(res) {
+  // a reading that closes no room at all says nothing the sheet can check —
+  // its names land in no building, so nothing counts against it: any reading
+  // that finds rooms is better (the Mill 2 apartment sheets: walls drawn in
+  // the thinnest pen beside a few heavy title lines read as hairlines)
+  if (!res.rooms.length) return -Infinity;
   const v = res.verify || {};
   const kind = (k) => res.flags.filter((f) => f.kind === k).length;
   const named = res.rooms.filter((r) => r.labels?.length).length;

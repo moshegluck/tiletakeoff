@@ -11,7 +11,7 @@
 // Everything that doesn't add up becomes a located flag.
 // ============================================================
 
-import { otherViews } from './sheetScale.js';
+import { otherViews, tradeViewTitles } from './sheetScale.js';
 import { leakPoints } from './leaks.js';
 import {
   sub, add, mul, dot, cross, dist, norm, perp, signedArea, polyPerimeter, pointInPoly, interiorPoint, mid, lerp, GridIndex, segIntersect, lineIntersect,
@@ -314,13 +314,31 @@ export function analyzeGraph(g, ctx = {}) {
     if (views.length) {
       const lenOf = new Map();
       for (const e of g.edges) { const k = compOf.get(e.u); lenOf.set(k, (lenOf.get(k) || 0) + Math.hypot(nodes[e.v].x - nodes[e.u].x, nodes[e.v].y - nodes[e.u].y)); }
+      const m = 3;
+      const titled = (b) => views.some((v) => v.x >= b.x0 - m && v.x <= b.x1 + m && v.y >= b.y0 - m && v.y <= b.y1 + m);
       const main = [...lenOf].filter(([k]) => !frameComps.has(k)).sort((p, q) => q[1] - p[1])[0]?.[0];
       const mb = cbb.get(main);
       for (const [k, b] of cbb) {
         if (k === main || frameComps.has(k) || !mb) continue;
         const apart = b.x1 < mb.x0 || b.x0 > mb.x1 || b.y1 < mb.y0 || b.y0 > mb.y1;
-        const m = 3;
-        if (apart && views.some((v) => v.x >= b.x0 - m && v.x <= b.x1 + m && v.y >= b.y0 - m && v.y <= b.y1 + m)) frameComps.add(k);
+        if (apart && titled(b)) frameComps.add(k);
+      }
+    }
+    // the floor drawn again for other trades beside its floor plan: each piece
+    // of linework belongs to the plan title printed under it, in line with it
+    // (the nearest below); a piece under a ceiling / lighting / finish plan's
+    // title is that copy, not more floor
+    const trade = ctx.allTexts ? tradeViewTitles(ctx.allTexts) : [];
+    if (trade.length) {
+      for (const [k, b] of cbb) {
+        if (frameComps.has(k)) continue;
+        let best = null, bd = Infinity;
+        for (const t of trade) {
+          if (t.x < b.x0 - 10 || t.x > b.x1 + 10 || t.y < b.y0) continue;
+          const d = Math.max(0, t.y - b.y1);
+          if (d < bd) { bd = d; best = t; }
+        }
+        if (best?.trade) frameComps.add(k);
       }
     }
     // Roomless linework well away from the building (title block, details,
