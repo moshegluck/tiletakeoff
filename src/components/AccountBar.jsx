@@ -1,22 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useStore, useProject, setCloudSaver } from '../state/store.js';
+import { useState, useEffect } from 'react';
+import { useStore, setCloudSaver } from '../state/store.js';
 import Modal from './Modal.jsx';
 import { cloudEnabled } from '../lib/supabase.js';
 import { movePlan } from '../lib/planStore.js';
 import { uploadKeptPlan } from '../lib/planLoad.js';
+import { setCloudIdLocal } from '../state/projects.js';
 import {
   getUser, onAuthChange, signInWithPassword, signUp, signOut,
   resetPasswordForEmail, updatePassword, resendConfirmation, authErrorMessage,
-  listProjects, loadProject, createProject, saveProject, deleteProject,
+  createProject, saveProject,
 } from '../lib/cloud.js';
 
-// Renders the cloud account control + projects drawer. When cloud isn't
-// configured it renders nothing (app stays local-only).
+// Renders the cloud account control (the Projects list is ProjectsDrawer).
+// When cloud isn't configured it renders nothing (app stays local-only).
 export default function AccountBar() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('in');
-  const [showProjects, setShowProjects] = useState(false);
 
   // register cloud saver whenever auth state allows it
   useEffect(() => {
@@ -32,13 +32,10 @@ export default function AccountBar() {
   useEffect(() => {
     const openSignIn = () => { setAuthMode('in'); setShowAuth(true); };
     const openRecovery = () => { setAuthMode('recovery'); setShowAuth(true); };
-    const openProjects = () => setShowProjects(true);
     window.addEventListener('tt:signin', openSignIn);
     window.addEventListener('tt:recovery', openRecovery);
-    window.addEventListener('tt:projects', openProjects);
     return () => {
       window.removeEventListener('tt:signin', openSignIn); window.removeEventListener('tt:recovery', openRecovery);
-      window.removeEventListener('tt:projects', openProjects);
     };
   }, []);
 
@@ -51,7 +48,9 @@ export default function AccountBar() {
           const id = await createProject(state);
           // the plan file follows the project to its cloud id, and up to the cloud
           await movePlan(state.cloudId || state.id, id).catch(() => {});
-          useStore.getState().setCloudId(id);
+          // (another project may be on screen by now: the cloud id is this one's)
+          if (useStore.getState().id === state.id) useStore.getState().setCloudId(id);
+          else await setCloudIdLocal(state.id, id);
           uploadKeptPlan(id).catch(() => {});
         }
       } catch (e) { console.warn('cloud save failed', e.message); }
@@ -66,9 +65,6 @@ export default function AccountBar() {
       <span className="acct-btns">
       {user ? (
         <>
-          <button className="tbtn" onClick={() => setShowProjects(true)}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H3z" /></svg>Projects
-          </button>
           <button className="tbtn" title={`Signed in as ${user.email} — sign out`} onClick={() => { if (confirm(`Sign out of ${user.email}?`)) signOut(); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" /></svg>
           </button>
@@ -80,7 +76,6 @@ export default function AccountBar() {
       )}
       </span>
       {showAuth && <AuthModal initialMode={authMode} onClose={() => setShowAuth(false)} />}
-      {showProjects && <ProjectsDrawer onClose={() => setShowProjects(false)} />}
     </>
   );
 }
@@ -167,62 +162,6 @@ function AuthModal({ onClose, initialMode = 'in' }) {
             {busy ? '…' : AUTH_CTA[mode]}</button>
         </div>
       </form>
-    </Modal>
-  );
-}
-
-function ProjectsDrawer({ onClose }) {
-  const s = useProject();
-  const [rows, setRows] = useState(null);
-  const [err, setErr] = useState('');
-
-  const refresh = useCallback(() => {
-    listProjects().then(setRows).catch((e) => setErr(e.message));
-  }, []);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  async function open(id) {
-    try { const row = await loadProject(id); s.loadCloudDoc(row); onClose();
-      window.dispatchEvent(new Event('tt:fit'));
-    } catch (e) { setErr(e.message); }
-  }
-  async function saveCurrentAsNew() {
-    try {
-      useStore.getState().setCloudId(null);
-      const id = await createProject(useStore.getState());
-      useStore.getState().setCloudId(id); refresh();
-    } catch (e) { setErr(e.message); }
-  }
-  async function remove(id, e) {
-    e.stopPropagation();
-    if (!confirm('Delete this project from the cloud?')) return;
-    try { await deleteProject(id); refresh(); } catch (e) { setErr(e.message); }
-  }
-
-  return (
-    <Modal title="Your projects" onClose={onClose}>
-        <div className="body">
-          {err && <div className="note" style={{ color: 'var(--bad)' }}>{err}</div>}
-          {!rows && <div className="note">Loading…</div>}
-          {rows && rows.length === 0 && <div className="note">No saved projects yet. This takeoff saves to your account as soon as you change anything in it.</div>}
-          {rows && rows.map((p) => (
-            <div className="det-row" key={p.id} style={{ cursor: 'pointer' }} onClick={() => open(p.id)}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
-                <div style={{ fontSize: 11, color: '#8b97a3', fontFamily: 'var(--mono)' }}>
-                  {Number(p.floor_sf).toFixed(0)} sf · ${Number(p.total_cost).toFixed(0)} · {new Date(p.updated_at).toLocaleDateString()}
-                </div>
-              </div>
-              <button className="icon-btn danger" aria-label={`Delete ${p.name}`} onClick={(e) => remove(p.id, e)}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="foot">
-          <button className="tbtn" onClick={onClose}>Close</button>
-          <button className="tbtn primary" onClick={saveCurrentAsNew}>Save current as new</button>
-        </div>
     </Modal>
   );
 }

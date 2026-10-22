@@ -1,9 +1,11 @@
 // ============================================================
 // planStore.js — keep each project's plan file (the PDF or image that was
 // opened) in IndexedDB, so a reload, or reopening the project later on this
-// device, brings the drawing back. Takeoff data lives in localStorage / the
-// cloud; plan files are far too big for either, and IndexedDB stores Blobs
-// as they are. Only the most recent plans are kept.
+// device, brings the drawing back. Plan files are far too big for
+// localStorage or a cloud row, and IndexedDB stores Blobs as they are. The
+// same store keeps each project's takeoff (state/projects.js: records keyed
+// "project:<id>"). A project's plan stays as long as the project does; plans
+// no project on this device names are pruned to the most recent few.
 // ============================================================
 
 const DB_NAME = 'tiletakeoff';
@@ -30,7 +32,7 @@ function db() {
   return dbp;
 }
 
-function tx(mode, fn) {
+export function tx(mode, fn) {
   return db().then((d) => new Promise((resolve, reject) => {
     const t = d.transaction(STORE, mode);
     const out = fn(t.objectStore(STORE));
@@ -85,10 +87,18 @@ export async function deletePlan(projectId) {
   try { await tx('readwrite', (s) => s.delete(projectId)); } catch (_) { /* nothing stored */ }
 }
 
-// keep the newest KEEP plans
+// the plan keys the projects on this device use (their cloud id once they have one)
+const INDEX_KEY = 'tiletakeoff.projects.v1';
+function projectPlanKeys() {
+  try { return new Set((JSON.parse(localStorage.getItem(INDEX_KEY) || '[]') || []).map((p) => p.cloudId || p.id)); } catch (_) { return new Set(); }
+}
+
+// keep every project's plan; of the plans no project names, the newest KEEP
 async function prune() {
   const keys = await tx('readonly', (s) => s.index('savedAt').getAllKeys());
   // getAllKeys on an index returns primary keys in index (savedAt) order
-  const old = (keys || []).slice(0, Math.max(0, keys.length - KEEP));
+  const mine = projectPlanKeys();
+  const loose = (keys || []).filter((k) => !String(k).startsWith('project:') && !mine.has(k));
+  const old = loose.slice(0, Math.max(0, loose.length - KEEP));
   if (old.length) await tx('readwrite', (s) => { for (const k of old) s.delete(k); });
 }

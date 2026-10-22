@@ -10,6 +10,7 @@ import { roomArea } from './engine/geometry.js';
 import Landing from './components/Landing.jsx';
 import ScaleControl from './components/ScaleControl.jsx';
 import { openPlanFile, restorePlan, planKey } from './lib/planLoad.js';
+import ProjectsDrawer from './components/ProjectsDrawer.jsx';
 import { isStaleBuild, reloadForUpdate, takeUpdateNote, UPDATE_NOTE } from './lib/appUpdate.js';
 import { setPlanPage } from './lib/planStore.js';
 import { useBackLayer } from './lib/backStack.js';
@@ -47,6 +48,13 @@ export default function App() {
     const open = (e) => setLib(e.detail || {});
     window.addEventListener('tt:library', open);
     return () => window.removeEventListener('tt:library', open);
+  }, []);
+  // the Projects list (header button, phone menu: tt:projects)
+  const [projects, setProjects] = useState(false);
+  useEffect(() => {
+    const open = () => setProjects(true);
+    window.addEventListener('tt:projects', open);
+    return () => window.removeEventListener('tt:projects', open);
   }, []);
   const [toast, setToast] = useState(null);
   // phones: the right panel is a bottom sheet; tabs open/close it
@@ -198,12 +206,13 @@ export default function App() {
     setPdfBusy(true);
     try {
       const out = await openPlanFile(file);
-      s.clearTrace();
+      useStore.getState().clearTrace();
       import('./lib/planEvidence.js').then((m) => m.clearEvidenceCache());
       s.setTab('trace');
       setSheet(true);   // the scale and Trace are the next step
       const what = out.kind === 'pdf' ? `PDF loaded · ${out.pages} page${out.pages > 1 ? 's' : ''}` : 'Plan image loaded';
-      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}. Check the scale, then Trace plan or AI Detect.`, ok: true } }));
+      const fresh = out.newProject ? ` New project "${useStore.getState().name}" — the last one is in Projects.` : '';
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}.${fresh} Check the scale, then Trace plan or AI Detect.`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {
       if (isStaleBuild(err) && reloadForUpdate(UPDATE_NOTE)) return;
@@ -301,6 +310,9 @@ export default function App() {
         <button className="tbtn hdr-full" onClick={() => setLib({})} title="Tiles, sizes and patterns — lay them in rooms">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" /><rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" /></svg><span className="tbtn-label">Library</span>
         </button>
+        <button className="tbtn hdr-full" onClick={() => setProjects(true)} title="Every project — each plan is its own">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H3z" /></svg><span className="tbtn-label">Projects</span>
+        </button>
         <AccountBar />
         <label className="tbtn hdr-plan" style={{ cursor: 'pointer' }} title="Open a plan (PDF or image)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2h9l5 5v15H6zM15 2v5h5" /><path d="M9 13h6M9 17h4" /></svg><span className="tbtn-label">PDF</span>
@@ -316,7 +328,7 @@ export default function App() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l9 5v10l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v10" /></svg><span className="tbtn-label">{s.view3d ? '2D' : '3D'}</span>
         </button>
         <ExportMenu />
-        <button className="tbtn primary hdr-full" title="New takeoff" onClick={() => { if (confirm('Start a new takeoff? Current work is saved in this browser.')) s.newProject(); }}>
+        <button className="tbtn primary hdr-full" title="New project — this one stays in Projects" onClick={() => { s.newProject(); window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: 'New project started — the last one is in Projects.', ok: true } })); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg><span className="tbtn-label">New</span>
         </button>
         {s.view3d && (
@@ -363,6 +375,7 @@ export default function App() {
 
       {detect && <Suspense fallback={null}><DetectModal onClose={() => setDetect(false)} /></Suspense>}
       {lib && <Suspense fallback={null}><Library target={lib} onClose={() => setLib(null)} /></Suspense>}
+      {projects && <ProjectsDrawer onClose={() => setProjects(false)} />}
       {toast && (
         <div className={'toast show' + (toast.ok ? ' ok' : '')} role="status">
           {toast.ok && <b>✓</b>} {toast.msg}

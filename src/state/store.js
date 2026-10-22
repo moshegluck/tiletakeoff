@@ -15,6 +15,8 @@ import { slimPages } from './pages.js';
 export { allRooms, allMarkups, wholeProject, otherPages, slimPages } from './pages.js';
 import { materialFields } from '../lib/library.js';
 import { createHistory } from './history.js';
+import { saveProjectLocal, loadProjectLocal, removeProjectLocal, hasContent, projectIndex } from './projects.js';
+export { projectIndex, hasContent } from './projects.js';
 
 const KEY = 'tiletakeoff.project.v1';
 
@@ -51,6 +53,7 @@ function blankProject() {
     pageData: {},
     pdfPage: 1,
     cloudId: null,         // supabase project id when saved to cloud
+    planName: null,        // the plan file this project was opened on (its name): a new file is a new project
     planFile: null,        // the plan file kept in the cloud: { path, name, type, kind, page, size, at }
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -100,15 +103,19 @@ function localSnapshot(s) {
     layoutsV2: true,
     taxRate: s.taxRate, laborRatePerSf: s.laborRatePerSf, job: s.job, view: s.view,
     planImage: null, planWidth: 0, planHeight: 0,
-    createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId, planFile: s.planFile || null,
+    createdAt: s.createdAt, updatedAt: Date.now(), cloudId: s.cloudId, planName: s.planName || null, planFile: s.planFile || null,
   };
 }
 
 
 let warnedQuota = false;
+let libTimer = null;
 function persist(get) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    // …and into this device's projects (state/projects.js), on a slower beat
+    clearTimeout(libTimer);
+    libTimer = setTimeout(() => { const st = get(); if (hasContent(st)) saveProjectLocal(localSnapshot(st)); }, 1000);
     try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); warnedQuota = false; }
     catch (_) {
       // never fail silently: a project that stops saving is worse than a warning
@@ -121,14 +128,36 @@ function persist(get) {
   // cloud save on a slower debounce to limit writes
   if (cloudSaver) {
     clearTimeout(cloudTimer);
-    cloudTimer = setTimeout(() => { try { cloudSaver(get()); } catch (_) {} }, 1500);
+    cloudTimer = setTimeout(() => { cloudTimer = null; try { cloudSaver(get()); } catch (_) {} }, 1500);
   }
 }
 
 const history = createHistory();
 
+// Leaving the project on screen (another plan, another project, a new one):
+// keep it as it stands — on this device now, and in the cloud if a save was
+// still waiting. Returns the snapshot kept (null: nothing worth keeping).
+function keepCurrent(st) {
+  clearTimeout(saveTimer); clearTimeout(libTimer);
+  const pendingCloud = !!cloudTimer && !!cloudSaver;
+  clearTimeout(cloudTimer); cloudTimer = null;
+  if (!hasContent(st)) return null;
+  const snap = localSnapshot(st);
+  saveProjectLocal(snap);
+  if (pendingCloud) { try { cloudSaver(st); } catch (_) { /* the next save retries */ } }
+  return snap;
+}
+// the runtime fields a project switch resets
+const FRESH_UI = { pdfDoc: null, pdfPages: 0, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select', traceFocus: null, keepView: false };
+function dropPlanImage(st) {
+  if (st.planImage && st.planImage.startsWith('blob:')) { try { URL.revokeObjectURL(st.planImage); } catch (_) { /* gone */ } }
+}
+
 export const useStore = create((rawSet, get) => {
   const initial = loadProject();
+  // the project on screen is one of this device's projects (saved before
+  // there were projects: it becomes the first)
+  if (hasContent(initial) && !projectIndex().some((p) => p.id === initial.id)) saveProjectLocal({ ...localSnapshot(initial), updatedAt: initial.updatedAt || Date.now() });
   // every change goes through here so undo / redo can record it
   const set = (partial, replace) => {
     const before = get();
@@ -278,14 +307,61 @@ export const useStore = create((rawSet, get) => {
   setGridMaterial: (id) => set({ gridMaterialId: id }),
   toggle3d: (v) => set({ view3d: v ?? !get().view3d }),
 
-  newProject: () => { const p = blankProject(); set({ ...p, pageKnown: true, pdfDoc: null, pdfPages: 0, selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select' }); persist(get); },
+  /**
+   * Start a new project. The one on screen is kept in this device's projects
+   * (and the cloud) as it stands; nothing of it carries over — not its plan,
+   * rooms, scale, job or undo history.
+   * @param {{ name?: string }} [opts]
+   */
+  newProject: (opts = {}) => {
+    const st = get();
+    keepCurrent(st);
+    dropPlanImage(st);
+    const p = blankProject();
+    rawSet({ ...p, ...(opts.name ? { name: opts.name } : {}), pageKnown: true, ...FRESH_UI });
+    history.clear(); rawSet(history.counts());
+    persist(get);
+  },
+  /**
+   * Open a project kept on this device; the one on screen is kept first.
+   * @returns {Promise<boolean>} false when it isn't on this device
+   */
+  openProject: async (id) => {
+    const st = get();
+    if (id === st.id) return true;
+    const snap = await loadProjectLocal(id);
+    if (!snap) return false;
+    keepCurrent(get());
+    dropPlanImage(get());
+    rawSet({ ...blankProject(), ...fromSaved(snap), ...FRESH_UI });
+    history.clear(); rawSet(history.counts());
+    try { localStorage.setItem(KEY, JSON.stringify(localSnapshot(get()))); } catch (_) { /* the library has it */ }
+    return true;
+  },
+  /** Delete a project from this device (the one on screen: a new one takes its place). */
+  removeProject: async (id) => {
+    const meta = projectIndex().find((p) => p.id === id);
+    await removeProjectLocal(id);
+    const { deletePlan } = await import('../lib/planStore.js');
+    await deletePlan(meta?.cloudId || id);
+    if (get().id === id) {
+      dropPlanImage(get());
+      rawSet({ ...blankProject(), pageKnown: true, ...FRESH_UI });
+      history.clear(); rawSet(history.counts());
+      persist(get);
+    }
+  },
+  setPlanName: (planName) => { set({ planName }); persist(get); },
   loadSnapshot: (snap) => { set({ ...fromSaved(snap), selZone: null }); persist(get); },
   setCloudId: (cloudId) => { set({ cloudId }); persist(get); },
   setPlanFile: (planFile) => { set({ planFile }); persist(get); },
   // load a project row fetched from Supabase into the working store
   loadCloudDoc: (row) => {
     const doc = row.doc || {};
-    set({
+    // the project on screen stays as it was, kept on this device
+    if (get().id !== row.id) keepCurrent(get());
+    dropPlanImage(get());
+    rawSet({
       ...blankProject(),
       id: row.id, cloudId: row.id, name: row.name, unitSystem: row.unit_system, planFile: doc.planFile || null,
       scale: doc.scale ?? null, archScale: doc.archScale ?? null, showGrid: doc.showGrid ?? true,
@@ -294,8 +370,11 @@ export const useStore = create((rawSet, get) => {
       pageData: doc.pageData || {}, pdfPage: doc.pdfPage || doc.planFile?.page || 1, pageKnown: doc.pdfPage != null,
       taxRate: doc.taxRate ?? 8.625, laborRatePerSf: doc.laborRatePerSf ?? 0, job: { ...blankProject().job, ...(doc.job || {}) },
       view: doc.view || { x: 80, y: 80, zoom: 1 }, planImage: doc.planImage ?? null, planWidth: doc.planWidth || 0, planHeight: doc.planHeight || 0,
-      selection: { type: null, id: null }, selRooms: [], selZone: null, gridMaterialId: null, tool: 'select',
+      planName: doc.planName || doc.planFile?.name || null,
+      ...FRESH_UI,
     });
+    history.clear(); rawSet(history.counts());
+    if (hasContent(get())) saveProjectLocal(localSnapshot(get()));
     // local mirror only; don't trigger a cloud write of what we just read.
     // Use the trimmed snapshot so we don't serialize planImage / the live
     // pdfDoc proxy into localStorage.
