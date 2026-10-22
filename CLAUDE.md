@@ -64,10 +64,11 @@ TileTakeoff works the other way round:
     A wall built in layers (an 8" block wall and a 6" lining, three heavy face lines) shares the line
     between them: on a sheet with pen weights each face line serves one wall on each side
     (`layerFaces`), while the two together are no thicker than `maxT`; `mergeLayers` makes them one
-    wall (Bais Rochel's lunchroom leaked past the lining's end with the block wall lost). A layer
-    under 3 ft (`minLayerLen`) on a face another wall already uses is no layer: a sink bowl drawn in the
-    wall pen 5½" off the sample's kitchen wall paired with its face and notched the floor (177.7 → 176.3;
-    the AI check caught it).
+    wall (Bais Rochel's lunchroom leaked past the lining's end with the block wall lost). A layer on a
+    face another wall already uses is no layer when its other line is the near edge of a small closed box
+    (both ends turn away from the wall ≤ 4 ft and a parallel line closes it: `fixtureBox`): a sink bowl drawn
+    in the wall pen 5½" off the sample's kitchen wall paired with its face and notched the floor (177.7 →
+    176.3; the AI check caught it). A plain 3 ft minimum lost Bais Rochel's short linings (ENTRY 369 → 374).
   - `graph.js` `bridgeOpenings` also reads the window symbol on unlayered sheets: 2+ lines across the
     gap inside the wall's thickness → a window (closes the room, stays in wall LF). A gap ≤ 8' with
     door-layer drawing at both jambs as deep as the wall (`framed`: a pocket door, a cased opening —
