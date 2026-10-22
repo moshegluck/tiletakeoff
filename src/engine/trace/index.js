@@ -13,7 +13,8 @@ import { takeStairsOffFloors } from './stairs.js';
 import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
-import { dist, norm, sub, add, mul } from './vec.js';
+import { dist, norm, sub, add, mul, pointInPoly } from './vec.js';
+import { roomSeeds, seedGaps, seedType } from './seeds.js';
 import { describeSheet } from './survey.js';
 import { leafLines } from './arcs.js';
 
@@ -160,7 +161,7 @@ function traceReading(input = {}) {
 
   // 2–5. join, bridge openings, build the graph, trace rooms
   const schedule = input.schedule !== undefined ? input.schedule : parseDoorSchedule(texts);
-  const solve = (keepOpen, lg) => {
+  const solve = (keepOpen, lg, extra = []) => {
     const o2 = keepOpen.length ? { ...opt, keepOpen } : opt;
     // 2. join corners / tees / drafting gaps
     const joined = joinWalls(bodies, o2, lg);
@@ -170,7 +171,7 @@ function traceReading(input = {}) {
     // 4. planar graph, cleaned
     // (an opening run on a thick wall's line closes to its thin jamb with a step)
     const steps = openings.filter((o) => o.step).map((o) => ({ ...o.step, kind: 'wall', conf: 0.6, src: 'repair' }));
-    const g0 = buildGraph(segs.concat(openings, steps), o2, lg);
+    const g0 = buildGraph(segs.concat(openings, steps, extra), o2, lg);
     const g = pruneGraph(g0, o2, lg);
     // 5. faces → rooms, LF, flags
     const res = analyzeGraph(g, { texts: input.labels || texts, allTexts: texts, arcs, schedule, options: o2, sheet: input.sheet || null, faces: paired.faces || [], drawn: input.lines || [], hints: input.hints || [], wallPen: paired.stats?.heavyW || 0 });
@@ -182,14 +183,55 @@ function traceReading(input = {}) {
   // opens into — a study's alcove of built-ins, a nook — not a room of its
   // own: leave its mouth open and solve again.
   const mouths = alcoveMouths(res);
+  let kept = [];
   if (mouths.length) {
     const log2 = [];
     const again = solve(mouths, log2);
     if (again.res.rooms.length) {
       ({ g, res } = again);
+      kept = mouths;
       log.length = 0; log.push(...log2);
       log.push({ kind: 'opening', at: mouths[0], note: `${mouths.length / 2} alcove${mouths.length > 2 ? 's' : ''} kept open to the room around ${mouths.length > 2 ? 'them' : 'it'}` });
     }
+  }
+
+  // Rooms the sheet tells apart where the walls don't: two names (or seeds
+  // from a reading of the plan) in one closed space part at the narrowest
+  // gap between them; a name in no closed space is shut in at its leaks.
+  // Kept only when more rooms stand apart and the plan's own numbers don't
+  // disagree more.
+  if (opt.seedGaps !== false) {
+    const roomAt = (p) => res.rooms.find((r) => pointInPoly(p, r.poly))?.id || null;
+    const seeds = roomSeeds(res.spots || [], input.seeds || [], roomAt);
+    const gaps = seedGaps(g, seeds, { maxOpening: opt.maxOpening, anyPair: !!opt.seedAnyPair });
+    if (gaps.length) {
+      const extra = gaps.map((gp, i) => ({
+        id: `os${i}`, a: gp.at, b: gp.to, t: gp.t, kind: 'opening', openingType: 'opening', width: gp.gap, arcs: [], conf: 0.5,
+        via: 'seed', hint: false, jambs: [gp.at, gp.to], seeded: { why: gp.why, names: gp.names },
+      }));
+      const log3 = [];
+      const again = solve(kept, log3, extra);
+      const apart = (rs) => {
+        const at = (p) => rs.rooms.find((r) => pointInPoly(p, r.poly))?.id || null;
+        const ids = seeds.map(at);
+        return ids.filter((id) => id && ids.filter((x) => x === id).length === 1).length;
+      };
+      const v0 = res.verify || {}, v1 = again.res.verify || {};
+      if (again.res.rooms.length && apart(again.res) > apart(res) && (v1.matched || 0) >= (v0.matched || 0) && (v1.off || 0) <= (v0.off || 0)) {
+        ({ g, res } = again);
+        log.length = 0; log.push(...log3);
+        log.push({ kind: 'opening', at: gaps[0].at, note: `${gaps.length} gap${gaps.length > 1 ? 's' : ''} closed so the rooms the plan names stand apart` });
+      }
+    }
+  }
+
+  // a room the sheet names nowhere takes the name a reading of the plan gives it
+  for (const s of input.seeds || []) {
+    if (!s?.name || !Number.isFinite(s.x) || !Number.isFinite(s.y)) continue;
+    const r = res.rooms.find((rm) => !rm.labels?.length && !rm.seedName && pointInPoly(s, rm.poly));
+    if (!r) continue;
+    r.name = s.name; r.seedName = true;
+    if (r.type === 'room') r.type = seedType(s.type);
   }
 
   // stair runs: their treads are no floor (the landings are)
@@ -214,6 +256,7 @@ function traceReading(input = {}) {
     version: 1,
     rooms: res.rooms,
     voids: res.voids,
+    spots: res.spots || [],
     walls: res.walls,
     openings: res.openings,
     flags: res.flags,

@@ -31,7 +31,7 @@ export const ROOM_TYPES = [
   ['laundry', /\b(laundry|laund|utility|util|mud\s*room|mudroom|w\/d)\b/i],
   ['bedroom', /\b(bedroom|bed\s*rm|bdrm|br|master|guest|nursery|bed|suite)\b/i],
   ['living', /\b(living|family|great\s*room|den|lounge|rec|recreation|media|playroom|study|office|library|sunroom|bonus)\b/i],
-  ['dining', /\b(dining|din|breakfast|nook)\b/i],
+  ['dining', /\b(dining|din|dinette|breakfast|nook)\b/i],
   ['hall', /\b(hall|hallway|corridor|corr|foyer|entry|vestibule|vest|gallery|landing|stair|stairs|stairway)\b/i],
   ['garage', /\b(garage|gar|carport)\b/i],
   ['outdoor', /\b(porch|deck|patio|balcony|terrace|veranda)\b/i],
@@ -677,6 +677,26 @@ export function analyzeGraph(g, ctx = {}) {
     roomOfFace.set(f.id, room);
   }
 
+  // where the sheet names each room: every cluster of names standing
+  // together (a name over its size), by the room it stands in — and the
+  // names standing in no room (seeds.js parts and closes rooms by them)
+  const spots = [];
+  for (const f of interior) {
+    const room = roomOfFace.get(f.id);
+    if (!room || !f.labels?.length) continue;
+    const groups = [];
+    for (const t of f.labels.slice().sort((a, b) => (a.y - b.y) || (a.x - b.x))) {
+      const gr = groups.find((gg) => gg.some((u) => dist(u, t) < 4.5));
+      if (gr) gr.push(t); else groups.push([t]);
+    }
+    for (const gr of groups) {
+      const typed = gr.filter((t) => roomTypeOf(t.str) !== 'room');
+      const at = (typed[0] || gr[0]);
+      spots.push({ x: at.x, y: at.y, name: [...new Set(gr.map((t) => t.str.trim()))].join(' '), type: roomTypeOf(at.str), roomId: room.id, typed: typed.length > 0 });
+    }
+  }
+  for (const t of leaking) spots.push({ x: t.x, y: t.y, name: t.str.trim(), type: roomTypeOf(t.str), roomId: null, typed: true });
+
   if (!rooms.length && !ctx._quiet) {
     flag('error', 'no_rooms', null, 'No closed rooms were found — check the scale and the trace area, or the drawing may be too faint / not a floor plan');
   }
@@ -709,12 +729,23 @@ export function analyzeGraph(g, ctx = {}) {
       const op = {
         id: `o${e.id}`, edgeId: e.id, a: { ...a }, b: { ...b }, t: e.t, width: o.width ?? dist(a, b), openingType: o.openingType || 'opening',
         conf: o.conf ?? 0.6, arcs: o.arcs || [], hint: !!o.hint, across: !!o.across, exterior, rooms: [ra?.id || null, rb?.id || null], jambs: o.jambs,
+        ...(o.seeded ? { seeded: o.seeded } : {}),
       };
       openings.push(op);
       for (const r of [ra, rb]) if (r) r.openings.push({ id: op.id, width: op.width, type: op.openingType, to: (r === ra ? rb : ra)?.name || (exterior ? 'Exterior' : null) });
     } else {
       walls.push({ id: `w${e.id}`, edgeId: e.id, a: { ...a }, b: { ...b }, t: e.t, conf: e.conf, src: e.src, exterior, length: dist(a, b) });
     }
+  }
+
+  // a gap closed so rooms the sheet tells apart stand apart: nothing drawn
+  // across it says so — say where it is
+  for (const op of openings) {
+    if (!op.seeded) continue;
+    const rs = op.rooms.map((id) => rooms.find((r) => r.id === id)).filter(Boolean);
+    const names = op.seeded.names.map((n) => `"${n}"`).join(' and ');
+    const why = op.seeded.why === 'split' ? `so ${names} stand in rooms of their own (the plan names both in one space)` : `so ${names} closes (its name stood in no closed room)`;
+    flag('warn', 'seeded_gap', mid(op.a, op.b), `Closed the ${fmtIn(op.width)} gap here — nothing is drawn across it — ${why}. Check it's a doorway or opening.`, { roomId: rs[0]?.id, alsoRoomIds: rs.slice(1).map((r) => r.id), gap: { at: op.a, to: op.b } });
   }
 
   // ---- dangling ends ----
@@ -766,13 +797,13 @@ export function analyzeGraph(g, ctx = {}) {
     const r = rooms.find((rr) => pointInPoly(p, rr.centerPoly));
     if (r) fl.roomId = r.id;
   }
-  for (const fl of flags) if (fl.roomId) rooms.find((r) => r.id === fl.roomId)?.flags.push(fl.id);
+  for (const fl of flags) for (const id of [fl.roomId, ...(fl.alsoRoomIds || [])]) if (id) rooms.find((r) => r.id === id)?.flags.push(fl.id);
   for (const r of rooms) {
     const sev = r.flags.map((id) => flags.find((f) => f.id === id)?.severity);
     r.status = sev.includes('error') ? 'error' : sev.includes('warn') ? 'review' : 'ok';
   }
 
-  return { rooms, voids, walls, openings, flags, calibration, verify, faces: faces.length };
+  return { rooms, voids, walls, openings, flags, calibration, verify, faces: faces.length, spots };
 }
 
 // ---------------------------------------------------------------------------

@@ -149,6 +149,19 @@ TileTakeoff works the other way round:
     the name, `gap`, `gaps`; drawn dashed red); it still attaches to rooms by its name. Neutral on the
     bench; on the marked jobs it located 33 of 95 (the rest: decks / patios outside the walls, notes);
     the gaps it found are the work list for bridging (unbridged doors with swings, an 18' garage door).
+    `gapMap` is the same raster as an object: `leak(p)`, `split(p, q)` (each way from p to q closed at
+    the narrowest gap it crosses), `hold` / `release` / `joined`.
+  - `seeds.js` rooms the sheet tells apart where the walls don't (a third pass in `traceReading`, after
+    the alcove pass; `options.seedGaps: false` turns it off). Seeds = each cluster of room names standing
+    together (`analyzeGraph` → `res.spots`) + `input.seeds` (an AI reading's rooms, a click: {x, y, name,
+    type}; one naming a room the sheet names is that name's seed). Two seeds in one closed space part at
+    the narrowest gap between them, when one is a doored room (bath, closet, laundry, mech, bedroom,
+    garage, porch, no-floor: ≤ 8 ft, 16 beside a garage) or both are different open rooms (kitchen /
+    dining / living / hall: ≤ 6.5 ft, a cased opening); never two halls, and a split that parts two halls
+    standing together is no split (Rose Hill: the corridor's passages are no room's door). A typed name in
+    no closed room is shut in at its leak gaps. Each gap closed is an opening (`seeded`), flagged
+    `seeded_gap` at the gap on both rooms (nothing drawn says so). Kept only when more seeds stand apart
+    and the plan check agrees no less. A room named nowhere takes its seed's name. DINETTE is dining.
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
@@ -198,6 +211,15 @@ TileTakeoff works the other way round:
     floor is set to run to the door's centre) or an `area_check` flag at
     the tag with both numbers (several tags in one room = rooms merged).
     `res.verify` = { tags, matched, off, unplaced }.
+- `scripts/ai-program.mjs manifest.json --out dir [--models a,b] [--sheets …] [--dry]` — the AI room reading
+  (the plan's pass 1) raced on marked sheets: the plan cropped to the traced building (annotations hidden —
+  the estimator's markups must not show), 2576 px, each room's name / type / point / box, scored against
+  the marked areas; `bench.mjs --seeds dir[:model]` traces with those rooms as seeds. Race (12 hard
+  sheets, 312 marked areas): Opus 5.5 put a point in 81.4% of them, box IoU ≥ 0.5 on 194, ~$0.11 and ~50 s
+  a sheet; Fable 5.1 78.5%, 147, ~$0.45 and ~95 s. Opus 5.5 reads plans for this. As seeds they add
+  little yet (150 → 150 right on those sheets): the rooms they tell apart are mostly parted by a wall the
+  trace never read (19 Virginia's ROOM #1 / #2), not by a gap — next: re-read the drawing between two
+  seeds (the lines the trace set aside there), geometry still from the drawing.
 - `scripts/bench.mjs manifest.json [--json out] [--baseline base] [--options '{"maxOpening":12}']` — the
   accuracy benchmark (`--options`: trace with these engine options, for tuning): per sheet,
   answers (printed tags and/or hand-audited rooms) right within 1%, within 3%, merged, missing, and
@@ -318,7 +340,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 476 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 481 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -394,10 +416,13 @@ TileTakeoff works the other way round:
   facility p2 8 → 13, p5 26 → 30; 19 Ecbo 0 → 3). Then fixture boxes kept out of wall layers (the sample's
   sink, found by the live AI check; measured on main before #54): 682 right, 821 within 3%, 65 silent;
   own scale 597 / 1,040, 709, 52.
+  Then seeds (two room names in one space part at their doorway): 687 right (54.4%), 825 within 3%, 61
+  silent; own scale 602 / 1,040 (57.9%), 715 within 3%, 51 silent (34 / 36 Ellish p1 +2 each, 36 Ellish
+  silent 5 → 3).
   Moshe's four uploads (Oct 2026: 58 South Parker, Mill 2 apartment types, 65 Highview school, 5 Daisy
   Court; 24 sheets / 238 marked areas, PDFs outside the repo): 118 right (49.6%), 152 within 3%, 10
   silent at first; with poché strips, empty readings never winning and trade copies set aside 119 / 156 /
-  8 (the apartment sheets traced nothing before; their baths now come within 3%, a finish line ½" inside
+  8, with seeds 119 / 157 / 8 (the apartment sheets traced nothing before; their baths now come within 3%, a finish line ½" inside
   the poché is where the estimator measures). The AI passes (the plan's step 2) read the key from
   `TILETAKEOFF_ANTHROPIC_KEY` in the cloud environment (never `ANTHROPIC_API_KEY`: Claude Code itself would
   take it), sent as `x-api-key` to api.anthropic.com; Opus 5.5 and Fable 5.1 both answer.
