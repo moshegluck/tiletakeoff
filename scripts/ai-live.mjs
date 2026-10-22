@@ -9,7 +9,7 @@
 //
 //   ANTHROPIC_API_KEY=… node scripts/ai-live.mjs [--out dir] [--only detect,label,review]
 //     [--vector samples/sample-house.pdf] [--scan samples/sample-house-scanned.pdf] [--scan-scale 1/4]
-// (TT_ANTHROPIC_KEY is read when ANTHROPIC_API_KEY isn't set.) The route runs
+// (TILETAKEOFF_ANTHROPIC_KEY or TT_ANTHROPIC_KEY is read when ANTHROPIC_API_KEY isn't set.) The route runs
 // without sign-in here: no Supabase env reaches it.
 // ============================================================
 import fs from 'node:fs';
@@ -23,8 +23,8 @@ const ONLY = new Set(arg('only', 'detect,label,review').split(','));
 const VECTOR = path.resolve(arg('vector', 'samples/sample-house.pdf'));
 const SCAN = path.resolve(arg('scan', 'samples/sample-house-scanned.pdf'));
 
-if (!process.env.ANTHROPIC_API_KEY && process.env.TT_ANTHROPIC_KEY) process.env.ANTHROPIC_API_KEY = process.env.TT_ANTHROPIC_KEY;
-if (!process.env.ANTHROPIC_API_KEY) { console.error('No ANTHROPIC_API_KEY (or TT_ANTHROPIC_KEY) in the environment.'); process.exit(2); }
+process.env.ANTHROPIC_API_KEY ||= process.env.TILETAKEOFF_ANTHROPIC_KEY || process.env.TT_ANTHROPIC_KEY || '';
+if (!process.env.ANTHROPIC_API_KEY) { console.error('No ANTHROPIC_API_KEY (or TILETAKEOFF_ANTHROPIC_KEY / TT_ANTHROPIC_KEY) in the environment.'); process.exit(2); }
 for (const k of ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) delete process.env[k];
 fs.mkdirSync(OUT, { recursive: true });
 
