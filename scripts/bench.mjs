@@ -2,6 +2,7 @@
 // bench.mjs — score the trace against answer keys.
 //
 //   node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json] [--key-scale] [--options '{"maxOpening":12}']
+//     [--seeds dir[:model]]   (rooms an AI reading found, from scripts/ai-program.mjs, as seeds)
 //
 // manifest: { "sheets": [ {
 //   "name": "Mill 2 A101", "pdf": "/path/plan.pdf", "page": 16,
@@ -68,7 +69,18 @@ for (const sh of manifest.sheets) {
   if (!sc) { console.log(`── ${sh.name}: no scale on the sheet — skipped`); continue; }
   const input = evidenceToFeet(ev, sc.scale, null);
   const t0 = Date.now();
-  const res = runTrace({ ...input, options: traceOptions, sheet: { x0: 0, y0: 0, x1: ev.width * sc.scale, y1: ev.height * sc.scale } });
+  // --seeds dir[:model]: the rooms an AI reading of the sheet found (scripts/ai-program.mjs), as seeds
+  let seeds;
+  if (opt('seeds')) {
+    const [dir, model = 'claude-opus-5-5'] = opt('seeds').split(':');
+    const base = `${dir}/${sh.name.replace(/[^\w.-]+/g, '_')}`;
+    if (existsSync(`${base}.frame.json`) && existsSync(`${base}.${model}.json`)) {
+      const fr = JSON.parse(readFileSync(`${base}.frame.json`, 'utf8'));
+      const toFt = (x, y) => ({ x: ((x + fr.X) / fr.f) * RENDER_SCALE * sc.scale, y: ((y + fr.Y) / fr.f) * RENDER_SCALE * sc.scale });
+      seeds = JSON.parse(readFileSync(`${base}.${model}.json`, 'utf8')).rooms.map((r) => ({ ...toFt(r.x, r.y), name: r.name, type: r.type }));
+    }
+  }
+  const res = runTrace({ ...input, seeds, options: traceOptions, sheet: { x0: 0, y0: 0, x1: ev.width * sc.scale, y1: ev.height * sc.scale } });
   const ms = Date.now() - t0;
   const answers = [];
   if (sh.printed) for (const t of printedAreas(input.texts)) answers.push({ name: `${t.sf} SF tag`, at: { x: t.x, y: t.y }, sf: t.sf, src: 'printed' });

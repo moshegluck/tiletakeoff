@@ -24,8 +24,22 @@
  *   the way out leaves (null: no such gaps — the name stands outside the
  *   walls, or the walls are too open to say)
  */
-export function leakPoints(edges, nodes, from, { maxCells = 1_000_000, maxGap = 20, maxGaps = 3 } = {}) {
+export function leakPoints(edges, nodes, from, opt = {}) {
   if (!edges.length || !from.length || !nodes.length) return from.map(() => null);
+  const m = gapMap(edges, nodes, opt);
+  return from.map((p) => m.leak(p));
+}
+
+/**
+ * The gaps the walls leave, on a raster of the traced walls — to ask where a
+ * room opens to the outside (`leak`) or which gaps stand between two rooms
+ * that share one closed space (`split`). Gaps closed with `hold` stay closed
+ * for later questions.
+ * @param {{a:{x,y}, b:{x,y}}[]} edges
+ * @param {{x,y}[]} nodes
+ * @param {{ maxCells?: number, maxGap?: number, maxGaps?: number }} [opt]
+ */
+export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGaps = 3 } = {}) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const e of edges) for (const p of [e.a, e.b]) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   x0 -= 3; y0 -= 3; x1 += 3; y1 += 3;
@@ -141,14 +155,14 @@ export function leakPoints(edges, nodes, from, { maxCells = 1_000_000, maxGap = 
   const prev = new Int32Array(N);
   const queue = new Int32Array(N);
   let gen = 0;
-  const wayOut = (s) => {
+  const wayOut = (s, to = -1) => {
     gen++;
     let head = 0, tail = 0;
     queue[tail++] = s; seen[s] = gen; prev[s] = s;
     while (head < tail) {
       const c = queue[head++];
       const cx = c % W, cy = (c - cx) / W;
-      if (cx === 0 || cy === 0 || cx === W - 1 || cy === H - 1) {
+      if (to >= 0 ? c === to : cx === 0 || cy === 0 || cx === W - 1 || cy === H - 1) {
         const path = [];
         for (let p = c; ; p = prev[p]) { path.push(p); if (p === s) break; }
         return path.reverse();
@@ -160,49 +174,92 @@ export function leakPoints(edges, nodes, from, { maxCells = 1_000_000, maxGap = 
     }
     return null;
   };
-  // the last gap the walk goes through (from one side of it to the other) on
-  // its way out: where the space opens to the outside. (Closing the first —
-  // the mouth of a vestibule whose own door is open — would cut the room in
-  // two where nothing is drawn across.)
-  const through = (path) => {
-    for (let i = path.length - 2; i > 0; i--) {
+  // the gaps the walk goes through (from one side to the other), in order
+  const crossed = (path) => {
+    const out = [];
+    for (let i = 1; i < path.length - 1; i++) {
       for (const k of gapsAt.get(path[i]) || []) {
-        let j = i - 1;
-        while (j > 0 && (gapsAt.get(path[j]) || []).includes(k)) j--;
-        const a = side(gaps[k], path[i + 1]), b = side(gaps[k], path[j]);
-        if (a && b && a !== b) return gaps[k];
+        if ((gapsAt.get(path[i - 1]) || []).includes(k)) continue;
+        let j = i + 1;
+        while (j < path.length - 1 && (gapsAt.get(path[j]) || []).includes(k)) j++;
+        const a = side(gaps[k], path[i - 1]), b = side(gaps[k], path[j]);
+        if (a && b && a !== b && !out.includes(gaps[k])) out.push(gaps[k]);
       }
     }
-    return null;
+    return out;
   };
+  // the last gap the walk goes through on its way out: where the space opens
+  // to the outside. (Closing the first — the mouth of a vestibule whose own
+  // door is open — would cut the room in two where nothing is drawn across.)
+  const through = (path) => crossed(path).pop() || null;
   const close = (g, d) => line(g.at, g.to, (c) => { shut[c] += d; });
-  return from.map((p) => {
-    let s = gy(p.y) * W + gx(p.x);
-    if (wall[s]) {
-      s = [s - 1, s + 1, s - W, s + W].find((k) => k >= 0 && k < N && !wall[k]);
-      if (s === undefined) return null;
+  const cellOf = (p) => {
+    const s = gy(p.y) * W + gx(p.x);
+    if (!wall[s]) return s;
+    const k = [s - 1, s + 1, s - W, s + W].find((c) => c >= 0 && c < N && !wall[c]);
+    return k === undefined ? -1 : k;
+  };
+  // only the gaps it takes: one the room stays shut without is no gap of its
+  let found = [];
+  const prune = (s, to) => {
+    for (const g of found.slice()) {
+      if (found.length < 2) break;
+      close(g, -1);
+      if (wayOut(s, to)) close(g, 1);
+      else found = found.filter((x) => x !== g);
     }
-    // close the gap the way out leaves by, in turn, until the room is shut in
-    let found = [];
-    let sealed = false;
-    for (let n = 0; n <= 2 * maxGaps; n++) {
-      const path = wayOut(s);
-      if (!path) { sealed = found.length > 0; break; }
-      const g = n < 2 * maxGaps && through(path);
-      if (!g) break;
-      found.push(g);
-      close(g, 1);
-    }
-    // only the gaps it takes: one the room stays shut in without is no leak
-    if (sealed) {
-      for (const g of found.slice()) {
-        if (found.length < 2) break;
-        close(g, -1);
-        if (wayOut(s)) close(g, 1);
-        else found = found.filter((x) => x !== g);
+  };
+  return {
+    gaps,
+    /** the gaps that shut the room around p in (null: none can) */
+    leak(p) {
+      const s = cellOf(p);
+      if (s < 0) return null;
+      // close the gap the way out leaves by, in turn, until the room is shut in
+      found = [];
+      let sealed = false;
+      for (let n = 0; n <= 2 * maxGaps; n++) {
+        const path = wayOut(s);
+        if (!path) { sealed = found.length > 0; break; }
+        const g = n < 2 * maxGaps && through(path);
+        if (!g) break;
+        found.push(g);
+        close(g, 1);
       }
-    }
-    for (const g of found) close(g, -1);
-    return sealed && found.length <= maxGaps ? { ...found[0], gaps: found } : null;
-  });
+      if (sealed) prune(s, -1);
+      for (const g of found) close(g, -1);
+      return sealed && found.length <= maxGaps ? { ...found[0], gaps: found } : null;
+    },
+    /**
+     * the gaps between p and q in one closed space: each way from one to the
+     * other closed at the narrowest gap it goes through (a doorway is
+     * narrower than the rooms it joins), until none is left (null: p and q
+     * stand in one open space — nothing drawn parts them)
+     */
+    split(p, q, { widest = maxGap } = {}) {
+      const s = cellOf(p), t = cellOf(q);
+      if (s < 0 || t < 0 || s === t) return null;
+      found = [];
+      let parted = false;
+      for (let n = 0; n <= 2 * maxGaps; n++) {
+        const path = wayOut(s, t);
+        if (!path) { parted = found.length > 0; break; }
+        const g = n < 2 * maxGaps && crossed(path).filter((x) => x.gap <= widest).sort((x, y) => x.gap - y.gap)[0];
+        if (!g) break;
+        found.push(g);
+        close(g, 1);
+      }
+      if (parted) prune(s, t);
+      for (const g of found) close(g, -1);
+      return parted && found.length <= maxGaps ? found : null;
+    },
+    /** keep these gaps closed for the questions after (or open them again) */
+    hold(list) { for (const g of list) close(g, 1); },
+    release(list) { for (const g of list) close(g, -1); },
+    /** can one walk from p to q past the walls and the gaps held closed? */
+    joined(p, q) {
+      const s = cellOf(p), t = cellOf(q);
+      return s >= 0 && t >= 0 && (s === t || !!wayOut(s, t));
+    },
+  };
 }
