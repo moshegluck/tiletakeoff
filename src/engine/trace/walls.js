@@ -38,6 +38,7 @@ export const WALL_DEFAULTS = {
   casework: true,           // a hairline-faced strip against a wall is casework, not wall
   shareThickFaces: true,    // a brick wall may share its face with a wall built against it
   layerFaces: true,         // a face line between two layers of a wall (pen weights) serves a wall on each side
+  fixtureBox: 4,            // ft: a closed box this deep standing off a wall's face (sink, tank) is no layer of the wall
 };
 
 /** Normalize raw lines to { a, b, w, th, u, n, rho, s0, s1, len }. */
@@ -509,6 +510,40 @@ export function pairWalls(rawLines, options = {}) {
   const debugPairs = /** @type {any} */ (opt)._debugPairs;
   if (Array.isArray(debugPairs)) debugPairs.push({ peaks, heavyW, cands, lines, hatch });
 
+  // the near edge of a small closed box standing off the face `wall`: both its
+  // ends turn away from the wall, a box's depth at most, and a line parallel
+  // to it closes the box behind (a sink bowl, a toilet tank). A fixture is a
+  // foot wide at least and stands along the wall's run, which carries on past
+  // it both ways: a box at the wall's end is its pilaster or a door's frame
+  const tol = 2 * IN, D = opt.fixtureBox;
+  const boxedOff = (x, wall) => {
+    if (!D || x.len < 1 || x.len > 2 * D) return false;
+    const along = (p) => dot(p, x.u);
+    const [x0, x1] = [along(x.a), along(x.b)].sort((p, q) => p - q), [w0, w1] = [along(wall.a), along(wall.b)].sort((p, q) => p - q);
+    if (x0 - w0 < 1 || w1 - x1 < 1) return false;
+    const n0 = perp(x.u), away = dot(sub(wall.a, x.a), n0) > 0 ? -1 : 1;
+    const n = { x: n0.x * away, y: n0.y * away };
+    const near = (p, r) => [...idx.query(p.x - r, p.y - r, p.x + r, p.y + r)].map((i) => lines[i]);
+    const side = (e) => {
+      for (const s of near(e, tol)) {
+        if (s === x || angleDiff(s.th, x.th) < Math.PI / 3) continue;
+        for (const [p, q] of [[s.a, s.b], [s.b, s.a]]) {
+          if (dist(p, e) > tol) continue;
+          const depth = dot(sub(q, e), n);
+          if (depth > 0.2 && depth <= D) return depth;
+        }
+      }
+      return 0;
+    };
+    const d0 = side(x.a), d1 = side(x.b);
+    if (!d0 || !d1 || Math.abs(d0 - d1) > tol) return false;
+    const back = (sv) => ({ x: x.a.x + x.u.x * sv + n.x * d0, y: x.a.y + x.u.y * sv + n.y * d0 });
+    const pa = back(0), pb = back(x.len);
+    return near({ x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 }, x.len / 2 + tol).some((y) => y !== x
+      && angleDiff(y.th, x.th) < opt.pairAngTol && Math.abs(dot(sub(y.a, x.a), n) - d0) <= tol
+      && Math.min(dot(y.a, x.u), dot(y.b, x.u)) <= dot(pa, x.u) + tol && Math.max(dot(y.a, x.u), dot(y.b, x.u)) >= dot(pb, x.u) - tol);
+  };
+
   // ---- greedy assignment with per-line interval coverage ----
   let bodies = [];
   for (const c of cands) {
@@ -546,10 +581,22 @@ export function pairWalls(rawLines, options = {}) {
     const covLProj = covL.slice();
     let parts = subtractIntervals(c.o0, c.o1, covLProj);
     parts = parts.flatMap(([a, b]) => subtractIntervals(a, b, covMProj));
+    // a stretch whose face already serves a wall on its other side is a layer
+    // built against that wall — unless its other line is the near edge of a
+    // small closed box: a fixture drawn in the wall pen a few inches off the
+    // wall (the sample kitchen's sink bowl, 5½" off), not a lining
+    const project = (x) => x.cov.map(([a0, b0]) => {
+      const xPerp = dot(x.a, perp(x.u));
+      const at = (sv) => dot({ x: x.u.x * sv + perp(x.u).x * xPerp, y: x.u.y * sv + perp(x.u).y * xPerp }, u);
+      return [Math.min(at(a0), at(b0)), Math.max(at(a0), at(b0))];
+    });
+    const usedL = layer ? project(l) : [], usedM = layer ? project(m) : [];
+    const hits = (used, a, b) => used.some(([p0, p1]) => Math.min(b, p1) - Math.max(a, p0) > 0.05);
     for (const [a, b] of parts) {
       // a wall runs most of its thickness at least (two parallel hatch strokes
       // a foot apart are not a 12" wall five inches long)
       if (b - a < Math.max(opt.minBodyLen, c.d * 0.6)) continue;
+      if (layer && ((hits(usedL, a, b) && boxedOff(m, l)) || (hits(usedM, a, b) && boxedOff(l, m)))) continue;
       const pL0 = { x: u.x * a + perp(u).x * lPerp, y: u.y * a + perp(u).y * lPerp };
       const pL1 = { x: u.x * b + perp(u).x * lPerp, y: u.y * b + perp(u).y * lPerp };
       // foot on m's line
