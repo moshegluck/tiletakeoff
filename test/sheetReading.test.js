@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readScale, scaleNotes, planTitles, planScale } from '../src/engine/trace/sheetScale.js';
+import { readScale, scaleNotes, planTitles, planScale, tradeViewTitles } from '../src/engine/trace/sheetScale.js';
 import { runTrace, readingScore } from '../src/engine/trace/index.js';
 import { dimFeet, dimensionScale, doorTags } from '../src/engine/trace/dimScale.js';
 import { detectSheetScale } from '../src/lib/planEvidence.js';
@@ -149,6 +149,14 @@ describe('which reading of the sheet is kept', () => {
     const split = { verify: {}, flags: [], rooms: rooms(31, 45, 40) };
     expect(readingScore(split)).toBeGreaterThan(readingScore(asDrawn) + 2);
   });
+
+  it('a reading that closes no room never wins over one that finds rooms (the Mill 2 apartment sheets)', () => {
+    // walls drawn in the thinnest pen beside a few heavy title lines: as drawn, nothing closes
+    // and no name lands in a building, so nothing counts against the empty trace
+    const empty = { verify: {}, flags: [{ kind: 'no_rooms' }], rooms: [] };
+    const everyPen = { verify: {}, flags: Array.from({ length: 12 }, () => ({ kind: 'open_end' })), rooms: rooms(8, 25, 20) };
+    expect(readingScore(everyPen)).toBeGreaterThan(readingScore(empty));
+  });
 });
 
 describe('the scale the sheet is really drawn at (its dimension strings)', () => {
@@ -258,5 +266,24 @@ describe("the scale the sheet's doors say (door tags in their swings)", () => {
     // the swings a leaf's thickness short of their tags: 3.86 ft per inch against the 1/4" note
     const ev = sheet(4 / 0.965, [2 + 8 / 12, 2 + 8 / 12, 2.5, 3, 2 + 8 / 12, 2 + 4 / 12]);
     expect(detectSheetScale(ev, 144)).toMatchObject({ id: '1/4', how: 'title' });
+  });
+});
+
+describe('a sheet that draws the floor again for other trades', () => {
+  const box = (x0) => [[0, 0, 20, 0], [0, 12, 20, 12], [0, 0, 0, 12], [20, 0, 20, 12]]
+    .map(([ax, ay, bx, by]) => ({ a: { x: x0 + ax, y: ay }, b: { x: x0 + bx, y: by }, t: 5 / 12 }));
+  const titles = [{ str: 'APARTMENT A1 FLOOR PLAN', x: 0, y: 15 }, { str: 'APARTMENT A1 RCP + LIGHTING PLAN', x: 40, y: 15 }, { str: 'APARTMENT A1 FLOOR FINISH PLAN', x: 80, y: 15 }];
+
+  it('names the copies: ceiling, lighting, finish plans beside a plain floor plan', () => {
+    expect(tradeViewTitles(titles).map((t) => t.trade)).toEqual([false, true, true]);
+    // a sheet with only a finish plan is the plan to trace (19 Virginia, Promenade)
+    expect(tradeViewTitles([titles[2]])).toEqual([]);
+  });
+
+  it('traces the floor plan once, not each trade\'s copy of it (the Mill 2 apartment sheets)', () => {
+    const texts = [...titles, ...[0, 40, 80].map((x) => ({ str: 'BATHROOM', x: x + 10, y: 6 }))];
+    const res = runTrace({ bodies: [...box(0), ...box(40), ...box(80)], texts });
+    expect(res.rooms.length).toBe(1);
+    expect(res.rooms[0].poly.every((p) => p.x < 21)).toBe(true);
   });
 });

@@ -111,7 +111,10 @@ TileTakeoff works the other way round:
     sheet-border / title-block removal (by page extent; a face whose edge runs along the page's edge
     is the paper around the building even when a grid line joins the border to it), the sheet's other views set aside (linework apart
     from the building with a view's own title or scale note under it — `sheetScale.otherViews`; or far
-    from it with no room name in it: Herzka's sill details), view titles never name rooms, all flags
+    from it with no room name in it: Herzka's sill details), the floor drawn again for other trades beside a
+    plain FLOOR PLAN (RCP / lighting / finish / electrical copies, `sheetScale.tradeViewTitles`; each piece
+    of linework belongs to the plan title printed under it, in line with it) is set aside — one apartment's
+    rooms, not three (a sheet with only a finish plan traces it), view titles never name rooms, all flags
   - `index.js` `runTrace()` pipeline; `eraseFromBodies()` for the manual erase tool
   - `arcs.js` door-swing recognition from Bézier curves, from swings a CAD export flattened into
     chains of straight pieces (`arcsFromPolylines`), and from swings plotted dashed (`arcsFromDashes`:
@@ -180,7 +183,9 @@ TileTakeoff works the other way round:
     keeps the one that agrees best with the sheet's own evidence (`readingScore`: printed areas,
     named rooms, merged / unplaced names, open ends at 0.3 each, rooms the trace flags at 0.3 each and
     nameless rooms at 0.1: furniture drawn light closes into dozens of doubtful pieces when every pen
-    may draw a wall — 22 Rita p2, 19 Virginia, 4 Howard p2 keep the drawing as drawn).
+    may draw a wall — 22 Rita p2, 19 Virginia, 4 Howard p2 keep the drawing as drawn). A reading that
+    closes no room never wins over one that finds rooms (its names land in no building, so nothing
+    counted against it: the Mill 2 apartment sheets traced empty).
   - Plan check (`analyze.js` `printedAreas` / `checkPrintedAreas`): room tags that print an area
     ("580 SF") are the answer key — each traced room holding one is `areaCheck: 'match'` (within
     `AREA_TOL` 3% / 2 SF, compared at the wall faces: `room.areaFaces`, the same as `area` unless the
@@ -223,7 +228,11 @@ TileTakeoff works the other way round:
     A-KITCHEN, A-FXTR-PLUM, A-Closet Shelves, ADA - FLOOR SPACE, INSULATION, FOOTINGS, DTEXT, PRESNOTE,
     TITLEBLOCK, SIGN-SEAL → ignore; 36 Ellish's "Counter" paired with a wall face into a 27" wall;
     DoorSwing → door).
-- `src/lib/pdfVectors.js` vector PDF → lines/curves/text in rendered-image px (pdf.js op list). Clip paths
+- `src/lib/pdfVectors.js` vector PDF → lines/curves/text/images in rendered-image px (pdf.js op list;
+  `images` = where each image is painted: corner + axes). A wall's poché painted as image strips
+  (Revit / Vectorworks; the Mill 2 apartment sheets draw every line in the thinnest pen) is the wall's
+  footprint: `planEvidence.pocheStrips` makes each thin strip (2"–24" across, ≥ 3× as long, ≥ 4 on the
+  sheet) a wall body from where the image lies, never from its pixels. Clip paths
   count: only what shows is drawing (each line cut to the clip in force, a form to its box). Revit fills a
   wall's cut by clipping to the wall's outline and filling a rectangle through it — on a 45° wall the
   rectangle's edges were phantom horizontals / verticals pairing into walls across rooms; a clipped fill
@@ -300,7 +309,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 470 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 474 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -374,6 +383,13 @@ TileTakeoff works the other way round:
   recess, the face line on the room's side and stepped window openings: 681 right (53.9%), 819 within 3%,
   65 silent; own scale 596 / 1,040 (57.3%), 709 within 3%, 52 silent (Bais Rochel p2 26 → 37, p3 21 → 33, p5 19 → 27; the nursing
   facility p2 8 → 13, p5 26 → 30; 19 Ecbo 0 → 3).
+  Moshe's four uploads (Oct 2026: 58 South Parker, Mill 2 apartment types, 65 Highview school, 5 Daisy
+  Court; 24 sheets / 238 marked areas, PDFs outside the repo): 118 right (49.6%), 152 within 3%, 10
+  silent at first; with poché strips, empty readings never winning and trade copies set aside 119 / 156 /
+  8 (the apartment sheets traced nothing before; their baths now come within 3%, a finish line ½" inside
+  the poché is where the estimator measures). The AI passes (the plan's step 2) read the key from
+  `TILETAKEOFF_ANTHROPIC_KEY` in the cloud environment (never `ANTHROPIC_API_KEY`: Claude Code itself would
+  take it), sent as `x-api-key` to api.anthropic.com; Opus 5.5 and Fable 5.1 both answer.
   12 sheets still find no scale (text drawn as outlines or too few dimension strings: 8-14-2023 ×3,
   3-6-2024 ×3, 83 Winchester, Skver, Phase 2, Monsey, Monroe p3, Marked Plans (1) p8) — the app asks.
 - Sample sheet: 7 rooms, 1,034.0 SF vector with floors stopping at the wall line across doorways (1,045.4 to
