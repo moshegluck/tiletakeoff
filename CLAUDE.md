@@ -254,6 +254,11 @@ TileTakeoff works the other way round:
   invisible "AutoCAD SHX Text" annotations are read as the sheet's words (room names, dims), their
   control codes decoded (`cadText`: %%u underline drops out, %%d °); the strokes inside an SHX text's
   box (letters, the %%u underline) are `glyph` lines — never wall faces, leaves or swings (`markGlyphs`).
+  A text on a slant (a door tag written along its leaf) gets a box square to the sheet around the slanted
+  run, mostly no text: a box far squarer than its letters (width / height < 0.35 × characters) whose
+  short strokes spread 15°–75° off the sheet marks as glyphs only strokes as short as its letters
+  (34 Ellish: a 45° "2/0X6/8" box took in both faces of the closet wall beside it; a level name stacked
+  on two lines keeps its underline as text).
   - `layers.js` CAD layer names → wall / opening / room label / ignore. On a layered sheet only
     wall + unnamed layers can be walls, door/window layers become doorway *hints*, and room
     names come from the room-label layer. Layers are read in `pdfVectors.js` (`readLayers`).
@@ -363,7 +368,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 488 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 490 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -444,6 +449,10 @@ TileTakeoff works the other way round:
   silent 5 → 3). Then doors drawn by their leaf alone: 694 right (54.9%), 841 within 3%, 60 silent; own
   scale 609 / 1,040 (58.6%), 731 within 3%, 47 silent (19 Virginia 1 → 6, 22 Rita p2 10 → 14; 22 Rita p3
   17 → 15: a closet door now on its true line, ~1 SF off two small rooms the old stray opening matched).
+  Then wall faces inside a slanted door tag's box: 697 right (55.2%), 844 within 3%, 63 silent (the 3 more
+  are rooms whose geometry didn't change losing an incidental flag: 34 Ellish's entry hall, of which the
+  estimator tiled only the landing at the door, and 22 Rita's UNIT 201 room); own scale 614 / 1,040
+  (59.0%), 734 within 3%, 47 silent.
   Moshe's four uploads (Oct 2026: 58 South Parker, Mill 2 apartment types, 65 Highview school, 5 Daisy
   Court; 24 sheets / 238 marked areas, PDFs outside the repo): 118 right (49.6%), 152 within 3%, 10
   silent at first; with poché strips, empty readings never winning and trade copies set aside 119 / 156 /

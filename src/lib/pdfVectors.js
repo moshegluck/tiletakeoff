@@ -42,16 +42,29 @@ export async function readLayers(doc) {
 /**
  * SHX text is plotted as strokes: the letters, and the underline a room name
  * often carries (%%u). A line lying inside an SHX text's box is one of them
- * (glyph: true) — never a wall face, a door leaf or a swing.
+ * (glyph: true) — never a wall face, a door leaf or a swing. A text written
+ * on a slant (a door tag along its leaf) has for its box the square around
+ * the slanted run, most of it no text: there only strokes as short as its
+ * letters are glyphs (34 Ellish: a 45° "2/0X6/8" tag's box took in both faces
+ * of the closet wall beside it).
  * @param {{a,b,glyph?:boolean}[]} lines
- * @param {{x,y,w?,h?,rot?}[]} boxes  SHX texts (centre, w along, h across)
+ * @param {{x,y,w?,h?,rot?,str?}[]} boxes  SHX texts (centre, w along, h across)
  */
 export function markGlyphs(lines, boxes) {
   const C = 64, grid = new Map();
   const rects = boxes.map((t) => {
     const w = t.w || 0, h = t.h || 0, m = 0.15 * Math.min(w || h, h || w);
     const hx = (t.rot === 90 ? h : w) / 2 + m, hy = (t.rot === 90 ? w : h) / 2 + m;
-    return [t.x - hx, t.y - hy, t.x + hx, t.y + hy];
+    const r = [t.x - hx, t.y - hy, t.x + hx, t.y + hy];
+    // far squarer than a run of its letters (~0.8 of the height wide each):
+    // on a slant — or stacked on lines; its letters' strokes say which
+    const n = String(t.str || '').replace(/\s+/g, '').length;
+    const lo = Math.min(w, h), hi = Math.max(w, h);
+    r.squat = n >= 3 && lo > 0 && hi / lo < 0.35 * n;
+    // (a 45° run's box is (length + height) / √2 across)
+    r.letter = r.squat ? 1.5 * (hi * Math.SQRT2) / (0.8 * n + 1) : Infinity;
+    r.maxLen = Infinity;
+    return r;
   });
   rects.forEach((r, i) => {
     for (let gx = Math.floor(r[0] / C); gx <= Math.floor(r[2] / C); gx++) {
@@ -63,9 +76,34 @@ export function markGlyphs(lines, boxes) {
     }
   });
   const inside = (r, p) => p.x >= r[0] && p.x <= r[2] && p.y >= r[1] && p.y <= r[3];
+  // a squat box's text runs the way its letters' strokes spread: on a slant
+  // (15°–75° off the sheet) only strokes as short as its letters are glyphs
+  const squat = rects.map((r, i) => (r.squat ? i : -1)).filter((i) => i >= 0);
+  if (squat.length) {
+    const acc = new Map(squat.map((i) => [i, { n: 0, sx: 0, sy: 0, sxx: 0, syy: 0, sxy: 0 }]));
+    for (const l of lines) {
+      const L = Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y);
+      const cell = grid.get(Math.floor(l.a.x / C) * 100003 + Math.floor(l.a.y / C));
+      if (!cell) continue;
+      for (const i of cell) {
+        const r = rects[i];
+        if (!r.squat || L > r.letter || !inside(r, l.a) || !inside(r, l.b)) continue;
+        const x = (l.a.x + l.b.x) / 2, y = (l.a.y + l.b.y) / 2, s = acc.get(i);
+        s.n += L; s.sx += x * L; s.sy += y * L; s.sxx += x * x * L; s.syy += y * y * L; s.sxy += x * y * L;
+      }
+    }
+    for (const [i, s] of acc) {
+      if (!s.n) continue;
+      const mx = s.sx / s.n, my = s.sy / s.n;
+      const cxx = s.sxx / s.n - mx * mx, cyy = s.syy / s.n - my * my, cxy = s.sxy / s.n - mx * my;
+      const ang = Math.abs((0.5 * Math.atan2(2 * cxy, cxx - cyy) * 180) / Math.PI) % 90;
+      if (ang > 15 && ang < 75) rects[i].maxLen = rects[i].letter;
+    }
+  }
   for (const l of lines) {
     const cell = grid.get(Math.floor(l.a.x / C) * 100003 + Math.floor(l.a.y / C));
-    if (cell && cell.some((i) => inside(rects[i], l.a) && inside(rects[i], l.b))) l.glyph = true;
+    const L = Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y);
+    if (cell && cell.some((i) => inside(rects[i], l.a) && inside(rects[i], l.b) && L <= rects[i].maxLen)) l.glyph = true;
   }
 }
 
