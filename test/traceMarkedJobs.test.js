@@ -362,4 +362,46 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
     expect(o.step.a).toEqual({ x: 0, y: (T - t) / 2 });
     expect(o.step.b.y).toBeCloseTo(0, 6);
   });
+
+  describe("a door drawn by its leaf alone, no swing (19 Virginia's mikvah rooms)", () => {
+    // two rooms over a 3'-2" wet hallway; the partition between them stops at
+    // its door frames 2" short of the rooms' south wall line (y = 0). Room 1's
+    // door (x 5 → 8) is drawn as its leaf only: a 1½" board hinged at the
+    // partition's jamb, standing 15° open into the room
+    const walls = [
+      { a: { x: 0, y: 0 }, b: { x: 5, y: 0 }, t: 0.4 },
+      { a: { x: 8.2, y: -7 }, b: { x: 8.2, y: -0.2 }, t: 0.4 },
+      { a: { x: 11, y: 0 }, b: { x: 20, y: 0 }, t: 0.4 },
+      { a: { x: -2, y: 3.6 }, b: { x: 22, y: 3.6 }, t: 0.4 },
+    ].map((w) => ({ ...w, kind: 'wall' }));
+    const A = (deg) => deg * Math.PI / 180;
+    const board = (hinge, len, deg, off) => {
+      const u = { x: -Math.cos(A(deg)), y: -Math.sin(A(deg)) }, n = { x: -u.y, y: u.x };
+      const h = { x: hinge.x + n.x * off, y: hinge.y + n.y * off };
+      return { a: h, b: { x: h.x + u.x * len, y: h.y + u.y * len }, w: 0.01 };
+    };
+    const leaf = [board({ x: 8, y: 0 }, 2.9, 15, 0), board({ x: 8, y: 0 }, 2.9, 15, 1.5 / 12)];
+    const door = (ops) => ops.find((o) => Math.abs(o.a.y) < 0.25 && Math.abs(o.b.y) < 0.25 && Math.min(o.a.x, o.b.x) < 5.5 && Math.max(o.a.x, o.b.x) > 7.5);
+    const acrossHall = (ops) => ops.find((o) => Math.abs(o.a.x - 8.2) < 0.3 && Math.abs(o.b.x - 8.2) < 0.3);
+
+    it('the leaf is the door: bridged, and the partition end no longer bridges across the hall', () => {
+      const j = joinWalls(walls);
+      const ops = bridgeOpenings(j.segs, j.ends, [], {}, [], [], leaf);
+      expect(door(ops)?.openingType).toBe('door');
+      expect(acrossHall(ops)).toBeUndefined();
+    });
+
+    it('without it, the doorway stays open and a 3\'-2" "opening" cuts the hall', () => {
+      const j = joinWalls(walls);
+      const ops = bridgeOpenings(j.segs, j.ends, [], {}, [], [], []);
+      expect(door(ops)).toBeUndefined();
+      expect(acrossHall(ops)).toBeDefined();
+    });
+
+    it('a dimension line from the jamb is no leaf (a leaf is a board: two faces)', () => {
+      const j = joinWalls(walls);
+      const ops = bridgeOpenings(j.segs, j.ends, [], {}, [], [], [board({ x: 8, y: 0 }, 2.9, 45, 0)]);
+      expect(door(ops)).toBeUndefined();
+    });
+  });
 });

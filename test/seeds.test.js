@@ -56,4 +56,10 @@ describe('seeds: rooms the plan tells apart where the walls do not', () => {
     expect(roomSeeds(spots, [{ x: 6, y: 6, name: 'Master Bath', type: 'bathroom' }], at)).toHaveLength(1);
     expect(roomSeeds(spots, [{ x: 9, y: 9, name: 'closet', type: 'closet' }], at).map((s) => s.type)).toEqual(['bath', 'closet']);
   });
+
+  it('the reading says what a name of no known kind is: "ROOM #3" is a bath (19 Virginia\'s mikvah rooms)', () => {
+    const spots = [{ x: 3, y: 3, name: 'ROOM #3', type: 'room', roomId: 'r1', typed: false }];
+    const seeds = roomSeeds(spots, [{ x: 4, y: 4, name: 'ROOM #3', type: 'bathroom' }], () => 'r1');
+    expect(seeds.map((s) => [s.name, s.type])).toEqual([['ROOM #3', 'bath']]);
+  });
 });

@@ -100,6 +100,12 @@ TileTakeoff works the other way round:
     matches when its `closed` end lands across most of the gap (short jamb returns). A ray may land on
     a wall end it misses by ≤ max(0.3', t) only with a swing and only when clearly nearer than any
     wall it meets; that end becomes the door's jamb.
+    A door drawn by its leaf alone, no swing (`leafAt`), is evidence like a swing: a board — two lines
+    ½"–3" apart (`leafPartner`: a dimension line or a lone face line is none) — hinged at one jamb,
+    0.8–1.15 × the doorway long, 10°–80° open, its free end in the room (`onWall`), lying along no traced
+    wall (`alongWall`); the doorway runs along or square to its wall (within 5°). 19 Virginia's mikvah
+    rooms (1 → 6 right): their doors to the 3'-2" wet hallway were left open and the partitions' ends
+    bridged across the hall instead.
   - `analyze.js` rooms (offset to finished faces; across a doorway the floor stops at the wall line —
     `floorAtDoor: 'face'`, how Moshe's estimators measure: on 1,263 marked areas the trace sat a median
     ¼" per edge outside them with floors to the door centre and 0.00" at the face; the doorway is the
@@ -162,6 +168,7 @@ TileTakeoff works the other way round:
     no closed room is shut in at its leak gaps. Each gap closed is an opening (`seeded`), flagged
     `seeded_gap` at the gap on both rooms (nothing drawn says so). Kept only when more seeds stand apart
     and the plan check agrees no less. A room named nowhere takes its seed's name. DINETTE is dining.
+    A reading's type fills in a name of no known kind it matches ("ROOM #3" + bathroom → bath).
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
@@ -217,9 +224,13 @@ TileTakeoff works the other way round:
   the marked areas; `bench.mjs --seeds dir[:model]` traces with those rooms as seeds. Race (12 hard
   sheets, 312 marked areas): Opus 5.5 put a point in 81.4% of them, box IoU ≥ 0.5 on 194, ~$0.11 and ~50 s
   a sheet; Fable 5.1 78.5%, 147, ~$0.45 and ~95 s. Opus 5.5 reads plans for this. As seeds they add
-  little yet (150 → 150 right on those sheets): the rooms they tell apart are mostly parted by a wall the
-  trace never read (19 Virginia's ROOM #1 / #2), not by a gap — next: re-read the drawing between two
-  seeds (the lines the trace set aside there), geometry still from the drawing.
+  little yet (159 → 159 right on those sheets). Re-reading what's drawn between two AI rooms left in one
+  space (`between` diagnostics: every line crossing the segment between them, its pen, layer, dashed /
+  glyph) found doors, not missing walls: leaf-only doors (now read), door jambs drawn as short hatched
+  stubs the trace never takes as walls (34 Ellish's bedrooms: a door with one jamb), and open plans with
+  nothing drawn between the rooms (dining / kitchen / hall). A wider "opens out" test for gap candidates
+  (the floor beyond wider than the gap) found more doorways but the narrowest-gap split then chose
+  passages along halls (net −5 within 3%): not kept.
 - `scripts/bench.mjs manifest.json [--json out] [--baseline base] [--options '{"maxOpening":12}']` — the
   accuracy benchmark (`--options`: trace with these engine options, for tuning): per sheet,
   answers (printed tags and/or hand-audited rooms) right within 1%, within 3%, merged, missing, and
@@ -352,7 +363,7 @@ TileTakeoff works the other way round:
 - `samples/sample-house.pdf` (vector) and `sample-house-scanned.pdf` (crooked scan); `npm run sample:pdf`
 
 ## Verified state
-- `npm test` → 484 passing (engine, raster, design↔estimate, review regressions,
+- `npm test` → 488 passing (engine, raster, design↔estimate, review regressions,
   `test/traceRealSheets.test.js` = cases from Moshe's real CAD sheet).
 - Moshe's sheet (2 Patriot Dr, A-3 basement, 56 CAD layers): 25 floor rooms / 1,609 SF (the bench
   keeps this audited trace as its answer key: 25/25), audited
@@ -430,7 +441,9 @@ TileTakeoff works the other way round:
   own scale 597 / 1,040, 709, 52.
   Then seeds (two room names in one space part at their doorway): 687 right (54.4%), 825 within 3%, 61
   silent; own scale 602 / 1,040 (57.9%), 715 within 3%, 51 silent (34 / 36 Ellish p1 +2 each, 36 Ellish
-  silent 5 → 3).
+  silent 5 → 3). Then doors drawn by their leaf alone: 694 right (54.9%), 841 within 3%, 60 silent; own
+  scale 609 / 1,040 (58.6%), 731 within 3%, 47 silent (19 Virginia 1 → 6, 22 Rita p2 10 → 14; 22 Rita p3
+  17 → 15: a closet door now on its true line, ~1 SF off two small rooms the old stray opening matched).
   Moshe's four uploads (Oct 2026: 58 South Parker, Mill 2 apartment types, 65 Highview school, 5 Daisy
   Court; 24 sheets / 238 marked areas, PDFs outside the repo): 118 right (49.6%), 152 within 3%, 10
   silent at first; with poché strips, empty readings never winning and trade copies set aside 119 / 156 /
