@@ -404,4 +404,30 @@ describe('marked jobs (Saddle River, Herzka, Promenade)', () => {
       expect(door(ops)).toBeUndefined();
     });
   });
+
+  it("a door tag written at 45° along its leaf: its box's wall faces are no letters (34 Ellish's closet wall)", () => {
+    // AutoCAD boxes the slanted "2/0X6/8" square to the sheet, 72 x 70 px; the
+    // closet wall's two faces run down through it
+    const tag = { str: '2/0X6/8', x: 2161, y: 1182, w: 72, h: 70, rot: 90, shx: true };
+    const letters = Array.from({ length: 7 }, (_, k) => {
+      const c = { x: 2133 + k * 9, y: 1210 - k * 9 };
+      return { a: { x: c.x - 3, y: c.y + 4 }, b: { x: c.x + 3, y: c.y - 4 }, w: 1.4 };
+    });
+    const faces = [{ a: { x: 2127, y: 1146 }, b: { x: 2127, y: 1215 }, w: 3 }, { a: { x: 2131, y: 1150 }, b: { x: 2131, y: 1214 }, w: 3 }];
+    const lines = [...letters, ...faces];
+    markGlyphs(lines, [tag]);
+    expect(letters.every((l) => l.glyph)).toBe(true);
+    expect(faces.some((l) => l.glyph)).toBe(false);
+  });
+
+  it('a level name stacked on two lines keeps its underline as text', () => {
+    // "MASTER / BEDROOM" in a squat box; letters along two rows, the %%u underline under the second
+    const name = { str: 'MASTER BEDROOM', x: 500, y: 300, w: 90, h: 50, rot: 0, shx: true };
+    const letters = [];
+    for (const y of [285, 310]) for (let k = 0; k < 7; k++) letters.push({ a: { x: 462 + k * 12, y: y - 6 }, b: { x: 462 + k * 12, y: y + 6 }, w: 1 });
+    const underline = { a: { x: 458, y: 320 }, b: { x: 542, y: 320 }, w: 1 };
+    const lines = [...letters, underline];
+    markGlyphs(lines, [name]);
+    expect(underline.glyph).toBe(true);
+  });
 });
