@@ -729,7 +729,7 @@ export function analyzeGraph(g, ctx = {}) {
       const op = {
         id: `o${e.id}`, edgeId: e.id, a: { ...a }, b: { ...b }, t: e.t, width: o.width ?? dist(a, b), openingType: o.openingType || 'opening',
         conf: o.conf ?? 0.6, arcs: o.arcs || [], hint: !!o.hint, across: !!o.across, exterior, rooms: [ra?.id || null, rb?.id || null], jambs: o.jambs,
-        ...(o.seeded ? { seeded: o.seeded } : {}),
+        ...(o.seeded ? { seeded: o.seeded } : {}), ...(o.leaf ? { leaf: o.leaf } : {}),
       };
       openings.push(op);
       for (const r of [ra, rb]) if (r) r.openings.push({ id: op.id, width: op.width, type: op.openingType, to: (r === ra ? rb : ra)?.name || (exterior ? 'Exterior' : null) });

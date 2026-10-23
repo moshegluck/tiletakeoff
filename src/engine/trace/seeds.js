@@ -51,7 +51,8 @@ export function roomSeeds(spots, given = [], roomAt = () => null) {
     const k = key(g.name);
     const same = out.find((s) => s.roomId === roomId && (Math.hypot(s.x - g.x, s.y - g.y) < 3
       || (k && (key(s.name).includes(k) || (key(s.name) && k.includes(key(s.name)))))));
-    if (same) continue;
+    // (the reading says what kind of room a name of no known kind is: "ROOM #3" is a bath)
+    if (same) { if (same.type === 'room' && seedType(g.type) !== 'room') same.type = seedType(g.type); continue; }
     out.push({ x: g.x, y: g.y, name: g.name || 'room', type: seedType(g.type), roomId, typed: true, src: 'seed' });
   }
   return out;
@@ -102,6 +103,7 @@ export function seedGaps(g, seeds, { maxOpening = 16, maxDoor = 8, maxCased = 6.
         if (Math.hypot(a.x - b.x, a.y - b.y) < apart || ++pairs > maxPairs) continue;
         // a door's width (a garage's door is wider); a cased opening's
         const widest = a.type === 'garage' || b.type === 'garage' ? maxOpening : doored || anyPair ? maxDoor : maxCased;
+        // (a doorway: a jog in a wall an inch or two across parts no rooms)
         const gaps = m.split(a, b, { widest });
         if (!gaps) continue;
         // …and parts no two names that stand in one floor (two halls: the

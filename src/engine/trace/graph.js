@@ -475,7 +475,83 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   const joinedEnd = new Set(ends.filter((e) => e.joined).map((e) => `${e.bi}:${e.w}`));
 
   // door / window drawing across the gap, or a matching swing
-  const evidenced = (c) => { c.arcs = matchArcs(c, arcs); c.hint = hinted(c.jambs[0], c.jambs[1], c.t); return c.hint || c.arcs.length > 0; };
+  // a door drawn by its leaf alone, standing part open (no swing): a line
+  // hinged at one jamb, about the doorway's width long, at 10°–80° to it,
+  // its free end off the wall line (19 Virginia's mikvah rooms)
+  const leafAt = (c) => {
+    const [p, q] = c.jambs;
+    const W = dist(p, q);
+    if (!drawn.length || W < 1.3 || W > 4.5) return null;
+    // a doorway runs along the wall it is cut in, or square to it
+    const along = Math.abs(dot(norm(sub(q, p)), c.e1.dir));
+    if (along < Math.cos(5 * DEG) && along > Math.sin(5 * DEG)) return null;
+    const R = Math.max(0.35, c.t || 0.35);
+    for (const [h, o] of [[p, q], [q, p]]) {
+      const toward = norm(sub(o, h));
+      const reach = 1.2 * W + R;
+      for (const i of drawnIdx.query(h.x - reach, h.y - reach, h.x + reach, h.y + reach)) {
+        const l = drawn[i];
+        if (l.dashed) continue;
+        for (const [e0, e1] of [[l.a, l.b], [l.b, l.a]]) {
+          if (dist(e0, h) > R) continue;
+          const L = dist(e0, e1);
+          if (L < 0.8 * W || L > 1.15 * W) continue;
+          const v = norm(sub(e1, e0));
+          const ang = Math.acos(Math.max(-1, Math.min(1, dot(v, toward))));
+          if (ang < 10 * DEG || ang > 80 * DEG) continue;
+          if (Math.abs(cross(toward, sub(e1, h))) < 0.3) continue;
+          // a wall's own face is no leaf, nor a line running on to a wall;
+          // and a leaf has its thickness: a second line beside it (a
+          // dimension line, a lone face line has none)
+          if (alongWall(e0, e1) || onWall(e1) || !leafPartner(i, e0, e1)) continue;
+          return { hinge: { ...h }, end: { ...e1 }, r: L };
+        }
+      }
+    }
+    return null;
+  };
+  // the other face of a leaf drawn as a thin board: parallel, ½"–3" off, along most of it
+  const leafPartner = (i0, a, b) => {
+    const L = dist(a, b), u = norm(sub(b, a)), n = perp(u);
+    for (const i of drawnIdx.query(Math.min(a.x, b.x) - 0.3, Math.min(a.y, b.y) - 0.3, Math.max(a.x, b.x) + 0.3, Math.max(a.y, b.y) + 0.3)) {
+      if (i === i0) continue;
+      const l = drawn[i];
+      const ll = dist(l.a, l.b);
+      if (ll < 1e-6 || Math.abs(dot(norm(sub(l.b, l.a)), u)) < Math.cos(3 * DEG)) continue;
+      const o = Math.abs((dot(sub(l.a, a), n) + dot(sub(l.b, a), n)) / 2);
+      if (o < 0.5 * IN || o > 3 * IN) continue;
+      const s0 = Math.max(0, Math.min(dot(sub(l.a, a), u), dot(sub(l.b, a), u))), s1 = Math.min(L, Math.max(dot(sub(l.a, a), u), dot(sub(l.b, a), u)));
+      if (s1 - s0 >= 0.6 * L) return true;
+    }
+    return false;
+  };
+  // a point on (or in) a wall: a leaf's free end stands in the room
+  const onWall = (pt) => {
+    for (const i of segIdx.query(pt.x - 1, pt.y - 1, pt.x + 1, pt.y + 1)) {
+      const sg = segs[i];
+      if (closestOnSeg(pt, sg.a, sg.b).d <= (sg.t || 0) / 2 + 0.15) return true;
+    }
+    return false;
+  };
+  // a line lying along a wall is its face, not a leaf
+  const alongWall = (a, b) => {
+    const L = dist(a, b), u = norm(sub(b, a));
+    for (const i of segIdx.query(Math.min(a.x, b.x) - 1, Math.min(a.y, b.y) - 1, Math.max(a.x, b.x) + 1, Math.max(a.y, b.y) + 1)) {
+      const sg = segs[i];
+      const sl = dist(sg.a, sg.b);
+      if (sl < 1e-6 || L < 1e-6 || Math.abs(dot(u, sub(sg.b, sg.a))) / sl < Math.cos(5 * DEG)) continue;
+      const band = (sg.t || 0) / 2 + 0.2;
+      if (closestOnSeg(a, sg.a, sg.b).d <= band && closestOnSeg(b, sg.a, sg.b).d <= band) return true;
+    }
+    return false;
+  };
+  const evidenced = (c) => {
+    c.arcs = matchArcs(c, arcs); c.hint = hinted(c.jambs[0], c.jambs[1], c.t);
+    if (!c.arcs.length && !c.hint) c.leaf = leafAt(c);
+    return c.hint || c.arcs.length > 0 || !!c.leaf;
+  };
+  // drawing that can say a doorway is there: swings, door layers, or leaves
+  const doorDrawing = hints.length > 0 || arcs.length > 0 || drawn.length > 0;
   // a doorway spans one gap: it never runs past another wall end (two closet
   // fronts side by side are two openings, each between its own jambs)
   const passesJamb = (a, b, skip) => {
@@ -524,7 +600,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   // ...or where the wall turns a corner at one or both jambs (a closet whose
   // side walls meet its front): only with a door drawn there, since two
   // corners face each other across every hallway too
-  if (hints.length || arcs.length) {
+  if (doorDrawing) {
     const cornerIdx = new GridIndex(Math.max(4, opt.maxOpening / 2));
     corners.forEach((e, i) => cornerIdx.insert(i, e.p.x, e.p.y, e.p.x, e.p.y));
     const R = opt.maxOpening;
@@ -548,7 +624,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   // (b) end → perpendicular wall (door beside a corner, opening onto a hall);
   //     from a corner only with a door drawn there (a closet front running on
   //     from the wall that turns)
-  for (const e of hints.length || arcs.length ? free.concat(corners) : free) {
+  for (const e of doorDrawing ? free.concat(corners) : free) {
     const fromCorner = isCorner.has(e);
     let best = null, grazedBest = null;
     const far = { x: e.p.x + e.dir.x * (opt.maxOpening + 2), y: e.p.y + e.dir.y * (opt.maxOpening + 2) };
@@ -564,7 +640,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
       const sl = Math.max(0.3, s.t) / Math.max(dist(s.a, s.b), 1e-6);
       if (hit.u < -sl || hit.u > 1 + sl) continue;
       const grazed = hit.u < -0.001 || hit.u > 1.001;
-      if (grazed && !arcs.length) continue;
+      if (grazed && !doorDrawing) continue;
       if (grazed) hit.pt = hit.u < 0 ? { ...s.a } : { ...s.b };
       if (fromCorner && hit.s < e.t) continue;                    // the wall it turns into
       const width = hit.s - s.t / 2 - (fromCorner ? e.t / 2 : 0);
@@ -592,7 +668,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   //     wall ends not in line (a closet front between two partitions, a door
   //     between two wall stubs), or a wall end sideways to another wall
   const maxAcross = Math.min(opt.maxOpening, 10);   // bifolds, sliders, cased openings
-  if (hints.length || arcs.length) {
+  if (doorDrawing) {
     for (let i = 0; i < free.length; i++) {
       const e1 = free[i], p = e1.p, R = opt.maxOpening;
       for (const k of endIdx.query(p.x - R, p.y - R, p.x + R, p.y + R)) {
@@ -655,8 +731,8 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   // door-swing evidence makes a candidate much more trustworthy; door / window
   // drawing across the gap nearly as much
   for (const c of cands) {
-    if (c.hint === undefined) { c.arcs = matchArcs(c, arcs); c.hint = hinted(c.jambs[0], c.jambs[1], c.t); }
-    c.cost = c.width - (c.arcs.length ? 100 : 0) - (c.hint ? 60 : 0) + (c.type === 'ray' || c.type === 'side' ? 0.5 : 0) + (c.skew || 0);
+    if (c.hint === undefined) evidenced(c);
+    c.cost = c.width - (c.arcs.length ? 100 : 0) - (c.hint ? 60 : 0) - (c.leaf ? 60 : 0) + (c.type === 'ray' || c.type === 'side' ? 0.5 : 0) + (c.skew || 0);
   }
   cands.sort((p, q) => p.cost - q.cost);
   if (Array.isArray(opt._debugCands)) opt._debugCands.push(...cands);
@@ -667,7 +743,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
   const dirFrom = (e, c) => norm(sub(e === c.e1 ? c.b : c.a, e.p));
   const clash = (e, c) => {
     if (!e.joined) return false;
-    if (!(c.hint || c.arcs.length)) return true;
+    if (!(c.hint || c.arcs.length || c.leaf)) return true;
     if (!e.used) return !isCorner.has(e);       // a corner end can still be a door's jamb
     return e.used.some((d) => dot(d, dirFrom(e, c)) > Math.cos(45 * DEG));
   };
@@ -681,7 +757,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
     return h && h.t > 0.02 && h.t < 0.98 && h.u > 0.02 && h.u < 0.98;
   });
   for (const c of cands) {
-    if (!c.hint && !c.arcs.length && crossesTaken(c)) continue;
+    if (!c.hint && !c.arcs.length && !c.leaf && crossesTaken(c)) continue;
     if (c.arcs.some((a) => usedArcs.has(a))) {
       c.arcs = c.arcs.filter((a) => !usedArcs.has(a));
       if (c.arcs.length === 1 && Math.abs(c.arcs[0].r - c.width) / c.width >= 0.25) c.arcs = [];
@@ -694,9 +770,10 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
       (e.used ||= []).push(dirFrom(e, c));
     }
     const nArc = c.arcs.length;
-    const kind = nArc >= 2 ? 'double_door' : nArc === 1 ? 'door' : isWindow(c) ? 'window' : 'opening';
+    const kind = nArc >= 2 ? 'double_door' : nArc === 1 || c.leaf ? 'door' : isWindow(c) ? 'window' : 'opening';
     let width = c.width;
     if (nArc === 1) width = refineWidth(c.width, c.arcs[0].r);
+    else if (c.leaf) width = refineWidth(c.width, c.leaf.r);
     // jambs of different walls sharing one face (a 20" masonry wall on one
     // side, only its 4" inner layer read on the other — Bais Rochel's
     // classroom windows): the opening runs on the thick wall's line, a step
@@ -715,7 +792,7 @@ export function bridgeOpenings(segs, ends, arcs = [], options = {}, log = [], hi
     }
     openings.push({
       id: uid('o'), a, b, t, kind: 'opening', openingType: kind, ...(step ? { step } : {}),
-      width, arcs: c.arcs, conf: nArc ? 0.95 : (c.width <= 4 ? 0.7 : 0.5), via: c.type, hint: !!c.hint,
+      width, arcs: c.arcs, conf: nArc ? 0.95 : c.leaf ? 0.85 : (c.width <= 4 ? 0.7 : 0.5), via: c.type, hint: !!c.hint, ...(c.leaf ? { leaf: c.leaf } : {}),
       across: kind === 'opening' && dashedAcross(c.jambs[0], c.jambs[1], c.t),
       jambs: c.jambs.map((p) => ({ ...p })),
     });
