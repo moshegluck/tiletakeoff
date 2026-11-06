@@ -288,10 +288,17 @@ TileTakeoff works the other way round:
 - `src/state/store.js` trace slice, `commitTrace()`, `applyFinish()` (3D picks → materials)
 - `src/three/house3d.js` walkable house; `houseModel.js` model from store; `finishTextures.js` true-size textures
 - `src/data/finishes.js` floor / wall-tile / paint presets
-- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry).
-  The default mode is **AI Detect** (`DetectModal.jsx`): room outlines read off the plan, reviewed by
-  the user before they're added — a separate, opt-in tool, not the Trace pipeline. Model choice:
-  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored). Its review checks each outline
+- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry);
+  `mode: 'labels'` = Claude labels the trace's numbered candidates (`src/engine/trace/labels.js`,
+  prompt in `src/lib/labelPrompt.js`, browser side `src/lib/aiLabels.js`, Trace tab "Fix doubts with AI"):
+  W wall/not_wall, G separate/open, O door/opening/window/solid, R name/type. Answers become edits
+  (`closures` = gaps closed as openings, `removed`, `manual`, `seeds`) applied one at a time and kept only
+  when `agreesBetter` (no printed-area match lost, no new open room, readingScore up); the rest become
+  `ai_label` info notes. Bench: `scripts/ai-labels.mjs manifest --out dir [--ask]` renders the numbered
+  tiles (and asks with `--ask`), `scripts/bench.mjs manifest --key-scale --labels dir` applies them.
+  AI Detect (`DetectModal.jsx`, Claude drawing room outlines in pixels) is off the main path: no header
+  button or phone menu item; the files stay for now, unused. Model choice:
+  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored). AI Detect's review checks each outline
   against the area the PDF page prints inside it (`detectMap.printedCheck`, the trace's `AREA_TOL`):
   `plan ✓`, `plan 720 SF` (off), `N rooms` (one outline over several tags); a room the plan disagrees
   with starts unticked, and Add waits for the check.
