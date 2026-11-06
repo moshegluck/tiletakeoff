@@ -23,7 +23,6 @@ const I = {
   file: 'M6 2h9l5 5v15H6zM15 2v5h5M9 13h6M9 17h4',
   lib: 'M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z',
   trace: 'M4 20V8l6-4 6 4v4h4v8zM10 20v-6h4v6',
-  ai: 'M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19',
   cube: 'M12 2l9 5v10l-9 5-9-5V7zM3 7l9 5 9-5M12 12v10',
   down: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
   plus: 'M12 5v14M5 12h14',
@@ -31,9 +30,9 @@ const I = {
 };
 
 /**
- * @param {{ onClose: () => void, onOpenPlan: () => void, onLibrary: () => void, onDetect: () => void, onHome: () => void }} p
+ * @param {{ onClose: () => void, onOpenPlan: () => void, onLibrary: () => void, onHome: () => void }} p
  */
-export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, onHome }) {
+export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onHome }) {
   const s = useProject();
   useBackLayer(true, onClose);
   const go = (fn) => () => { onClose(); setTimeout(fn, 30); };
@@ -59,7 +58,6 @@ export default function PhoneMenu({ onClose, onOpenPlan, onLibrary, onDetect, on
           {item('file', s.planImage ? 'Open another plan — a new project' : 'Open a plan (PDF or image)', onOpenPlan)}
           {item('lib', 'Tile library', onLibrary)}
           {item('trace', 'Trace the plan', () => window.dispatchEvent(new CustomEvent('tt:panel', { detail: 'trace' })))}
-          {item('ai', 'AI room detection', onDetect)}
           {item('cube', s.view3d ? 'Back to the 2D plan' : '3D walk-through', () => s.toggle3d())}
         </div>
         <div className="pm-group">
