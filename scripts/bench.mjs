@@ -3,7 +3,7 @@
 //
 //   node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json] [--key-scale] [--options '{"maxOpening":12}']
 //     [--seeds dir[:model]]   (rooms an AI reading found, from scripts/ai-program.mjs, as seeds)
-//     [--labels dir]          (Claude's labels of the numbered walls / gaps / doorways, from scripts/ai-labels.mjs, applied as the app applies them)
+//     [--labels dir] [--labels-margin n]  (Claude's labels of the numbered walls / gaps / doorways, from scripts/ai-labels.mjs, applied as the app applies them)
 //
 // manifest: { "sheets": [ {
 //   "name": "Mill 2 A101", "pdf": "/path/plan.pdf", "page": 16,
@@ -96,7 +96,7 @@ for (const sh of manifest.sheets) {
       if (saved && JSON.stringify(saved.gaps.map((g) => g.a)) !== JSON.stringify(cands.gaps.map((g) => g.a))) console.log(`   (labels were made on another trace of this sheet — numbers may not match)`);
       const labels = { rooms: [], walls: [], gaps: [], openings: [] };
       for (const t of tilesOf) for (const k of Object.keys(labels)) labels[k].push(...(t[k] || []));
-      const out = applyLabels(traceIn, res, labelEdits(cands, labels));
+      const out = applyLabels(traceIn, res, labelEdits(cands, labels), opt('labels-margin') ? { margin: +opt('labels-margin') } : {});
       res = out.res;
       labelNote = ` · AI labels: ${out.kept.length} kept of ${out.kept.length + out.declined.length} (${out.tried} solves)`;
     }

@@ -173,10 +173,10 @@ export function agreesBetter(res, best, margin = 0.25) {
  * @param {object} input   the trace's input (feet), as runTrace takes it
  * @param {object} base    runTrace(input)
  * @param {{edits, seeds}} plan  from labelEdits
- * @param {{ maxTries?: number, trace?: (input) => object }} [opt]
+ * @param {{ maxTries?: number, trace?: (input) => object, margin?: number }} [opt]  margin: how much better the reading must get (bench: --labels-margin)
  * @returns {{ res, input, kept: object[], declined: object[], tried: number }}
  */
-export function applyLabels(input, base, plan, { maxTries = 40, trace = runTrace } = {}) {
+export function applyLabels(input, base, plan, { maxTries = 40, trace = runTrace, margin = 0.25 } = {}) {
   let cur = { ...input, removed: [...(input.removed || [])], manual: [...(input.manual || [])], closures: [...(input.closures || [])], seeds: [...(input.seeds || [])] };
   let best = base;
   const kept = [], declined = [];
@@ -197,7 +197,7 @@ export function applyLabels(input, base, plan, { maxTries = 40, trace = runTrace
     else if (e.kind === 'remove') next.removed = cur.removed.concat({ a: e.a, b: e.b });
     else next.manual = cur.manual.concat({ a: e.a, b: e.b, t: e.t });
     const res = trace(next); tried++;
-    if (agreesBetter(res, best)) { cur = next; best = res; kept.push(e); } else declined.push({ ...e, reason: 'plan disagrees' });
+    if (agreesBetter(res, best, margin)) { cur = next; best = res; kept.push(e); } else declined.push({ ...e, reason: 'plan disagrees' });
   }
   // what the AI said that the plan didn't bear out stays in front of the estimator
   best = { ...best, flags: [...best.flags] };
