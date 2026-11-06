@@ -3,6 +3,7 @@
 //
 //   node scripts/bench.mjs manifest.json [--json out.json] [--baseline base.json] [--key-scale] [--options '{"maxOpening":12}']
 //     [--seeds dir[:model]]   (rooms an AI reading found, from scripts/ai-program.mjs, as seeds)
+//     [--labels dir]          (Claude's labels of the numbered walls / gaps / doorways, from scripts/ai-labels.mjs, applied as the app applies them)
 //
 // manifest: { "sheets": [ {
 //   "name": "Mill 2 A101", "pdf": "/path/plan.pdf", "page": 16,
@@ -34,6 +35,7 @@ import { runTrace } from '../src/engine/trace/index.js';
 import { printedAreas } from '../src/engine/trace/analyze.js';
 import { readMarkedKeys, areaItems } from './markedKeys.mjs';
 import { score, scoreMarked } from './benchScore.mjs';
+import { labelCandidates, labelEdits, applyLabels } from '../src/engine/trace/labels.js';
 
 const RENDER_SCALE = 2, PLAN_DPI = 72 * RENDER_SCALE;
 const args = process.argv.slice(2);
@@ -80,7 +82,25 @@ for (const sh of manifest.sheets) {
       seeds = JSON.parse(readFileSync(`${base}.${model}.json`, 'utf8')).rooms.map((r) => ({ ...toFt(r.x, r.y), name: r.name, type: r.type }));
     }
   }
-  const res = runTrace({ ...input, seeds, options: traceOptions, sheet: { x0: 0, y0: 0, x1: ev.width * sc.scale, y1: ev.height * sc.scale } });
+  const traceIn = { ...input, seeds, options: traceOptions, sheet: { x0: 0, y0: 0, x1: ev.width * sc.scale, y1: ev.height * sc.scale } };
+  let res = runTrace(traceIn);
+  // --labels dir: Claude's answers per number, kept only where the plan agrees better (labels.js)
+  let labelNote = '';
+  if (opt('labels')) {
+    const base = `${opt('labels')}/${sh.name.replace(/[^\w.-]+/g, '_')}`;
+    const tilesOf = [];
+    for (let i = 1; existsSync(`${base}.t${i}.json`); i++) if (existsSync(`${base}.t${i}.labels.json`)) tilesOf.push(JSON.parse(readFileSync(`${base}.t${i}.labels.json`, 'utf8')));
+    if (tilesOf.length) {
+      const cands = labelCandidates(res);
+      const saved = existsSync(`${base}.cands.json`) ? JSON.parse(readFileSync(`${base}.cands.json`, 'utf8')) : null;
+      if (saved && JSON.stringify(saved.gaps.map((g) => g.a)) !== JSON.stringify(cands.gaps.map((g) => g.a))) console.log(`   (labels were made on another trace of this sheet — numbers may not match)`);
+      const labels = { rooms: [], walls: [], gaps: [], openings: [] };
+      for (const t of tilesOf) for (const k of Object.keys(labels)) labels[k].push(...(t[k] || []));
+      const out = applyLabels(traceIn, res, labelEdits(cands, labels));
+      res = out.res;
+      labelNote = ` · AI labels: ${out.kept.length} kept of ${out.kept.length + out.declined.length} (${out.tried} solves)`;
+    }
+  }
   const ms = Date.now() - t0;
   const answers = [];
   if (sh.printed) for (const t of printedAreas(input.texts)) answers.push({ name: `${t.sf} SF tag`, at: { x: t.x, y: t.y }, sf: t.sf, src: 'printed' });
@@ -95,7 +115,7 @@ for (const sh of manifest.sheets) {
     s = scoreMarked(res, areaItems(keys).map((it) => ({ ...it, poly: it.pts.map(toFt) })), 0.25, drawn);
   } else s = score(res, answers);
   const pct = (n) => (s.answers ? `${((100 * n) / s.answers).toFixed(1)}%` : '—');
-  console.log(`── ${sh.name} (${basename(sh.pdf)} p${sh.page || 1}, ${ms} ms): ${res.rooms.length} rooms, ${res.counts.error} errors, scale ${sc.label || sc.scale.toFixed(4)}${sh.marked ? ` · marked ${s.keySf.toFixed(0)} SF in ${s.regions} regions, traced ${s.gotSf.toFixed(0)} SF there` : ''}`);
+  console.log(`── ${sh.name} (${basename(sh.pdf)} p${sh.page || 1}, ${ms} ms): ${res.rooms.length} rooms, ${res.counts.error} errors, scale ${sc.label || sc.scale.toFixed(4)}${labelNote}${sh.marked ? ` · marked ${s.keySf.toFixed(0)} SF in ${s.regions} regions, traced ${s.gotSf.toFixed(0)} SF there` : ''}`);
   console.log(`   answers ${s.answers} · right ${s.right} (${pct(s.right)}) · within 3% ${s.close} (${pct(s.close)}) · merged ${s.merged} · missing ${s.missing} · SILENT ${s.silent}`);
   if (s.geo) console.log(`   bounded by the drawing ${s.geo.answers} · right ${s.geo.right} · within 3% ${s.geo.close} · SILENT ${s.geo.silent} · scope (part of a room tiled) ${s.scope}`);
   for (const w of s.wrong) console.log(`     ${w.near ? '   near   ' : w.scope ? '   scope  ' : w.flagged === false ? '!! SILENT ' : '   flagged'} ${String(w.name).padEnd(22)} want ${String(w.sf).padStart(6)}  ${w.why}${w.at ? `  @${w.at.x.toFixed(0)},${w.at.y.toFixed(0)}` : ''}`);

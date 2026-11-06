@@ -210,6 +210,7 @@ export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGap
     }
   };
   return {
+    /** every gap the walls leave (from a wall node to the wall across) */
     gaps,
     /** the gaps that shut the room around p in (null: none can) */
     leak(p) {

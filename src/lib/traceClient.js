@@ -26,16 +26,19 @@ function getWorker() {
   return worker;
 }
 
-export async function solve(input) {
+export async function solve(input, plan = null) {
   const w = getWorker();
   if (!w) {
     const { runTrace } = await import('../engine/trace/index.js');
-    return runTrace(input);
+    if (!plan) return runTrace(input);
+    const { applyLabels } = await import('../engine/trace/labels.js');
+    const out = applyLabels(input, runTrace(input), plan);
+    return { res: { ...out.res, flags: out.res.flags.filter((f) => f.kind !== 'ai_label') }, kept: out.kept, declined: out.declined.length, notes: out.res.flags.filter((f) => f.kind === 'ai_label'), seeds: (out.input.seeds || []).length > (input.seeds || []).length ? out.input.seeds : [], tried: out.tried };
   }
   const id = ++seq;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    w.postMessage({ id, input });
+    w.postMessage({ id, input, plan });
   });
 }
 
@@ -52,10 +55,10 @@ export async function readPlan(state) {
 }
 
 /** Full run: evidence → feet → solve. */
-export async function runPlanTrace(state, { evidence, region, options, manual, removed } = {}) {
+export async function runPlanTrace(state, { evidence, region, options, manual, removed, closures, seeds, plan } = {}) {
   const ev = evidence || (await readPlan(state)).evidence;
   const input = evidenceToFeet(ev, state.scale, region);
   const sheet = { x0: 0, y0: 0, x1: (ev.width || 0) * state.scale, y1: (ev.height || 0) * state.scale };
-  const result = await solve({ ...input, sheet, manual: manual || [], removed: removed || [], options });
+  const result = await solve({ ...input, sheet, manual: manual || [], removed: removed || [], closures: closures || [], seeds: seeds?.length ? seeds : undefined, options }, plan || null);
   return { result, evidence: ev, input: { lines: input.lines.length, bodies: input.bodies.length, arcs: input.arcs.length, texts: input.labels.length, layered: input.layered } };
 }

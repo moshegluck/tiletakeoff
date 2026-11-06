@@ -33,6 +33,7 @@ export const TRACE_DEFAULTS = { ...WALL_DEFAULTS, ...GRAPH_DEFAULTS, floorAtDoor
  * @param {{str,x,y}[]} [input.labels] text that can name a room (ft); omitted = texts
  * @param {{a,b}[]} [input.removed]    walls the user erased (matched by proximity)
  * @param {{a,b,t}[]} [input.manual]   walls the user drew by hand (ft) — always win
+ * @param {{a,b,t}[]} [input.closures] gaps closed as openings (a doorway the AI labelled between two floors) (ft)
  * @param {object|null} [input.schedule] door schedule; omitted = parsed from texts
  * @param {{x0,y0,x1,y1}} [input.sheet] page extent in feet (lets the engine recognise a sheet border)
  * @param {object} [input.options]
@@ -161,7 +162,14 @@ function traceReading(input = {}) {
 
   // 2–5. join, bridge openings, build the graph, trace rooms
   const schedule = input.schedule !== undefined ? input.schedule : parseDoorSchedule(texts);
-  const solve = (keepOpen, lg, extra = []) => {
+  // gaps closed as openings: a doorway between two floors that nothing drawn
+  // bridges (the AI labelled it; kept only when the plan agrees — labels.js)
+  const closures = (input.closures || []).filter((c) => c?.a && c?.b && dist(c.a, c.b) > 0.5).map((c, i) => ({
+    id: `oa${i}`, a: { x: c.a.x, y: c.a.y }, b: { x: c.b.x, y: c.b.y }, t: c.t || 4.5 / 12, kind: 'opening', openingType: 'opening',
+    width: dist(c.a, c.b), arcs: [], conf: 0.6, via: 'ai', hint: false, jambs: [c.a, c.b],
+  }));
+  const solve = (keepOpen, lg, more = []) => {
+    const extra = closures.concat(more);
     const o2 = keepOpen.length ? { ...opt, keepOpen } : opt;
     // 2. join corners / tees / drafting gaps
     const joined = joinWalls(bodies, o2, lg);

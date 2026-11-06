@@ -21,8 +21,9 @@ export default function TracePanel() {
   const [showSurvey, setShowSurvey] = useState(true);
   const [aiBusy, setAiBusy] = useState(false);
   const [checkBusy, setCheckBusy] = useState(false);
+  const [labelBusy, setLabelBusy] = useState(false);
   const hasPlan = !!(s.pdfDoc || s.planImage);
-  const editsKey = `${tr.manual.length}:${tr.removed.length}:${JSON.stringify(tr.region)}:${tr.settings.floorAtDoor}:${tr.settings.maxOpening}`;
+  const editsKey = `${tr.manual.length}:${tr.removed.length}:${(tr.closures || []).length}:${(tr.seeds || []).length}:${JSON.stringify(tr.region)}:${tr.settings.floorAtDoor}:${tr.settings.maxOpening}`;
   const lastEdits = useRef(editsKey);
   const runSeq = useRef(0);
   const pending = useRef(false);
@@ -65,7 +66,7 @@ export default function TracePanel() {
       const { result, evidence, input } = await runPlanTrace(st, {
         region: cur.region,
         options: { floorAtDoor: cur.settings.floorAtDoor, maxOpening: cur.settings.maxOpening },
-        manual: cur.manual, removed: cur.removed,
+        manual: cur.manual, removed: cur.removed, closures: cur.closures, seeds: cur.seeds,
       });
       // a newer run, or the user went to another page meanwhile: this result is stale
       if (my !== runSeq.current || useStore.getState().pdfPage !== page) return;
@@ -125,6 +126,47 @@ export default function TracePanel() {
     finally { setAiBusy(false); }
   }
 
+  // Claude labels what the trace doubts (walls, gaps, doorways, rooms); each
+  // label is applied only when the plan's own checks agree better
+  async function aiLabel() {
+    const st = useStore.getState();
+    if (st.traceBusy) return;
+    setLabelBusy(true); setErr('');
+    const page = st.pdfPage, before = st.trace?.result;
+    try {
+      const { labelTraceWithAI } = await import('../lib/aiLabels.js');
+      const out = await labelTraceWithAI(st);
+      let now = useStore.getState();
+      if (now.pdfPage !== page || now.trace?.result !== before) return;   // the model changed meanwhile
+      if (!out.plan.edits.length && !out.plan.seeds.length) {
+        window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: out.warning || (out.asked ? 'AI labels: the trace matches what the drawing shows' : 'AI labels: nothing in doubt'), ok: !out.warning } }));
+        return;
+      }
+      now.setTraceBusy(true);
+      const cur = now.trace || defaultTrace();
+      const { runPlanTrace } = await import('../lib/traceClient.js');
+      const { result } = await runPlanTrace(now, {
+        region: cur.region,
+        options: { floorAtDoor: cur.settings.floorAtDoor, maxOpening: cur.settings.maxOpening },
+        manual: cur.manual, removed: cur.removed, closures: cur.closures, seeds: cur.seeds, plan: out.plan,
+      });
+      now = useStore.getState();
+      if (now.pdfPage !== page || now.trace?.result !== before) return;
+      const names = cur.names || {};
+      for (const r of result.res.rooms) { const k = nameKey(r); if (names[k]) r.name = names[k]; }
+      const n = (k) => result.kept.filter((e) => e.kind === k).length;
+      // the edits land in manual / removed / closures / seeds: don't re-solve for them
+      lastEdits.current = `${cur.manual.length + n('solid')}:${cur.removed.length + n('remove')}:${(cur.closures || []).length + n('close')}:${result.seeds.length || (cur.seeds || []).length}:${JSON.stringify(cur.region)}:${cur.settings.floorAtDoor}:${cur.settings.maxOpening}`;
+      now.applyTraceLabels({ result: result.res, kept: result.kept, seeds: result.seeds, notes: { at: Date.now(), flags: result.notes, kept: result.kept.length, declined: result.declined } });
+      const k = result.kept.length;
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: out.warning || `AI labels: ${k} fix${k === 1 ? '' : 'es'} applied${result.declined ? `, ${result.declined} left as notes (the plan didn't agree)` : ''}`, ok: !out.warning } }));
+    } catch (e) { setErr(e.message || 'AI labels failed'); }
+    finally {
+      useStore.getState().setTraceBusy(false); setLabelBusy(false);
+      if (pending.current) { pending.current = false; setTimeout(run, 0); }
+    }
+  }
+
   // the AI looks at the drawing with the model on it and says where they disagree
   async function aiCheck() {
     setCheckBusy(true); setErr('');
@@ -166,7 +208,7 @@ export default function TracePanel() {
 
   // the engine's flags, then what the AI check found (never mixed into the numbers)
   const ai = tr?.aiReview;
-  const flags = res ? [...res.flags, ...(ai?.flags || [])].sort((a, b) => SEV[a.severity] - SEV[b.severity]) : [];
+  const flags = res ? [...res.flags, ...(ai?.flags || []), ...(tr.aiNotes?.flags || [])].sort((a, b) => SEV[a.severity] - SEV[b.severity]) : [];
   const aiRooms = new Set((ai?.flags || []).map((f) => f.roomId).filter(Boolean));
   const aiOk = new Set(ai?.okIds || []);
   const mainFlags = flags.filter((f) => f.severity !== 'info');
@@ -313,6 +355,10 @@ export default function TracePanel() {
                 </div>
               </div>
             ))}
+            <button className="tbtn tr-ai" disabled={labelBusy || s.traceBusy} onClick={aiLabel} title="Claude reads the walls, gaps, doorways and rooms the trace is unsure of. Each answer is applied only when the plan's own checks agree; Undo fix takes any of them back.">
+              {labelBusy ? 'AI is reading the doubtful parts…' : 'Fix doubts with AI'}
+            </button>
+            {tr.aiNotes && <div className="note">AI labels {new Date(tr.aiNotes.at).toLocaleTimeString()} · {tr.aiNotes.kept} applied · {tr.aiNotes.declined} left as notes</div>}
             <button className="tbtn tr-ai" disabled={checkBusy} onClick={aiCheck} title="Claude looks at the drawing with the traced model on it and lists where they disagree. The numbers stay the trace's.">
               {checkBusy ? 'AI is checking the model against the drawing…' : ai ? 'Check again with AI' : 'Check the trace with AI'}
             </button>
