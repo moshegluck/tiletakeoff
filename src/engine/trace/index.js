@@ -190,7 +190,7 @@ function traceReading(input = {}) {
   // trace inferred (no door, nothing drawn across) is part of the room it
   // opens into — a study's alcove of built-ins, a nook — not a room of its
   // own: leave its mouth open and solve again.
-  const mouths = alcoveMouths(res);
+  const mouths = opt.alcoves === false ? [] : alcoveMouths(res);
   let kept = [];
   if (mouths.length) {
     const log2 = [];
@@ -209,27 +209,45 @@ function traceReading(input = {}) {
   // Kept only when more rooms stand apart and the plan's own numbers don't
   // disagree more.
   if (opt.seedGaps !== false) {
-    const roomAt = (p) => res.rooms.find((r) => pointInPoly(p, r.poly))?.id || null;
-    const seeds = roomSeeds(res.spots || [], input.seeds || [], roomAt);
-    const gaps = seedGaps(g, seeds, { maxOpening: opt.maxOpening, anyPair: !!opt.seedAnyPair });
-    if (gaps.length) {
-      const extra = gaps.map((gp, i) => ({
-        id: `os${i}`, a: gp.at, b: gp.to, t: gp.t, kind: 'opening', openingType: 'opening', width: gp.gap, arcs: [], conf: 0.5,
-        via: 'seed', hint: false, jambs: [gp.at, gp.to], seeded: { why: gp.why, names: gp.names },
-      }));
-      const log3 = [];
-      const again = solve(kept, log3, extra);
+    // (a split can show two more names sharing a space — a kitchen parted
+    // from its hall still holds the play room it leaked into — so look
+    // again, a few rounds; a batch the sheet's numbers reject is tried a
+    // gap at a time, so one bad gap doesn't cost the good ones)
+    const held = [];
+    const asOpening = (gp, i) => ({
+      id: `os${i}`, a: gp.at, b: gp.to, t: gp.t, kind: 'opening', openingType: 'opening', width: gp.gap, arcs: [], conf: 0.5,
+      via: 'seed', hint: false, jambs: [gp.at, gp.to], seeded: { why: gp.why, names: gp.names },
+    });
+    for (let round = 0; round < (opt.seedRounds ?? 3); round++) {
+      const roomAt = (p) => res.rooms.find((r) => pointInPoly(p, r.poly))?.id || null;
+      const seeds = roomSeeds(res.spots || [], input.seeds || [], roomAt);
+      const gaps = seedGaps(g, seeds, { maxOpening: opt.maxOpening, anyPair: !!opt.seedAnyPair })
+        .filter((gp) => !held.some((h) => dist(h.at, gp.at) < 0.05 && dist(h.to, gp.to) < 0.05));
+      if (opt._debug) opt._debug({ seeds, gaps: gaps.slice(), tried: gaps.length > 0 });
+      if (!gaps.length) break;
       const apart = (rs) => {
         const at = (p) => rs.rooms.find((r) => pointInPoly(p, r.poly))?.id || null;
         const ids = seeds.map(at);
         return ids.filter((id) => id && ids.filter((x) => x === id).length === 1).length;
       };
-      const v0 = res.verify || {}, v1 = again.res.verify || {};
-      if (again.res.rooms.length && apart(again.res) > apart(res) && (v1.matched || 0) >= (v0.matched || 0) && (v1.off || 0) <= (v0.off || 0)) {
-        ({ g, res } = again);
-        log.length = 0; log.push(...log3);
-        log.push({ kind: 'opening', at: gaps[0].at, note: `${gaps.length} gap${gaps.length > 1 ? 's' : ''} closed so the rooms the plan names stand apart` });
+      const better = (a, b) => {
+        const v0 = b.verify || {}, v1 = a.verify || {};
+        return a.rooms.length && apart(a) > apart(b) && (v1.matched || 0) >= (v0.matched || 0) && (v1.off || 0) <= (v0.off || 0);
+      };
+      const tryWith = (list) => { const log3 = []; return { ...solve(kept, log3, held.concat(list).map(asOpening)), log3 }; };
+      let took = [];
+      const all = tryWith(gaps);
+      if (better(all.res, res)) { took = gaps; ({ g, res } = all); log.length = 0; log.push(...all.log3); }
+      else if (gaps.length > 1) {
+        for (const gp of gaps.slice(0, opt.seedSingles ?? 6)) {
+          const one = tryWith(took.concat([gp]));
+          if (better(one.res, res)) { took = took.concat([gp]); ({ g, res } = one); log.length = 0; log.push(...one.log3); }
+        }
       }
+      if (opt._debug) opt._debug({ seeds, gaps, took: took.length, round });
+      if (!took.length) break;
+      held.push(...took);
+      log.push({ kind: 'opening', at: took[0].at, note: `${took.length} gap${took.length > 1 ? 's' : ''} closed so the rooms the plan names stand apart` });
     }
   }
 

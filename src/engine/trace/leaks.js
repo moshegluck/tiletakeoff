@@ -39,7 +39,7 @@ export function leakPoints(edges, nodes, from, opt = {}) {
  * @param {{x,y}[]} nodes
  * @param {{ maxCells?: number, maxGap?: number, maxGaps?: number }} [opt]
  */
-export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGaps = 3 } = {}) {
+export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGaps = 3, sideGap = 0 } = {}) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const e of edges) for (const p of [e.a, e.b]) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   x0 -= 3; y0 -= 3; x1 += 3; y1 += 3;
@@ -134,6 +134,21 @@ export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGap
       if (d >= td || d < 2 * cell) continue;
       if (!out.some((o) => (o.x * (p.x - n.x) + o.y * (p.y - n.y)) / d >= COS)) continue;
       to = p; td = d;
+    }
+    // a wall that stops a few inches beside another (a tee drawn a hair off,
+    // a jog): the gap is to that wall, whichever way it lies — no doorway is
+    // that narrow
+    if (sideGap > 0 && out.length === 1) {
+      let sto = null, sd = sideGap;
+      for (const i of ids) {
+        const e = edges[i];
+        if (same(e.a, n) || same(e.b, n)) continue;
+        const p = segNear(n, e.a, e.b), d = Math.hypot(p.x - n.x, p.y - n.y);
+        if (d >= sd || d < cell) continue;
+        if ((out[0].x * (p.x - n.x) + out[0].y * (p.y - n.y)) / d < -0.2) continue;
+        sto = p; sd = d;
+      }
+      if (sto && !(to && Math.hypot(sto.x - to.x, sto.y - to.y) < cell)) gaps.push({ at: { x: n.x, y: n.y }, to: sto, gap: sd, side: true });
     }
     if (!to) continue;
     const m = { x: (n.x + to.x) / 2, y: (n.y + to.y) / 2 }, half = td / 2;

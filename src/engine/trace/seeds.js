@@ -65,12 +65,12 @@ export function roomSeeds(spots, given = [], roomAt = () => null) {
  * @param {{ maxOpening?: number, maxDoor?: number, maxCased?: number, apart?: number, maxPairs?: number, anyPair?: boolean }} [opt]
  * @returns {{ at:{x,y}, to:{x,y}, gap: number, t: number, why: 'split'|'leak', names: string[] }[]}
  */
-export function seedGaps(g, seeds, { maxOpening = 16, maxDoor = 8, maxCased = 6.5, apart = 6, maxPairs = 80, anyPair = false } = {}) {
+export function seedGaps(g, seeds, { maxOpening = 16, maxDoor = 8, maxCased = 6.5, apart = 6, maxPairs = 80, anyPair = false, sideGap = 1.25, leakGap = 1.25 } = {}) {
   const used = new Set(g.edges.flatMap((e) => [e.u, e.v]));
   const nodes = [...used].map((n) => g.nodes[n]);
   if (!nodes.length || !seeds.length) return [];
   const edges = g.edges.map((e) => ({ a: g.nodes[e.u], b: g.nodes[e.v] }));
-  const m = gapMap(edges, nodes, { maxGap: maxOpening });
+  const m = gapMap(edges, nodes, { maxGap: maxOpening, sideGap });
   // a gap's thickness: the wall it opens from
   const thick = (p) => {
     let t = 0;
@@ -99,10 +99,13 @@ export function seedGaps(g, seeds, { maxOpening = 16, maxDoor = 8, maxCased = 6.
         const a = ss[i], b = ss[j];
         const doored = DOORED.has(a.type) || DOORED.has(b.type);
         const open = OPEN.has(a.type) && OPEN.has(b.type) && a.type !== b.type;
-        if (!anyPair && !doored && !open) continue;
+        // (any two names part across a leak narrower than any doorway: a
+        // wall that stops inches short of the one it meets is no passage)
+        const leakOnly = !anyPair && !doored && !open;
+        if (leakOnly && (a.type === 'hall' && b.type === 'hall')) continue;
         if (Math.hypot(a.x - b.x, a.y - b.y) < apart || ++pairs > maxPairs) continue;
         // a door's width (a garage's door is wider); a cased opening's
-        const widest = a.type === 'garage' || b.type === 'garage' ? maxOpening : doored || anyPair ? maxDoor : maxCased;
+        const widest = leakOnly ? leakGap : a.type === 'garage' || b.type === 'garage' ? maxOpening : doored || anyPair ? maxDoor : maxCased;
         // (a doorway: a jog in a wall an inch or two across parts no rooms)
         const gaps = m.split(a, b, { widest });
         if (!gaps) continue;
