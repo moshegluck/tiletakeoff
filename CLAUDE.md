@@ -169,6 +169,16 @@ TileTakeoff works the other way round:
     `seeded_gap` at the gap on both rooms (nothing drawn says so). Kept only when more seeds stand apart
     and the plan check agrees no less. A room named nowhere takes its seed's name. DINETTE is dining.
     A reading's type fills in a name of no known kind it matches ("ROOM #3" + bathroom → bath).
+    Any two names (any types, not two halls) also part across a leak ≤ 1.25 ft: `gapMap`'s `sideGap`
+    adds a gap from a dangling wall end to the nearest wall whichever way it lies (a tee drawn a hair
+    off, a pier the pairing cut short — 34 Ellish's kitchen ran into the play room). Up to 3 rounds
+    (`seedRounds`); a batch the plan check rejects is tried a gap at a time (`seedSingles`).
+  - Necks (`neckGaps` in `seeds.js`, a fourth pass; `options.necks: false` off, `options.neck` tunes):
+    a gap whose clear width (face to face) is 1'-7" to 3'-3" — to 4 ft with a door swing of that radius
+    at it — that closes off a space of 12–200 SF inside one traced room is a doorway: closed, flagged
+    `seeded_gap` (why 'neck'). Never between two halls. Kept only when the plan check agrees no less.
+    Marked jobs (Nov 9, key scale): 697 → 726 right (57.5%), silent 63 → 59, merged 210 → 171. A
+    joinWalls near-miss join (`nearJoin`, default 0) scored worse (691): it eats door jambs.
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
