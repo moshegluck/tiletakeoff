@@ -23,7 +23,7 @@ describe('seeds: rooms the plan tells apart where the walls do not', () => {
   const texts = [{ str: 'BATH', x: 3, y: 3 }, { str: 'HALL', x: 5.25, y: 16 }, { str: 'LINEN', x: 2, y: 14 }, { str: 'BEDROOM', x: 14, y: 10 }];
 
   it('two names in one space part at the narrowest gap between them — flagged there', () => {
-    const before = runTrace({ lines, arcs: [], texts, options: { seedGaps: false } });
+    const before = runTrace({ lines, arcs: [], texts, options: { seedGaps: false, necks: false } });
     expect(before.rooms.find((r) => r.name === 'BATH').area).toBeGreaterThan(75);
     expect(before.flags.some((f) => f.kind === 'merged_rooms')).toBe(true);
 
@@ -61,5 +61,39 @@ describe('seeds: rooms the plan tells apart where the walls do not', () => {
     const spots = [{ x: 3, y: 3, name: 'ROOM #3', type: 'room', roomId: 'r1', typed: false }];
     const seeds = roomSeeds(spots, [{ x: 4, y: 4, name: 'ROOM #3', type: 'bathroom' }], () => 'r1');
     expect(seeds.map((s) => [s.name, s.type])).toEqual([['ROOM #3', 'bath']]);
+  });
+});
+
+describe('necks: a doorway the trace left open, read by its width', () => {
+  // a 12x15 bedroom; at its foot a recess 3 ft deep beside the bath, open to
+  // the bedroom between the bath wall's stub and the exterior wall
+  const recess = (open) => wallsToLines([
+    { x1: 0, y1: 0, x2: 12, y2: 0, t: EXT }, { x1: 0, y1: 15, x2: 12, y2: 15, t: EXT },
+    { x1: 0, y1: 0, x2: 0, y2: 15, t: EXT }, { x1: 12, y1: 0, x2: 12, y2: 15, t: EXT },
+    { x1: open, y1: 12, x2: 12, y2: 12, t: INT, capA: 0 }, { x1: 7, y1: 12, x2: 7, y2: 15, t: INT },
+  ], [], 12, 15);
+  const texts = [{ str: 'BEDROOM', x: 6, y: 6 }, { str: 'BATH', x: 9.5, y: 13.5 }];
+  const inside = (x, y, q) => {
+    let c = false;
+    for (let i = 0, j = q.length - 1; i < q.length; j = i++) if ((q[i].y > y) !== (q[j].y > y) && x < ((q[j].x - q[i].x) * (y - q[i].y)) / (q[j].y - q[i].y) + q[i].x) c = !c;
+    return c;
+  };
+  const at = (res, x, y) => res.rooms.find((r) => r.poly && inside(x, y, r.poly));
+
+  it("a door's width into a small space closes it off as its own area, flagged", () => {
+    const res = runTrace({ lines: recess(2.75), texts });
+    const nook = at(res, 2, 13.5);
+    expect(nook.name).not.toBe('BEDROOM');
+    const f = res.flags.find((x) => x.kind === 'seeded_gap');
+    expect(f.msg).toMatch(/door's width/);
+    expect(nook.flags).toContain(f.id);
+  });
+  it('an opening wider than a door stays part of the room (an open plan, a wide nook)', () => {
+    const res = runTrace({ lines: recess(5.5), texts });
+    expect(at(res, 2, 13.5)?.name).toBe('BEDROOM');
+  });
+  it('turned off, the doorway stays open', () => {
+    const res = runTrace({ lines: recess(2.75), texts, options: { necks: false } });
+    expect(at(res, 2, 13.5)?.name).toBe('BEDROOM');
   });
 });

@@ -14,7 +14,7 @@ import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
 import { dist, norm, sub, add, mul, pointInPoly } from './vec.js';
-import { roomSeeds, seedGaps, seedType } from './seeds.js';
+import { roomSeeds, seedGaps, seedType, neckGaps } from './seeds.js';
 import { describeSheet } from './survey.js';
 import { leafLines } from './arcs.js';
 
@@ -248,6 +248,37 @@ function traceReading(input = {}) {
       if (!took.length) break;
       held.push(...took);
       log.push({ kind: 'opening', at: took[0].at, note: `${took.length} gap${took.length > 1 ? 's' : ''} closed so the rooms the plan names stand apart` });
+    }
+  }
+
+  // Doorways left open into a small space of its own (a vanity alcove, a
+  // closet, a toilet room): a gap no wider than a door closing it off from
+  // the room around it. Kept only when the plan's own numbers don't
+  // disagree more; a batch they reject is tried a gap at a time.
+  if (opt.necks !== false) {
+    const gaps = neckGaps(g, res.rooms, arcs, res.spots || [], opt.neck || {});
+    if (opt._debug) opt._debug({ necks: gaps.slice() });
+    if (gaps.length) {
+      const prior = res.openings.filter((o) => o.via === 'seed').map((o) => ({ at: o.a, to: o.b, gap: o.width || dist(o.a, o.b), t: o.t || 4.5 / 12, why: o.seeded?.why || 'split', names: o.seeded?.names || [] }));
+      const asOp = (gp, i) => ({
+        id: `on${i}`, a: gp.at, b: gp.to, t: gp.t, kind: 'opening', openingType: 'opening', width: gp.gap, arcs: [], conf: 0.5,
+        via: 'seed', hint: false, jambs: [gp.at, gp.to], seeded: { why: gp.why, names: gp.names },
+      });
+      const ok = (a, b) => {
+        const v0 = b.verify || {}, v1 = a.verify || {};
+        return a.rooms.length > b.rooms.length && (v1.matched || 0) >= (v0.matched || 0) && (v1.off || 0) <= (v0.off || 0);
+      };
+      const tryWith = (list) => { const l = []; return { ...solve(kept, l, prior.concat(list).map(asOp)), l }; };
+      let took = [];
+      const all = tryWith(gaps);
+      if (ok(all.res, res)) { took = gaps; ({ g, res } = all); log.length = 0; log.push(...all.l); }
+      else if (gaps.length > 1) {
+        for (const gp of gaps.slice(0, opt.neckSingles ?? 8)) {
+          const one = tryWith(took.concat([gp]));
+          if (ok(one.res, res)) { took = took.concat([gp]); ({ g, res } = one); log.length = 0; log.push(...one.l); }
+        }
+      }
+      if (took.length) log.push({ kind: 'opening', at: took[0].at, note: `${took.length} doorway${took.length > 1 ? 's' : ''} closed into the small spaces they open` });
     }
   }
 

@@ -39,7 +39,7 @@ export function leakPoints(edges, nodes, from, opt = {}) {
  * @param {{x,y}[]} nodes
  * @param {{ maxCells?: number, maxGap?: number, maxGaps?: number }} [opt]
  */
-export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGaps = 3, sideGap = 0 } = {}) {
+export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGaps = 3, sideGap = 0, past = 1 } = {}) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const e of edges) for (const p of [e.a, e.b]) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   x0 -= 3; y0 -= 3; x1 += 3; y1 += 3;
@@ -154,7 +154,7 @@ export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGap
     const m = { x: (n.x + to.x) / 2, y: (n.y + to.y) / 2 }, half = td / 2;
     if (clearAt(m) < 0.8 * half - cell) continue;
     const nx = -(to.y - n.y) / td, ny = (to.x - n.x) / td, r = half + 1;
-    if (!(clearAt({ x: m.x + nx * r, y: m.y + ny * r }) > half + cell || clearAt({ x: m.x - nx * r, y: m.y - ny * r }) > half + cell)) continue;
+    if (!(clearAt({ x: m.x + nx * r, y: m.y + ny * r }) > past * half + cell || clearAt({ x: m.x - nx * r, y: m.y - ny * r }) > past * half + cell)) continue;
     gaps.push({ at: { x: n.x, y: n.y }, to, gap: td });
   }
   // where each gap lies on the raster
@@ -272,6 +272,39 @@ export function gapMap(edges, nodes, { maxCells = 1_000_000, maxGap = 20, maxGap
     /** keep these gaps closed for the questions after (or open them again) */
     hold(list) { for (const g of list) close(g, 1); },
     release(list) { for (const g of list) close(g, -1); },
+    /**
+     * with the gaps held closed, is one side of p | q a small space of its
+     * own? → { side: 'p'|'q', sf } (the smaller side, closed off from the
+     * other, under `cap` sq ft), or null (still joined, or both sides large)
+     */
+    smallSide(p, q, cap) {
+      const s = cellOf(p), t = cellOf(q);
+      if (s < 0 || t < 0 || s === t) return null;
+      const limit = Math.ceil(cap / (cell * cell));
+      const fill = (a, b) => {
+        gen++;
+        let head = 0, tail = 0;
+        queue[tail++] = a; seen[a] = gen;
+        while (head < tail) {
+          const c = queue[head++];
+          if (c === b) return -1;
+          if (tail > limit) return Infinity;
+          const cx = c % W, cy = (c - cx) / W;
+          if (cx === 0 || cy === 0 || cx === W - 1 || cy === H - 1) return Infinity;
+          for (const n of [c - 1, c + 1, c - W, c + W]) {
+            if (wall[n] || shut[n] || seen[n] === gen) continue;
+            seen[n] = gen; queue[tail++] = n;
+          }
+        }
+        return tail;
+      };
+      const a = fill(s, t);
+      if (a < 0) return null;
+      if (Number.isFinite(a)) return { side: 'p', sf: a * cell * cell };
+      const b = fill(t, s);
+      if (b < 0 || !Number.isFinite(b)) return null;
+      return { side: 'q', sf: b * cell * cell };
+    },
     /** can one walk from p to q past the walls and the gaps held closed? */
     joined(p, q) {
       const s = cellOf(p), t = cellOf(q);
