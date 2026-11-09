@@ -27,6 +27,7 @@ export const GRAPH_DEFAULTS = {
   maxOpening: 16,          // ft — wider gaps are not bridged
   minJoinAngle: 20 * DEG,
   stubFactor: 0.75,        // overshoot stubs shorter than factor*t(other) are pruned
+  nearJoin: 0,             // ft — a wall end left this close to another wall's face (face to face) meets it
   minComponentLen: 3,      // ft of total wall length for a detached component to be kept
 };
 
@@ -201,6 +202,35 @@ export function joinWalls(inSegs, options = {}, log = []) {
         e1.joined = e2.joined = true;
         log.push({ kind: 'gap', at: { x: (e1.p.x + e2.p.x) / 2, y: (e1.p.y + e2.p.y) / 2 }, note: `Wall thickness changes here (${(lateral * 12).toFixed(1)}" step)` });
       }
+    }
+  }
+  // ---- near misses: an end still free whose wall stops beside another
+  // wall, its face a few inches from that wall's face (a tee drawn a hair
+  // off, a pier the pairing cut short, a jog in a wall) — no doorway is that
+  // narrow: it meets that wall at the nearest point, so the rooms either
+  // side close (a free end there would leave a leak no door bridges) ----
+  if (opt.nearJoin > 0) {
+    for (const e of ends) {
+      if (e.joined) continue;
+      let best = null;
+      for (const j of near(e.p, maxT + opt.nearJoin)) {
+        if (j === e.bi) continue;
+        const sj = segs[j];
+        if (dist(sj.a, sj.b) < Math.max(sj.t, e.t)) continue;
+        const c = closestOnSeg(e.p, sj.a, sj.b);
+        const face = c.d - (e.t + sj.t) / 2;
+        if (c.d <= opt.snapTol || face > opt.nearJoin) continue;
+        // (the way to it runs off the end, not back along the wall)
+        const v = sub(c.pt, e.p);
+        if (dot(v, e.dir) < -opt.snapTol) continue;
+        if (!best || c.d < best.d) best = { d: c.d, pt: c.pt, j };
+      }
+      if (!best) continue;
+      const crosses = [...near(e.p, maxT + opt.nearJoin)].some((k) => k !== e.bi && k !== best.j && segIntersect(e.p, best.pt, segs[k].a, segs[k].b));
+      if (crosses) continue;
+      extra.push({ a: { ...e.p }, b: { ...best.pt }, t: e.t, conf: 0.55, kind: 'wall', src: 'repair' });
+      e.joined = true; e.with = best.j;
+      log.push({ kind: 'gap', at: { ...best.pt }, note: `Wall end met the wall beside it (${(best.d * 12).toFixed(1)}" off)` });
     }
   }
   // a piece the joins shrank to nothing (a door frame's jamb block drawn

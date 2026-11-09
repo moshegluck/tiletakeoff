@@ -148,8 +148,12 @@ describe('trace — review regressions', () => {
     for (let x = EXT / 2; x + 0.35 <= 3; x += 0.5) dashes.push({ a: { x, y: 12 - INT / 2 }, b: { x: x + 0.35, y: 12 - INT / 2 } });
     const texts = [{ str: 'BEDROOM', x: 6, y: 6 }, { str: 'BATH', x: 8.5, y: 13.5 }];
     const at = (res, x, y) => res.rooms.find((r) => r.poly && inside({ x, y }, r.poly));
+    const nook = runTrace({ lines, texts, options: { necks: false } });
+    expect(at(nook, 2.5, 13.5)?.name).toBe('BEDROOM');          // nothing drawn across: a nook of the bedroom…
+    // …unless doorways are read by their width: 2'-9" is a door's, into a space of its own
     const open = runTrace({ lines, texts });
-    expect(at(open, 2.5, 13.5)?.name).toBe('BEDROOM');          // nothing drawn across: a nook of the bedroom
+    expect(at(open, 2.5, 13.5)?.name).not.toBe('BEDROOM');
+    expect(at(open, 2.5, 13.5)?.area).toBeCloseTo((5 - EXT / 2 - INT / 2) * (3 - EXT / 2 - INT / 2), 0);
     const closed = runTrace({ lines: lines.concat(dashes), texts });
     const vanity = at(closed, 2.5, 13.5);
     expect(vanity.name).not.toBe('BEDROOM');

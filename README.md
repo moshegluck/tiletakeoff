@@ -19,7 +19,7 @@ Professional flooring takeoff, estimating & 3D visualization. React + Vite, depl
 - **Tile library** — square, rectangle/subway, plank, mosaic, and metric sizes; grout-joint presets; pattern-based waste suggestions.
 - **Estimate engine** — per material choose Waste% or Cut-reuse costing; full tiles + broken-for-cuts + safety margin → order qty (sf/tile/box), plus labor $/sf and tax.
 - **3D walk-through** — a walkable house built from the rooms (or the traced wall model): floors and floor design zones tiled at true size, doors, ceiling height; orbit or walk.
-- **AI detection (hybrid)** — runs on the plan that's already open (no re-upload): the part of the sheet on screen, or the whole page, re-rendered from the PDF at the model's full resolution. Claude (official Anthropic SDK, **structured outputs**, high-resolution vision) traces each room's outline in that image's pixels and reads printed room sizes; the app maps the pixels back onto the plan so rooms land exactly over the drawing — rectangles or L-shapes, walls squared up. You review them drawn over the plan, untick false positives, and add. Rooms already drawn are skipped; with no scale set, the scale is read from the printed room sizes and snapped to the standard preset (e.g. 1/4" = 1'-0").
+- **AI-checked trace** — the walls and rooms come from the plan's own line data (the Trace tab). Claude never draws an outline: **Fix doubts with AI** numbers the walls, gaps, doorways and rooms the trace is unsure of, draws the numbers on the plan, and Claude answers per number (wall or not, doorway or open floor, the room's name). Each answer is applied only when the sheet's own checks agree better (rooms close, printed areas and door sizes match); the rest stay as notes, and Undo fix takes any of them back. Same prompt in the bench: `scripts/ai-labels.mjs`, then `scripts/bench.mjs --key-scale --labels dir`.
 - **Cloud (optional)** — Supabase auth + per-user projects with Row Level Security; auto-saves your work. Runs local-only (localStorage) if Supabase env vars are absent.
 - **Plans that stay put** — the PDF or image you open is kept with the project: in the browser (IndexedDB) so a reload brings the drawing back exactly where you left it, and — when signed in — in a private storage bucket (`plans/<user>/<project>`, RLS) so the project opens with its drawing on any device. Up to 50 MB per plan.
 - **Export** — CSV, multi-sheet Excel (.xlsx), and re-importable JSON.
@@ -103,7 +103,7 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-The AI Detect button calls `/api/detect-plan`, which only exists when running on
+The AI buttons in the Trace tab call `/api/detect-plan`, which only exists when running on
 Vercel (or `vercel dev`). To test it locally:
 
 ```bash

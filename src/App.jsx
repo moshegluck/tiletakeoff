@@ -20,7 +20,6 @@ import PhoneMenu from './components/PhoneMenu.jsx';
 
 const Viewer3D = lazy(() => import('./components/Viewer3D.jsx'));
 const Library = lazy(() => import('./components/Library.jsx'));
-const DetectModal = lazy(() => import('./components/DetectModal.jsx'));
 
 const TOOLS = [
   { id: 'select', key: 'V', label: 'Select / Move', icon: 'M3 3l7.5 18 2.5-7.5L20.5 11z' },
@@ -41,7 +40,6 @@ const TOOLS = [
 
 export default function App() {
   const s = useProject();
-  const [detect, setDetect] = useState(false);
   // tile library: null = closed, else its target ({ rooms, zones, itemKey })
   const [lib, setLib] = useState(null);
   useEffect(() => {
@@ -212,7 +210,7 @@ export default function App() {
       setSheet(true);   // the scale and Trace are the next step
       const what = out.kind === 'pdf' ? `PDF loaded · ${out.pages} page${out.pages > 1 ? 's' : ''}` : 'Plan image loaded';
       const fresh = out.newProject ? ` New project "${useStore.getState().name}" — the last one is in Projects.` : '';
-      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}.${fresh} Check the scale, then Trace plan or AI Detect.`, ok: true } }));
+      window.dispatchEvent(new CustomEvent('tt:toast', { detail: { msg: `${what}.${fresh} Check the scale, then Trace plan.`, ok: true } }));
       setTimeout(() => window.dispatchEvent(new Event('tt:fit')), 60);
     } catch (err) {
       if (isStaleBuild(err) && reloadForUpdate(UPDATE_NOTE)) return;
@@ -321,9 +319,6 @@ export default function App() {
         <button className={'tbtn hdr-full' + (s.tab === 'trace' ? ' on' : '')} onClick={() => s.setTab('trace')} title="Rebuild the walls from the plan and take off from the model">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 20V8l6-4 6 4v4h4v8z" /><path d="M10 20v-6h4v6" /></svg>Trace
         </button>
-        <button className="tbtn hdr-full" onClick={() => setDetect(true)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19" /><circle cx="12" cy="12" r="3" /></svg>AI Detect
-        </button>
         <button className={'tbtn hdr-full' + (s.view3d ? ' on' : '')} onClick={() => s.toggle3d()} title={s.view3d ? '2D plan' : '3D view'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l9 5v10l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v10" /></svg><span className="tbtn-label">{s.view3d ? '2D' : '3D'}</span>
         </button>
@@ -373,7 +368,6 @@ export default function App() {
         </aside>
       </main>
 
-      {detect && <Suspense fallback={null}><DetectModal onClose={() => setDetect(false)} /></Suspense>}
       {lib && <Suspense fallback={null}><Library target={lib} onClose={() => setLib(null)} /></Suspense>}
       {projects && <ProjectsDrawer onClose={() => setProjects(false)} />}
       {toast && (
@@ -383,8 +377,7 @@ export default function App() {
         </div>
       )}
       {menu && (
-        <PhoneMenu onClose={() => setMenu(false)} onOpenPlan={() => fileRef.current?.click()} onLibrary={() => setLib({})}
-          onDetect={() => setDetect(true)} onHome={() => { setFromApp(true); setLanding(true); }} />
+        <PhoneMenu onClose={() => setMenu(false)} onOpenPlan={() => fileRef.current?.click()} onLibrary={() => setLib({})} onHome={() => { setFromApp(true); setLanding(true); }} />
       )}
     </div>
   );

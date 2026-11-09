@@ -744,7 +744,9 @@ export function analyzeGraph(g, ctx = {}) {
     if (!op.seeded) continue;
     const rs = op.rooms.map((id) => rooms.find((r) => r.id === id)).filter(Boolean);
     const names = op.seeded.names.map((n) => `"${n}"`).join(' and ');
-    const why = op.seeded.why === 'split' ? `so ${names} stand in rooms of their own (the plan names both in one space)` : `so ${names} closes (its name stood in no closed room)`;
+    const why = op.seeded.why === 'split' ? `so ${names} stand in rooms of their own (the plan names both in one space)`
+      : op.seeded.why === 'neck' ? `a door's width into a space of its own off ${names}, so that space is its own area`
+        : `so ${names} closes (its name stood in no closed room)`;
     flag('warn', 'seeded_gap', mid(op.a, op.b), `Closed the ${fmtIn(op.width)} gap here — nothing is drawn across it — ${why}. Check it's a doorway or opening.`, { roomId: rs[0]?.id, alsoRoomIds: rs.slice(1).map((r) => r.id), gap: { at: op.a, to: op.b } });
   }
 

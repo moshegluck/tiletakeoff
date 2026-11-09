@@ -31,6 +31,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { projectForToken } from '../src/lib/supabasePublic.js';
 import { FALLBACK_MODELS, planModels, isModelProblem } from '../src/lib/planModels.js';
+import { LABELS_SYSTEM, LABELS_SCHEMA, labelsText, cleanLabels } from '../src/lib/labelPrompt.js';
 
 // Claude reads a dense plan carefully; give it room (Fluid compute allows 300 s).
 export const config = { maxDuration: 300 };
@@ -223,6 +224,53 @@ async function reviewTrace(body, key, res) {
   const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
   let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ findings: [], roomsOk: [], warning: 'The AI returned an unreadable answer. Try again.' }); }
   return res.status(200).json({ ...cleanReview(parsed, { W, H, rooms, openings }), model: msg.model });
+}
+
+// ---- trace labels (mode: 'labels') ----
+// The trace numbered its rooms, the walls and gaps around rooms it doubts and
+// the doorways it bridged; Claude answers per number (wall or not, doorway or
+// open floor, door / window / solid, the room's name). No coordinates come
+// back: the browser applies each answer to the model and keeps it only when
+// the plan agrees better (src/engine/trace/labels.js).
+async function labelTrace(body, key, res) {
+  const W = Math.round(+body.imageWidth), H = Math.round(+body.imageHeight);
+  if (!(W >= 16 && H >= 16 && W <= MAX_EDGE && H <= MAX_EDGE)) return res.status(400).json({ error: `imageWidth/imageHeight required (16–${MAX_EDGE} px).` });
+  const t = body.tags || {};
+  const tag = (s) => String(s || '').slice(0, 8);
+  const pt = (x) => ({ x: Math.round(+x.x || 0), y: Math.round(+x.y || 0) });
+  const list = (v, n) => (Array.isArray(v) ? v : []).slice(0, n);
+  const tags = {
+    rooms: list(t.rooms, 150).map((r) => ({ tag: tag(r.tag), name: String(r.name || '').slice(0, 40), area: Math.round(+r.area || 0), ...pt(r) })),
+    walls: list(t.walls, 120).map((w) => ({ tag: tag(w.tag), ...pt(w) })),
+    gaps: list(t.gaps, 120).map((g) => ({ tag: tag(g.tag), width: +(+g.width || 0).toFixed(2), ...pt(g) })),
+    openings: list(t.openings, 120).map((o) => ({ tag: tag(o.tag), type: ['door', 'opening', 'window'].includes(o.type) ? o.type : 'opening', width: +(+o.width || 0).toFixed(2), ...pt(o) })),
+  };
+  if (!tags.rooms.length && !tags.walls.length && !tags.gaps.length && !tags.openings.length) return res.status(400).json({ error: 'tags required' });
+  const anthropic = new Anthropic({ apiKey: key, timeout: 140_000, maxRetries: 1 });
+  let msg;
+  try {
+    msg = await askClaude(anthropic, {
+      max_tokens: 16000,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high', format: { type: 'json_schema', schema: LABELS_SCHEMA } },
+      system: LABELS_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: body.mediaType || 'image/jpeg', data: body.imageBase64 } },
+          { type: 'text', text: labelsText(W, H, tags) },
+        ],
+      }],
+    });
+  } catch (err) {
+    console.error(`[detect-plan:labels] Anthropic SDK error ${err?.status || ''}:`, err?.message);
+    return res.status(502).json({ error: sdkErrorText(err, 'The AI check failed. Please try again.') });
+  }
+  const empty = { rooms: [], walls: [], gaps: [], openings: [] };
+  if (msg.stop_reason === 'refusal') return res.status(200).json({ ...empty, warning: 'The AI declined to read this plan.' });
+  const text = (msg.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
+  let parsed; try { parsed = JSON.parse(text); } catch { return res.status(200).json({ ...empty, warning: 'The AI returned an unreadable answer. Try again.' }); }
+  return res.status(200).json({ ...cleanLabels(parsed, tags), model: msg.model });
 }
 
 const ALLOWED_MEDIA = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -465,6 +513,7 @@ export default async function handler(req, res) {
     }
     if (mode === 'label') return await labelRooms(req.body, key, res);
     if (mode === 'review') return await reviewTrace(req.body, key, res);
+    if (mode === 'labels') return await labelTrace(req.body, key, res);
 
     const W = Math.round(+imageWidth), H = Math.round(+imageHeight);
     if (!(W >= 16 && H >= 16 && W <= MAX_EDGE && H <= MAX_EDGE)) {

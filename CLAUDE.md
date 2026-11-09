@@ -169,6 +169,16 @@ TileTakeoff works the other way round:
     `seeded_gap` at the gap on both rooms (nothing drawn says so). Kept only when more seeds stand apart
     and the plan check agrees no less. A room named nowhere takes its seed's name. DINETTE is dining.
     A reading's type fills in a name of no known kind it matches ("ROOM #3" + bathroom → bath).
+    Any two names (any types, not two halls) also part across a leak ≤ 1.25 ft: `gapMap`'s `sideGap`
+    adds a gap from a dangling wall end to the nearest wall whichever way it lies (a tee drawn a hair
+    off, a pier the pairing cut short — 34 Ellish's kitchen ran into the play room). Up to 3 rounds
+    (`seedRounds`); a batch the plan check rejects is tried a gap at a time (`seedSingles`).
+  - Necks (`neckGaps` in `seeds.js`, a fourth pass; `options.necks: false` off, `options.neck` tunes):
+    a gap whose clear width (face to face) is 1'-7" to 3'-3" — to 4 ft with a door swing of that radius
+    at it — that closes off a space of 12–200 SF inside one traced room is a doorway: closed, flagged
+    `seeded_gap` (why 'neck'). Never between two halls. Kept only when the plan check agrees no less.
+    Marked jobs (Nov 9, key scale): 697 → 726 right (57.5%), silent 63 → 59, merged 210 → 171. A
+    joinWalls near-miss join (`nearJoin`, default 0) scored worse (691): it eats door jambs.
   - `stairs.js` stair runs: 5+ parallel treads 9"–13" apart, the stair's width long, ends in line, with
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
@@ -288,10 +298,17 @@ TileTakeoff works the other way round:
 - `src/state/store.js` trace slice, `commitTrace()`, `applyFinish()` (3D picks → materials)
 - `src/three/house3d.js` walkable house; `houseModel.js` model from store; `finishTextures.js` true-size textures
 - `src/data/finishes.js` floor / wall-tile / paint presets
-- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry).
-  The default mode is **AI Detect** (`DetectModal.jsx`): room outlines read off the plan, reviewed by
-  the user before they're added — a separate, opt-in tool, not the Trace pipeline. Model choice:
-  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored). Its review checks each outline
+- `api/detect-plan.js` serverless Claude route; `mode: 'label'` = AI reads room NAMES only (never geometry);
+  `mode: 'labels'` = Claude labels the trace's numbered candidates (`src/engine/trace/labels.js`,
+  prompt in `src/lib/labelPrompt.js`, browser side `src/lib/aiLabels.js`, Trace tab "Fix doubts with AI"):
+  W wall/not_wall, G separate/open, O door/opening/window/solid, R name/type. Answers become edits
+  (`closures` = gaps closed as openings, `removed`, `manual`, `seeds`) applied one at a time and kept only
+  when `agreesBetter` (no printed-area match lost, no new open room, readingScore up); the rest become
+  `ai_label` info notes. Bench: `scripts/ai-labels.mjs manifest --out dir [--ask]` renders the numbered
+  tiles (and asks with `--ask`), `scripts/bench.mjs manifest --key-scale --labels dir` applies them.
+  AI Detect (`DetectModal.jsx`, Claude drawing room outlines in pixels) is off the main path: no header
+  button or phone menu item; the files stay for now, unused. Model choice:
+  `src/lib/planModels.js` (old `ANTHROPIC_MODEL` values are ignored). AI Detect's review checks each outline
   against the area the PDF page prints inside it (`detectMap.printedCheck`, the trace's `AREA_TOL`):
   `plan ✓`, `plan 720 SF` (off), `N rooms` (one outline over several tags); a room the plan disagrees
   with starts unticked, and Add waits for the check.

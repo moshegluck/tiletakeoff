@@ -46,7 +46,7 @@ function blankProject() {
     planWidth: 0,          // pixel width of loaded plan image
     planHeight: 0,         // pixel height of loaded plan image
     planDpi: 0,            // px per paper-inch of the plan (72 * pdf renderScale); 0 = unknown
-    trace: null,           // reconstructed wall model: { result, settings, manual, removed, region, source, committedAt }
+    trace: null,           // reconstructed wall model: { result, settings, manual, removed, closures, seeds, aiNotes, region, source, committedAt }
     // rooms / markups / trace / scale above belong to the plan page on screen
     // (pdfPage); every other page's are parked here: { [page]: { rooms,
     // markups, trace, scale, archScale } }. See switchPage / allRooms.
@@ -65,6 +65,9 @@ export function defaultTrace() {
     result: null,
     settings: { ceilingHeight: 8, doorHeight: 6 + 8 / 12, floorAtDoor: 'face', maxOpening: 16, defaultWallIn: 4.5 },
     manual: [], removed: [], edits: [], region: null, source: null, committedAt: null,
+    // the AI's labels the plan bore out: gaps closed as doorways, room names (labels.js);
+    // walls it erased / drew solid join removed / manual. aiNotes: what it said that the plan didn't bear out
+    closures: [], seeds: [], aiNotes: null,
   };
 }
 
@@ -461,12 +464,25 @@ export const useStore = create((rawSet, get) => {
     const tr = { ...defaultTrace(), ...(get().trace || {}) };
     set({ trace: { ...tr, removed: [...tr.removed, { a, b }], edits: [...(tr.edits || []), 'removed'] } }); persist(get);
   },
+  /** The AI's labels the plan bore out (labels.js applyLabels), each an edit undo can take back. */
+  applyTraceLabels: ({ result, kept = [], seeds = [], notes = null }) => {
+    const tr = { ...defaultTrace(), ...(get().trace || {}) };
+    const manual = [...tr.manual], removed = [...tr.removed], closures = [...(tr.closures || [])], edits = [...(tr.edits || [])];
+    for (const e of kept) {
+      if (e.kind === 'close') { closures.push({ a: e.a, b: e.b, t: e.t }); edits.push('closure'); }
+      else if (e.kind === 'remove') { removed.push({ a: e.a, b: e.b }); edits.push('removed'); }
+      else if (e.kind === 'solid') { manual.push({ a: e.a, b: e.b, t: e.t }); edits.push('manual'); }
+    }
+    set({ trace: { ...tr, result: result || tr.result, manual, removed, closures, edits, seeds: seeds.length ? seeds : tr.seeds || [], aiNotes: notes, aiReview: null } });
+    persist(get);
+  },
   undoTraceEdit: () => {
     const tr = get().trace; if (!tr) return;
     const last = tr.edits?.[tr.edits.length - 1];
     if (!last) return;
     const edits = tr.edits.slice(0, -1);
     if (last === 'manual') set({ trace: { ...tr, manual: tr.manual.slice(0, -1), edits } });
+    else if (last === 'closure') set({ trace: { ...tr, closures: (tr.closures || []).slice(0, -1), edits } });
     else set({ trace: { ...tr, removed: tr.removed.slice(0, -1), edits } });
     persist(get);
   },

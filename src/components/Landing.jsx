@@ -7,7 +7,7 @@ const FEATURES = [
   { t: '2D & PDF takeoff', d: 'Trace rooms to scale or measure directly on a plan PDF.' },
   { t: 'Cut-reuse engine', d: 'Sizes every cut and reuses offcuts, so you order what you actually need.' },
   { t: '3D viewer', d: 'Extrude rooms to walls and tile the floors — live.' },
-  { t: 'AI plan detection', d: 'Upload a floor plan; Claude proposes editable rooms.' },
+  { t: 'AI-checked trace', d: 'Walls and rooms rebuilt from the plan\'s own lines; Claude labels them, never draws them.' },
   { t: 'Estimate & export', d: 'Waste or cut costing, labor and tax → CSV, Excel, JSON.' },
 ];
 
