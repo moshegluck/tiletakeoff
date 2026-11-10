@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findStairs, clipToConvex, area } from '../src/engine/trace/stairs.js';
+import { findStairs, clipToConvex, area, takeStairsOffFloors, dropStairLeftovers } from '../src/engine/trace/stairs.js';
 import { runTrace } from '../src/engine/trace/index.js';
 
 // Stairs: an estimator takes a stair's landings, not its treads (Moshe's
@@ -45,5 +45,36 @@ describe('stair runs', () => {
     expect(room.areaFaces).toBeCloseTo((W - t) * (H - t), 0);
     expect(res.flags.some((f) => f.kind === 'stair' && f.roomId === room.id)).toBe(true);
     expect(res.totals.floorSf).toBeCloseTo(room.area, 6);
+  });
+});
+
+describe('dropStairLeftovers', () => {
+  // a 4 x 20 ft entry: door at the bottom, a run from y = 4 to y = 13, then a strip to the top wall
+  const room = () => ({ id: 'r1', name: 'ENTRY', poly: [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 20 }, { x: 0, y: 20 }], area: 80, flags: [] });
+  const run = { poly: [{ x: 0, y: 4 }, { x: 4, y: 4 }, { x: 4, y: 13 }, { x: 0, y: 13 }], treads: 10, at: { x: 2, y: 8 } };
+  const door = { a: { x: 1, y: 0 }, b: { x: 3, y: 0 }, rooms: ['r1', null], openingType: 'door' };
+
+  it('takes the strip past the run off when no doorway reaches it', () => {
+    const r = room();
+    takeStairsOffFloors([r], [run]);
+    expect(r.area).toBeCloseTo(44, 6);
+    const f = dropStairLeftovers([r], [door]);
+    expect(f).toHaveLength(1);
+    expect(r.area).toBeCloseTo(16, 1);   // the landing at the foot of the run
+  });
+
+  it('keeps a piece a doorway opens into', () => {
+    const r = room();
+    takeStairsOffFloors([r], [run]);
+    const top = { a: { x: 1, y: 20 }, b: { x: 3, y: 20 }, rooms: ['r1', 'r2'], openingType: 'door' };
+    expect(dropStairLeftovers([r], [door, top])).toHaveLength(0);
+    expect(r.area).toBeCloseTo(44, 6);
+  });
+
+  it('leaves a room with no doorway alone', () => {
+    const r = room();
+    takeStairsOffFloors([r], [run]);
+    expect(dropStairLeftovers([r], [])).toHaveLength(0);
+    expect(r.area).toBeCloseTo(44, 6);
   });
 });

@@ -9,7 +9,7 @@
 // All geometry in and out is in FEET.
 // ============================================================
 
-import { takeStairsOffFloors } from './stairs.js';
+import { takeStairsOffFloors, dropStairLeftovers } from './stairs.js';
 import { pairWalls, mergeBodies, WALL_DEFAULTS } from './walls.js';
 import { joinWalls, dropDetached, bridgeOpenings, buildGraph, pruneGraph, GRAPH_DEFAULTS } from './graph.js';
 import { analyzeGraph, parseScaleNote, parseDoorSchedule, calibrateFromDoors, roomTypeOf } from './analyze.js';
@@ -294,6 +294,11 @@ function traceReading(input = {}) {
   // stair runs: their treads are no floor (the landings are)
   if (input.stairs?.length) {
     for (const f of takeStairsOffFloors(res.rooms, input.stairs)) {
+      res.flags.push(f);
+      res.rooms.find((r) => r.id === f.roomId)?.flags.push(f.id);
+    }
+    // and a piece of a room the run cuts off, that no doorway reaches
+    for (const f of dropStairLeftovers(res.rooms, res.openings)) {
       res.flags.push(f);
       res.rooms.find((r) => r.id === f.roomId)?.flags.push(f.id);
     }
