@@ -183,7 +183,9 @@ TileTakeoff works the other way round:
     the stair's note by them (UP / DN / 22R) — found in every drawn line (`evidenceToFeet` → `stairs`).
     `runTrace` takes each run off the floor of the room it stands in (a hole: `area` and the takeoff drop,
     `stairHoles`; `areaFaces` keeps it, as a room tag does), info flag `stair` at the run. Moshe's marked
-    takeoffs mark "Stair Landing" areas, never the treads.
+    takeoffs mark "Stair Landing" areas, never the treads. `dropStairLeftovers`: where the run cuts a
+    room in two, a piece no doorway of the room reaches (the run going on past the cut line, the strip
+    past its top tread) comes off too, info flag `stair` (Nov 10, key scale: 726 → 729, silent 59 → 56).
   - `sheetScale.js` which scale the floor plan is drawn at: every scale note read text by text (a
     view's number bubble is no part of it; "SCALE:" + its value as two texts; AutoCAD SHX's flattened
     stacked fractions, `SCALE:  "=1'-0"14"=1'-0"` = 1/4"), and the note printed with the plan's title

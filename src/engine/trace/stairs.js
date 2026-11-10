@@ -150,3 +150,67 @@ export function takeStairsOffFloors(rooms, stairs, fmt = (v) => `${v.toFixed(0)}
   }
   return flags;
 }
+
+/**
+ * A stair run can cut a room in two: the landing at its foot, and a strip
+ * past its top tread (the run going on above the cut line, or the space
+ * under it). Only a piece the room's doors open into is floor; a piece no
+ * doorway reaches is the stair's, and comes off the floor too.
+ * @param {object[]} rooms     traced rooms (stairHoles from takeStairsOffFloors)
+ * @param {object[]} openings  the trace's openings ({a, b, rooms})
+ * @returns {object[]} info flags
+ */
+export function dropStairLeftovers(rooms, openings, { cell = 0.125, reach = 1.25, fmt = (v) => `${v.toFixed(0)} SF` } = {}) {
+  const flags = [];
+  for (const r of rooms) {
+    if (!r.stairHoles?.length || !r.poly || r.poly.length < 3) continue;
+    const xs = r.poly.map((p) => p.x), ys = r.poly.map((p) => p.y);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys);
+    const W = Math.ceil((Math.max(...xs) - x0) / cell), H = Math.ceil((Math.max(...ys) - y0) / cell);
+    if (W * H > 400000) continue;
+    const on = new Uint8Array(W * H);
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const p = { x: x0 + (i + 0.5) * cell, y: y0 + (j + 0.5) * cell };
+      if (inside(p, r.poly) && !(r.holes || []).some((h) => inside(p, h))) on[j * W + i] = 1;
+    }
+    const comp = new Int32Array(W * H).fill(-1), comps = [];
+    for (let k = 0; k < on.length; k++) {
+      if (!on[k] || comp[k] >= 0) continue;
+      const c = { cells: [], id: comps.length }; comps.push(c);
+      const stack = [k]; comp[k] = c.id;
+      while (stack.length) {
+        const q = stack.pop(); c.cells.push(q);
+        const i = q % W, j = (q - i) / W;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+          const n = jj * W + ii;
+          if (on[n] && comp[n] < 0) { comp[n] = c.id; stack.push(n); }
+        }
+      }
+    }
+    if (comps.length < 2) continue;
+    const doors = (openings || []).filter((o) => o.openingType !== 'window' && o.a && o.b && (o.rooms || []).includes(r.id))
+      .map((o) => ({ x: (o.a.x + o.b.x) / 2, y: (o.a.y + o.b.y) / 2 }));
+    if (!doors.length) continue;
+    const reached = (c) => c.cells.some((q) => { const i = q % W, j = (q - i) / W; const p = { x: x0 + (i + 0.5) * cell, y: y0 + (j + 0.5) * cell };
+      return doors.some((d) => Math.hypot(d.x - p.x, d.y - p.y) <= reach); });
+    const keep = comps.filter(reached);
+    if (!keep.length || keep.length === comps.length) continue;
+    for (const c of comps) {
+      if (keep.includes(c)) continue;
+      const a = c.cells.length * cell * cell;
+      if (a < 1) continue;
+      let i0 = W, i1 = 0, j0 = H, j1 = 0;
+      for (const q of c.cells) { const i = q % W, j = (q - i) / W; i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j); }
+      const box = [{ x: x0 + i0 * cell, y: y0 + j0 * cell }, { x: x0 + (i1 + 1) * cell, y: y0 + j0 * cell }, { x: x0 + (i1 + 1) * cell, y: y0 + (j1 + 1) * cell }, { x: x0 + i0 * cell, y: y0 + (j1 + 1) * cell }];
+      (r.holes ||= []).push(box);
+      (r.stairHoles ||= []).push(box);
+      r.area -= a;
+      r.stairSf = (r.stairSf || 0) + a;
+      flags.push({ id: `fl${flags.length + 1}`, severity: 'info', kind: 'stair', at: box[0], roomId: r.id,
+        msg: `Past the stair run (no doorway reaches it) — ${fmt(a)} off ${r.name}'s floor` });
+    }
+  }
+  return flags;
+}
